@@ -11,23 +11,6 @@ class UserRole(str, enum.Enum):
     BUYER = "buyer"
     ADMIN = "admin"
 
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    full_name = Column(String, nullable=False)
-    phone_number = Column(String, unique=True, index=True, nullable=False)
-    role = Column(String, default="farmer") # 'farmer' or 'buyer'
-    password_hash = Column(String, nullable=False)
-    
-    # GEO-SPATIAL MAGIC: This column stores GPS coords as a geometry point
-    # srid=4326 is the standard ID for GPS coordinates (WGS84)
-    location = Column(Geometry('POINT', srid=4326), nullable=True) 
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Relationships
-    harvests = relationship("Harvest", back_populates="farmer")
 
 class Harvest(Base):
     __tablename__ = "harvests"
@@ -45,7 +28,26 @@ class Harvest(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     farmer = relationship("User", back_populates="harvests")
+class User(Base):
+    __tablename__ = "users"
 
+    id = Column(Integer, primary_key=True, index=True)
+    full_name = Column(String, index=True)
+    phone_number = Column(String, unique=True, index=True)
+    password_hash = Column(String)
+    role = Column(String)
+    
+    # EXISTING Location (Keep this!)
+    location = Column(Geometry(geometry_type='POINT', srid=4326))
+    
+    # --- NEW PROFILE FIELDS ---
+    bio = Column(String, nullable=True)             # e.g., "I have been farming maize for 10 years."
+    farm_size_acres = Column(Float, nullable=True)  # e.g., 2.5
+    main_crops = Column(String, nullable=True)      # e.g., "Maize, Beans, Avocado"
+    farming_method = Column(String, nullable=True)  # e.g., "Organic" or "Conventional"
+    profile_image_url = Column(String, nullable=True) # URL to their photo (optional for now)
+
+    harvests = relationship("Harvest", back_populates="farmer")
 # Note: We don't store "Clusters" as a permanent table yet, 
 # because they change every time we run the algorithm.
 # For now, we just assign a 'cluster_id' to the harvest.
