@@ -1,143 +1,190 @@
-import 'package:dio/dio.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mkulimahub_mobile/features/home/harvest_model.dart';
 
 class ApiClient {
-  // 10.0.2.2 is the special IP for Android Emulator to reach localhost
+  // 1. YOUR IP ADDRESS (Ensure this is correct)
   static const String baseUrl = 'http://192.168.100.4:8000'; 
-  
-  final Dio dio = Dio(BaseOptions(baseUrl: baseUrl));
-  final storage = const FlutterSecureStorage();
 
-  // Login Function
+  // --- AUTHENTICATION ---
+
   Future<String?> login(String phone, String password) async {
     try {
-      // API expects "username" and "password" (OAuth2 Standard)
-      final response = await dio.post('/auth/login', data: {
-        'username': phone, 
-        'password': password,
-      }, options: Options(contentType: Headers.formUrlEncodedContentType));
+      // FIX 1: MATCHED SWAGGER '/auth/login'
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/login'), 
+        headers: {
+          // Try JSON first as it is a custom endpoint
+          "Content-Type": "application/x-www-form-urlencoded" 
+        },
+        body: {
+          "username": phone, 
+          "password": password
+        },
+      );
 
       if (response.statusCode == 200) {
-        // Extract token
-        final token = response.data['access_token'];
-        // Save token securely to phone storage
-        await storage.write(key: 'auth_token', value: token);
-        return null; // Null means success (no error message)
+        final data = jsonDecode(response.body);
+        final token = data['access_token'];
+        await _saveToken(token); 
+        return null; // Success
       } else {
-        return 'Login Failed';
-      }
-    } on DioException catch (e) {
-      if (e.response != null) {
-        return 'Error: ${e.response?.data['detail'] ?? "Unknown Error"}';
-      }
-      return 'Connection Error. Is Backend running?';
-    }
-  }
-  Future<List<Harvest>> getHarvests() async {
-    try {
-      final response = await dio.get('/harvests');
-      
-      if (response.statusCode == 200) {
-        // Convert list of JSON objects to list of Harvest objects
-        List<dynamic> data = response.data;
-        return data.map((json) => Harvest.fromJson(json)).toList();
-      } else {
-        throw Exception('Failed to load harvests');
+        return "Login failed: ${response.body}";
       }
     } catch (e) {
-      throw Exception('Connection Error: $e');
+      return "Connection error. Check IP or Server.";
     }
   }
-  Future<String?> getToken() async {
-    return await storage.read(key: 'auth_token');
-  }
 
-  // Logout (Clear token)
-  Future<void> logout() async {
-    await storage.delete(key: 'auth_token');
-  }
-
-  // Register (We need to move the register logic here for cleaner code)
   Future<String?> register(Map<String, dynamic> userData) async {
     try {
-      final response = await dio.post('/auth/register', data: userData);
+      // FIX 2: MATCHED SWAGGER '/auth/register'
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/register'),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode(userData),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return null; 
+      } else {
+        return "Registration failed: ${response.body}";
+      }
+    } catch (e) {
+      return "Connection error: $e";
+    }
+  }
+
+  Future<void> logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('auth_token');
+  }
+
+  // --- PROFILE ---
+
+  Future<Map<String, dynamic>?> getProfile() async {
+    final token = await getToken(); 
+    if (token == null) return null;
+
+    try {
+      // FIX 3: MATCHED SWAGGER '/users/me' (This one was correct)
+      final response = await http.get(
+        Uri.parse('$baseUrl/users/me'),
+        headers: {"Authorization": "Bearer $token"},
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+    } catch (e) {
+      print("Error fetching profile: $e");
+    }
+    return null;
+  }
+
+  Future<String?> updateProfile(Map<String, dynamic> data) async {
+    final token = await getToken();
+    if (token == null) return "Not authenticated";
+
+    try {
+      print("SENDING UPDATE: ${jsonEncode(data)}");
+
+      // FIX 4: MATCHED SWAGGER '/users/profile' (was /users/me)
+      final response = await http.put(
+        Uri.parse('$baseUrl/users/profile'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode(data),
+      );
+
       if (response.statusCode == 200) {
         return null; // Success
       } else {
-        return 'Registration Failed';
+        return "Update failed: ${response.body}";
       }
-    } on DioException catch (e) {
-      if (e.response != null) {
-        return e.response?.data['detail'] ?? "Unknown Error";
-      }
-      return 'Connection Error';
+    } catch (e) {
+      return "Connection error: $e";
     }
   }
-  Future<String?> addHarvest(Map<String, dynamic> harvestData) async {
-    try {
-      // 1. Get the token from storage
-      final token = await storage.read(key: 'auth_token');
-      
-      if (token == null) return "Authentication Error: No token found";
 
-      // 2. Send POST request with "Authorization: Bearer <token>"
-      final response = await dio.post(
-        '/harvests', 
-        data: harvestData,
-        options: Options(
-          headers: {
-            "Authorization": "Bearer $token", // <--- THE KEY
-          },
-        ),
+  // --- HARVESTS ---
+
+  Future<List<Harvest>> getHarvests() async {
+    try {
+      // FIX 5: REMOVED TRAILING SLASH '/harvests'
+      final response = await http.get(Uri.parse('$baseUrl/harvests'));
+      
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((json) => Harvest.fromJson(json)).toList();
+      }
+    } catch (e) {
+      print("Error fetching harvests: $e");
+    }
+    return [];
+  }
+
+  Future<String?> addHarvest(Map<String, dynamic> harvestData) async {
+    final token = await getToken();
+    if (token == null) return "Please login first";
+
+    try {
+      // FIX 6: REMOVED TRAILING SLASH '/harvests'
+      final response = await http.post(
+        Uri.parse('$baseUrl/harvests'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode(harvestData),
       );
 
-      if (response.statusCode == 201) {
-        return null; // Success!
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return null;
       } else {
-        return 'Failed to post harvest';
+        return "Failed to post: ${response.body}";
       }
-    } on DioException catch (e) {
-      if (e.response != null) {
-        return e.response?.data['detail'] ?? "Unknown Error";
-      }
-      return 'Connection Error';
+    } catch (e) {
+      return "Connection error: $e";
     }
   }
+
+  // --- PREDICTIONS ---
+
   Future<List<dynamic>> getPrediction(String cropName) async {
     try {
-      final response = await dio.post('/predict', data: {
-        "commodity": cropName,
-        "days": 7 // Predict next 7 days
-      });
+      final response = await http.post(
+        Uri.parse('$baseUrl/predict'),
+        headers: {"Content-Type": "application/json"},
+        // FIX: Match the backend schema exactly!
+        body: jsonEncode({
+          "commodity": cropName, // Was 'crop_name'
+          "days": 7              // Backend requires 'days'
+        }), 
+      );
 
       if (response.statusCode == 200) {
-        return response.data['forecast']; // Returns the list of prices
-      } else {
-        throw Exception('Failed to get prediction');
+        final data = jsonDecode(response.body);
+        return data['forecast'] ?? [];
       }
     } catch (e) {
-      throw Exception('AI Error: $e');
+      print("Prediction error: $e");
     }
-  }
-  Future<Map<String, dynamic>?> getProfile() async {
-    try {
-      final token = await storage.read(key: 'auth_token');
-      final response = await dio.get('/users/me', options: Options(headers: {"Authorization": "Bearer $token"}));
-      return response.data;
-    } catch (e) {
-      return null;
-    }
+    return [];
   }
 
-  // PUT: Update Profile
-  Future<String?> updateProfile(Map<String, dynamic> data) async {
-    try {
-      final token = await storage.read(key: 'auth_token');
-      await dio.put('/users/profile', data: data, options: Options(headers: {"Authorization": "Bearer $token"}));
-      return null; // Success
-    } on DioException catch (e) {
-      return "Failed to update";
-    }
+  // --- HELPER METHODS ---
+
+  Future<void> _saveToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('auth_token', token);
+  }
+
+  Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('auth_token');
   }
 }

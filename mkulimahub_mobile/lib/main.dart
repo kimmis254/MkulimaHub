@@ -16,6 +16,7 @@ class MkulimaHubApp extends StatelessWidget {
 
     return MaterialApp(
       title: 'MkulimaHub',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
         useMaterial3: true,

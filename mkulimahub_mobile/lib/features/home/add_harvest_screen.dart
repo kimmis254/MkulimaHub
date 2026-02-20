@@ -1,4 +1,7 @@
+import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
 
 class AddHarvestScreen extends StatefulWidget {
@@ -16,29 +19,31 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
   
   bool _isLoading = false;
 
-  // Pre-defined crops to keep data clean
-  final List<String> _crops = ['Maize', 'Beans', 'Mangoes', 'Green Grams', 'Avocado'];
+  // Added Emojis for better visual cues
+  final List<String> _crops = ['Maize 🌽', 'Beans 🫘', 'Mangoes 🥭', 'Green Grams 🌿', 'Avocado 🥑', 'Potatoes 🥔', 'Bananas 🍌'];
   String? _selectedCrop;
 
   void _submitHarvest() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedCrop == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please select a crop")),
+        const SnackBar(content: Text("Please select a crop"), backgroundColor: Colors.red),
       );
       return;
     }
 
     setState(() => _isLoading = true);
 
-    // 1. Prepare Data
+    // Clean up the emoji from the string before sending to backend
+    // e.g., "Maize 🌽" -> "Maize"
+    final cleanCropName = _selectedCrop!.split(' ')[0];
+
     final harvestData = {
-      "crop_name": _selectedCrop,
+      "crop_name": cleanCropName,
       "weight_kg": double.parse(_weightController.text),
       "price_per_kg": double.parse(_priceController.text),
     };
 
-    // 2. Send to Backend
     final error = await _apiClient.addHarvest(harvestData);
 
     setState(() => _isLoading = false);
@@ -48,7 +53,6 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Harvest Posted Successfully!"), backgroundColor: Colors.green),
         );
-        // Go back to Home and tell it to refresh
         Navigator.pop(context, true); 
       }
     } else {
@@ -63,7 +67,20 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Add New Harvest")),
+      backgroundColor: Colors.grey[50], // Consistent light background
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(LucideIcons.arrowLeft, color: Colors.black),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          "New Listing",
+          style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold),
+        ),
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Form(
@@ -71,77 +88,165 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
-                "What are you selling today?",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              // 1. Header Animation
+              FadeInDown(
+                duration: const Duration(milliseconds: 600),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.green[50],
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(LucideIcons.sprout, size: 40, color: Colors.green[700]),
+                  ),
+                ),
               ),
               const SizedBox(height: 20),
-
-              // 1. Crop Dropdown
-              DropdownButtonFormField<String>(
-                value: _selectedCrop,
-                decoration: const InputDecoration(
-                  labelText: "Select Crop",
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.grass),
+              
+              FadeInDown(
+                delay: const Duration(milliseconds: 100),
+                child: Text(
+                  "What are you selling?",
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black87),
                 ),
-                items: _crops.map((crop) {
-                  return DropdownMenuItem(value: crop, child: Text(crop));
-                }).toList(),
-                onChanged: (val) => setState(() => _selectedCrop = val),
               ),
-              const SizedBox(height: 15),
-
-              // 2. Weight Input
-              TextFormField(
-                controller: _weightController,
-                decoration: const InputDecoration(
-                  labelText: "Weight (kg)",
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.scale),
-                  suffixText: "kg",
+              const SizedBox(height: 5),
+              FadeInDown(
+                delay: const Duration(milliseconds: 150),
+                child: Text(
+                  "Fill in the details below to reach buyers.",
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[500]),
                 ),
-                keyboardType: TextInputType.number,
-                validator: (v) {
-                  if (v == null || v.isEmpty) return "Required";
-                  if (double.tryParse(v) == null) return "Must be a number";
-                  return null;
-                },
-              ),
-              const SizedBox(height: 15),
-
-              // 3. Price Input
-              TextFormField(
-                controller: _priceController,
-                decoration: const InputDecoration(
-                  labelText: "Price per kg",
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.attach_money),
-                  prefixText: "KES ",
-                ),
-                keyboardType: TextInputType.number,
-                validator: (v) {
-                  if (v == null || v.isEmpty) return "Required";
-                  if (double.tryParse(v) == null) return "Must be a number";
-                  return null;
-                },
               ),
               const SizedBox(height: 30),
 
-              // 4. Submit Button
-              ElevatedButton(
-                onPressed: _isLoading ? null : _submitHarvest,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green[700],
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+              // 2. Form Fields (Staggered Animation)
+              FadeInUp(
+                delay: const Duration(milliseconds: 200),
+                child: Column(
+                  children: [
+                    // Crop Dropdown
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(15),
+                        boxShadow: [
+                          BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
+                        ],
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButtonFormField<String>(
+                          value: _selectedCrop,
+                          decoration: InputDecoration(
+                            border: InputBorder.none,
+                            icon: Icon(LucideIcons.carrot, color: Colors.green[700], size: 20),
+                          ),
+                          hint: Text("Select Crop", style: GoogleFonts.poppins(color: Colors.grey[400])),
+                          items: _crops.map((crop) {
+                            return DropdownMenuItem(value: crop, child: Text(crop, style: GoogleFonts.poppins()));
+                          }).toList(),
+                          onChanged: (val) => setState(() => _selectedCrop = val),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Weight Input
+                    _buildModernField(
+                      controller: _weightController,
+                      label: "Total Weight",
+                      icon: LucideIcons.scale,
+                      suffix: "kg",
+                      isNumber: true,
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Price Input
+                    _buildModernField(
+                      controller: _priceController,
+                      label: "Price per Kg",
+                      icon: LucideIcons.banknote,
+                      prefix: "KES ",
+                      isNumber: true,
+                    ),
+                  ],
                 ),
-                child: _isLoading 
-                  ? const CircularProgressIndicator(color: Colors.white)
-                  : const Text("Post Harvest", style: TextStyle(fontSize: 18, color: Colors.white)),
+              ),
+              const SizedBox(height: 40),
+
+              // 3. Submit Button
+              FadeInUp(
+                delay: const Duration(milliseconds: 400),
+                child: SizedBox(
+                  height: 55,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _submitHarvest,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green[800],
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                      elevation: 5,
+                      shadowColor: Colors.green.withOpacity(0.4),
+                    ),
+                    child: _isLoading 
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(LucideIcons.uploadCloud, color: Colors.white),
+                            const SizedBox(width: 10),
+                            Text("Post Harvest", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                          ],
+                        ),
+                  ),
+                ),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // Helper Widget for Clean Fields
+  Widget _buildModernField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    String? suffix,
+    String? prefix,
+    bool isNumber = false,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [
+          BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
+        ],
+      ),
+      child: TextFormField(
+        controller: controller,
+        keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+        style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w500),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 12),
+          prefixIcon: Icon(icon, color: Colors.green[700], size: 20),
+          prefixText: prefix,
+          suffixText: suffix,
+          prefixStyle: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.black87),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        ),
+        validator: (v) {
+          if (v == null || v.isEmpty) return "Required";
+          if (isNumber && double.tryParse(v) == null) return "Invalid number";
+          return null;
+        },
       ),
     );
   }

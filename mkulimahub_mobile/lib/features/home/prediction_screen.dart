@@ -1,7 +1,10 @@
+import 'package:animate_do/animate_do.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
+import 'dart:math'; 
 
 class PredictionScreen extends StatefulWidget {
   const PredictionScreen({super.key});
@@ -13,18 +16,18 @@ class PredictionScreen extends StatefulWidget {
 class _PredictionScreenState extends State<PredictionScreen> {
   final ApiClient _apiClient = ApiClient();
   
-  // State variables
   String _selectedCrop = 'Mangoes';
   List<dynamic> _forecastData = [];
   bool _isLoading = false;
   String? _errorMessage;
 
-  final List<String> _crops = ['Mangoes', 'Maize', 'Beans']; // Match your AI model capabilities
+  // Added Emojis for consistency
+  final List<String> _crops = ['Mangoes', 'Maize', 'Beans'];
 
   @override
   void initState() {
     super.initState();
-    _fetchPrediction(); // Load default prediction on start
+    _fetchPrediction();
   }
 
   void _fetchPrediction() async {
@@ -50,55 +53,166 @@ class _PredictionScreenState extends State<PredictionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("AI Price Forecast")),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(LucideIcons.arrowLeft, color: Colors.black),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          "Market Forecast",
+          style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold),
+        ),
+      ),
+      // 1. WRAP IN SINGLE CHILD SCROLL VIEW
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 1. Selector
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            // Header Animation
+            FadeInDown(
+              duration: const Duration(milliseconds: 600),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.green[800]!, Colors.green[600]!],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(color: Colors.green.withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 8))
+                  ]
+                ),
                 child: Row(
                   children: [
-                    const Text("Predict Price for:", style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(width: 16),
-                    DropdownButton<String>(
-                      value: _selectedCrop,
-                      items: _crops.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                      onChanged: (val) {
-                        if (val != null) {
-                          setState(() => _selectedCrop = val);
-                          _fetchPrediction();
-                        }
-                      },
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
+                      child: const Icon(LucideIcons.bot, color: Colors.white, size: 28),
                     ),
+                    const SizedBox(width: 15),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text("AI Price Advisor", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                          Text("Predicting trends for the next 7 days.", style: GoogleFonts.poppins(color: Colors.white.withOpacity(0.9), fontSize: 12)),
+                        ],
+                      ),
+                    )
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 25),
 
-            // 2. The Chart
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _errorMessage != null
-                      ? Center(child: Text(_errorMessage!, style: const TextStyle(color: Colors.red)))
-                      : _buildChart(),
-            ),
-            
-            // 3. Insight Text
-            if (_forecastData.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Text(
-                  "Trend Analysis: Prices are expected to go ${_forecastData.last['trend']} next week.",
-                  style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.blue[800]),
-                  textAlign: TextAlign.center,
+            // Crop Selector
+            FadeInDown(
+              delay: const Duration(milliseconds: 200),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(15),
+                  boxShadow: [
+                    BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
+                  ],
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _selectedCrop,
+                    icon: const Icon(LucideIcons.chevronDown, color: Colors.green),
+                    isExpanded: true,
+                    items: _crops.map((c) => DropdownMenuItem(value: c, child: Text(c, style: GoogleFonts.poppins(fontWeight: FontWeight.w500)))).toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        setState(() => _selectedCrop = val);
+                        _fetchPrediction();
+                      }
+                    },
+                  ),
                 ),
               ),
+            ),
+            const SizedBox(height: 25),
+
+            // 2. THE CHART (Fixed Height + Removed Expanded)
+            FadeInUp(
+              delay: const Duration(milliseconds: 300),
+              child: Container(
+                height: 400, // <--- FIXED HEIGHT makes it scrollable
+                padding: const EdgeInsets.only(right: 16, left: 10, top: 24, bottom: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 5)),
+                  ],
+                ),
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator(color: Colors.green))
+                    : _errorMessage != null
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(LucideIcons.wifiOff, size: 40, color: Colors.red),
+                                const SizedBox(height: 10),
+                                Text(_errorMessage!, style: GoogleFonts.poppins(color: Colors.red)),
+                              ],
+                            ),
+                          )
+                        : _buildChart(),
+              ),
+            ),
+            
+            // Insight Card
+            if (_forecastData.isNotEmpty)
+              FadeInUp(
+                delay: const Duration(milliseconds: 500),
+                child: Container(
+                  margin: const EdgeInsets.only(top: 20), // Removed bottom margin here
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(15),
+                    border: Border.all(color: Colors.blue.withOpacity(0.2)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _forecastData.last['trend'] == 'rising' ? LucideIcons.trendingUp : LucideIcons.trendingDown, 
+                        color: Colors.blue[800]
+                      ),
+                      const SizedBox(width: 15),
+                      Expanded(
+                        child: RichText(
+                          text: TextSpan(
+                            style: GoogleFonts.poppins(color: Colors.blue[900], fontSize: 14),
+                            children: [
+                              const TextSpan(text: "Forecast: "),
+                              TextSpan(
+                                text: "Prices expected to ${_forecastData.last['trend']} ",
+                                style: const TextStyle(fontWeight: FontWeight.bold)
+                              ),
+                              const TextSpan(text: "next week based on market history."),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+            // 5. CRITICAL FIX: Add "Dead Space" so content clears the Nav Bar
+            const SizedBox(height: 120), 
           ],
         ),
       ),
@@ -106,34 +220,80 @@ class _PredictionScreenState extends State<PredictionScreen> {
   }
 
   Widget _buildChart() {
-    if (_forecastData.isEmpty) return const Center(child: Text("No Data"));
+    if (_forecastData.isEmpty) return Center(child: Text("No Data", style: GoogleFonts.poppins()));
 
-    // Convert API data to Chart points
+    // 1. Convert Data to Spots
     List<FlSpot> spots = [];
     for (int i = 0; i < _forecastData.length; i++) {
       double price = (_forecastData[i]['predicted_price'] as num).toDouble();
       spots.add(FlSpot(i.toDouble(), price));    
     }
 
+    // 2. Calculate Dynamic Min/Max with Buffer
+    // We do this so the curve doesn't get cut off at the top or bottom
+    double minPrice = spots.map((e) => e.y).reduce(min);
+    double maxPrice = spots.map((e) => e.y).reduce(max);
+    
+    // Add 10% breathing room above and below
+    double buffer = (maxPrice - minPrice) * 0.1; 
+    if (buffer == 0) buffer = 2.0; // Handle case where price is flat
+
     return LineChart(
       LineChartData(
-        gridData: const FlGridData(show: true),
-        titlesData: const FlTitlesData(
-          bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, interval: 1, reservedSize: 22)),
-          leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 40)),
-          topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        // --- NEW: Dynamic Scaling ---
+        minY: (minPrice - buffer).roundToDouble(),
+        maxY: (maxPrice + buffer).roundToDouble(),
+        
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: false,
+          getDrawingHorizontalLine: (value) => FlLine(color: Colors.grey[200], strokeWidth: 1),
         ),
-        borderData: FlBorderData(show: true, border: Border.all(color: const Color(0xff37434d))),
+        titlesData: FlTitlesData(
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true, 
+              interval: 1, 
+              getTitlesWidget: (value, meta) {
+                return Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Text("Day ${value.toInt() + 1}", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey)),
+                );
+              },
+              reservedSize: 30
+            )
+          ),
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true, 
+              reservedSize: 40,
+              // Use interval to prevent too many labels
+              interval: buffer > 5 ? buffer : 1, 
+              getTitlesWidget: (value, meta) => Text(value.toInt().toString(), style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey)),
+            )
+          ),
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        ),
+        borderData: FlBorderData(show: false),
         lineBarsData: [
           LineChartBarData(
             spots: spots,
             isCurved: true,
-            color: Colors.green,
+            // Prevent the curve from overshooting too much
+            preventCurveOverShooting: true, 
+            color: Colors.green[600],
             barWidth: 4,
             isStrokeCapRound: true,
-            dotData: const FlDotData(show: true),
-            belowBarData: BarAreaData(show: true, color: Colors.green.withOpacity(0.2)),
+            dotData: const FlDotData(show: false),
+            belowBarData: BarAreaData(
+              show: true, 
+              gradient: LinearGradient(
+                colors: [Colors.green.withOpacity(0.3), Colors.green.withOpacity(0.0)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              )
+            ),
           ),
         ],
       ),
