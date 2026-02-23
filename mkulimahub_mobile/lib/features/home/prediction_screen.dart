@@ -21,7 +21,6 @@ class _PredictionScreenState extends State<PredictionScreen> {
   bool _isLoading = false;
   String? _errorMessage;
 
-  // Added Emojis for consistency
   final List<String> _crops = ['Mangoes', 'Maize', 'Beans'];
 
   @override
@@ -67,13 +66,12 @@ class _PredictionScreenState extends State<PredictionScreen> {
           style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold),
         ),
       ),
-      // 1. WRAP IN SINGLE CHILD SCROLL VIEW
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Header Animation
+            // Header
             FadeInDown(
               duration: const Duration(milliseconds: 600),
               child: Container(
@@ -142,12 +140,12 @@ class _PredictionScreenState extends State<PredictionScreen> {
             ),
             const SizedBox(height: 25),
 
-            // 2. THE CHART (Fixed Height + Removed Expanded)
+            // THE CHART CONTAINER
             FadeInUp(
               delay: const Duration(milliseconds: 300),
               child: Container(
-                height: 400, // <--- FIXED HEIGHT makes it scrollable
-                padding: const EdgeInsets.only(right: 16, left: 10, top: 24, bottom: 10),
+                height: 400, 
+                padding: const EdgeInsets.only(right: 25, left: 10, top: 30, bottom: 10), // Added more right/top padding for numbers
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(20),
@@ -156,7 +154,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
                   ],
                 ),
                 child: _isLoading
-                    ? const Center(child: CircularProgressIndicator(color: Colors.green))
+                    ? _buildAILoadingState() // <--- NEW AI LOADING UI
                     : _errorMessage != null
                         ? Center(
                             child: Column(
@@ -173,11 +171,11 @@ class _PredictionScreenState extends State<PredictionScreen> {
             ),
             
             // Insight Card
-            if (_forecastData.isNotEmpty)
+            if (_forecastData.isNotEmpty && !_isLoading)
               FadeInUp(
                 delay: const Duration(milliseconds: 500),
                 child: Container(
-                  margin: const EdgeInsets.only(top: 20), // Removed bottom margin here
+                  margin: const EdgeInsets.only(top: 20),
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: Colors.blue[50],
@@ -196,12 +194,12 @@ class _PredictionScreenState extends State<PredictionScreen> {
                           text: TextSpan(
                             style: GoogleFonts.poppins(color: Colors.blue[900], fontSize: 14),
                             children: [
-                              const TextSpan(text: "Forecast: "),
+                              const TextSpan(text: "AI Forecast: "), // Changed text
                               TextSpan(
                                 text: "Prices expected to ${_forecastData.last['trend']} ",
                                 style: const TextStyle(fontWeight: FontWeight.bold)
                               ),
-                              const TextSpan(text: "next week based on market history."),
+                              const TextSpan(text: "based on Prophet Time-Series analysis."), // Highlighted AI model
                             ],
                           ),
                         ),
@@ -210,8 +208,6 @@ class _PredictionScreenState extends State<PredictionScreen> {
                   ),
                 ),
               ),
-
-            // 5. CRITICAL FIX: Add "Dead Space" so content clears the Nav Bar
             const SizedBox(height: 120), 
           ],
         ),
@@ -219,34 +215,90 @@ class _PredictionScreenState extends State<PredictionScreen> {
     );
   }
 
+  // --- NEW: Custom AI Loading State ---
+  Widget _buildAILoadingState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const CircularProgressIndicator(color: Colors.green),
+          const SizedBox(height: 25),
+          Pulse( // Using animate_do to make the text throb like it's "thinking"
+            infinite: true,
+            child: Text(
+              "Prophet AI is analyzing\nhistorical market patterns...",
+              textAlign: TextAlign.center,
+              style: GoogleFonts.poppins(
+                color: Colors.green[700], 
+                fontWeight: FontWeight.w500,
+                fontSize: 13
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildChart() {
     if (_forecastData.isEmpty) return Center(child: Text("No Data", style: GoogleFonts.poppins()));
 
-    // 1. Convert Data to Spots
     List<FlSpot> spots = [];
     for (int i = 0; i < _forecastData.length; i++) {
       double price = (_forecastData[i]['predicted_price'] as num).toDouble();
       spots.add(FlSpot(i.toDouble(), price));    
     }
 
-    // 2. Calculate Dynamic Min/Max with Buffer
-    // We do this so the curve doesn't get cut off at the top or bottom
+    // --- NEW: Advanced Mathematical Scaling ---
     double minPrice = spots.map((e) => e.y).reduce(min);
     double maxPrice = spots.map((e) => e.y).reduce(max);
     
-    // Add 10% breathing room above and below
-    double buffer = (maxPrice - minPrice) * 0.1; 
-    if (buffer == 0) buffer = 2.0; // Handle case where price is flat
+    // Prevent completely flat lines from breaking the graph
+    if (minPrice == maxPrice) {
+      minPrice -= 5;
+      maxPrice += 5;
+    }
+
+    // Give 40% breathing room to center the line perfectly
+    double buffer = (maxPrice - minPrice) * 0.4; 
+    double bottomY = (minPrice - buffer).floorToDouble();
+    double topY = (maxPrice + buffer).ceilToDouble();
+    
+    // Ensure the grid lines are perfectly spaced numbers (e.g., 5, 10, 15)
+    double yInterval = ((topY - bottomY) / 5).ceilToDouble();
+    if (yInterval == 0) yInterval = 1;
 
     return LineChart(
       LineChartData(
-        // --- NEW: Dynamic Scaling ---
-        minY: (minPrice - buffer).roundToDouble(),
-        maxY: (maxPrice + buffer).roundToDouble(),
+        minY: bottomY,
+        maxY: topY,
+        
+        // --- NEW: Interactive AI Tooltips ---
+        lineTouchData: LineTouchData(
+          handleBuiltInTouches: true,
+          touchTooltipData: LineTouchTooltipData(
+            getTooltipColor: (LineBarSpot touchedSpot) => Colors.green[800]!.withOpacity(0.9),
+            getTooltipItems: (List<LineBarSpot> touchedSpots) {
+              return touchedSpots.map((spot) {
+                return LineTooltipItem(
+                  'AI Prediction\n',
+                  GoogleFonts.poppins(color: Colors.white70, fontSize: 10),
+                  children: [
+                    TextSpan(
+                      text: 'KES ${spot.y.toStringAsFixed(2)}',
+                      style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                  ],
+                );
+              }).toList();
+            },
+          ),
+        ),
         
         gridData: FlGridData(
           show: true,
           drawVerticalLine: false,
+          horizontalInterval: yInterval, // Fixed Interval
           getDrawingHorizontalLine: (value) => FlLine(color: Colors.grey[200], strokeWidth: 1),
         ),
         titlesData: FlTitlesData(
@@ -256,7 +308,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
               interval: 1, 
               getTitlesWidget: (value, meta) {
                 return Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
+                  padding: const EdgeInsets.only(top: 10.0),
                   child: Text("Day ${value.toInt() + 1}", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey)),
                 );
               },
@@ -267,9 +319,8 @@ class _PredictionScreenState extends State<PredictionScreen> {
             sideTitles: SideTitles(
               showTitles: true, 
               reservedSize: 40,
-              // Use interval to prevent too many labels
-              interval: buffer > 5 ? buffer : 1, 
-              getTitlesWidget: (value, meta) => Text(value.toInt().toString(), style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey)),
+              interval: yInterval, // Fixed Interval
+              getTitlesWidget: (value, meta) => Text(value.toInt().toString(), style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[600], fontWeight: FontWeight.w500)),
             )
           ),
           topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
@@ -280,12 +331,16 @@ class _PredictionScreenState extends State<PredictionScreen> {
           LineChartBarData(
             spots: spots,
             isCurved: true,
-            // Prevent the curve from overshooting too much
             preventCurveOverShooting: true, 
             color: Colors.green[600],
             barWidth: 4,
             isStrokeCapRound: true,
-            dotData: const FlDotData(show: false),
+            dotData: FlDotData(
+              show: true, // Show dots so users know where to tap
+              getDotPainter: (spot, percent, barData, index) {
+                return FlDotCirclePainter(radius: 4, color: Colors.white, strokeWidth: 2, strokeColor: Colors.green[600]!);
+              }
+            ),
             belowBarData: BarAreaData(
               show: true, 
               gradient: LinearGradient(

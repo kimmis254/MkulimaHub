@@ -38,8 +38,28 @@ class HarvestCreate(BaseModel):
     price_per_kg: float
 
 class UserProfileUpdate(BaseModel):
-    bio: Optional[str] = None
-    farm_size_acres: Optional[float] = None
-    main_crops: Optional[str] = None
-    farming_method: Optional[str] = None
-    # We will skip image upload for today to keep it simple (text only first)
+    bio: str | None = None
+    main_crops: str | None = None
+    farm_size_acres: float | None = None
+    farming_method: str | None = None
+    # Add Location Fields
+    county: str | None = None
+    sub_county: str | None = None
+    ward: str | None = None
+    village: str | None = None
+
+class UserRead(BaseModel):
+    id: int
+    full_name: str
+    phone_number: str
+    role: str
+    bio: str | None = None
+    main_crops: str | None = None
+    # Add Location Fields here too so Flutter can see them!
+    county: str | None = None
+    sub_county: str | None = None
+    ward: str | None = None
+    village: str | None = None
+
+    class Config:
+        orm_mode = True

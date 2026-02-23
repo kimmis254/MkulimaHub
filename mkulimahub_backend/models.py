@@ -34,18 +34,20 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     full_name = Column(String, index=True)
     phone_number = Column(String, unique=True, index=True)
-    password_hash = Column(String)
-    role = Column(String)
+    hashed_password = Column(String)
+    role = Column(String, default="farmer")
     
-    # EXISTING Location (Keep this!)
-    location = Column(Geometry(geometry_type='POINT', srid=4326))
-    
-    # --- NEW PROFILE FIELDS ---
-    bio = Column(String, nullable=True)             # e.g., "I have been farming maize for 10 years."
-    farm_size_acres = Column(Float, nullable=True)  # e.g., 2.5
-    main_crops = Column(String, nullable=True)      # e.g., "Maize, Beans, Avocado"
-    farming_method = Column(String, nullable=True)  # e.g., "Organic" or "Conventional"
-    profile_image_url = Column(String, nullable=True) # URL to their photo (optional for now)
+    # Profile Fields
+    bio = Column(String, nullable=True)
+    farm_size_acres = Column(Float, nullable=True)
+    main_crops = Column(String, nullable=True)
+    farming_method = Column(String, nullable=True)
+
+    # --- ADD THESE 4 LINES ---
+    county = Column(String, nullable=True)
+    sub_county = Column(String, nullable=True)
+    ward = Column(String, nullable=True)
+    village = Column(String, nullable=True)
 
     harvests = relationship("Harvest", back_populates="farmer")
 # Note: We don't store "Clusters" as a permanent table yet, 

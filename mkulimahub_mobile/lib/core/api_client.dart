@@ -157,12 +157,11 @@ class ApiClient {
   Future<List<dynamic>> getPrediction(String cropName) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/predict'),
+        Uri.parse('$baseUrl/predict'), // NO trailing slash here!
         headers: {"Content-Type": "application/json"},
-        // FIX: Match the backend schema exactly!
         body: jsonEncode({
-          "commodity": cropName, // Was 'crop_name'
-          "days": 7              // Backend requires 'days'
+          "commodity": cropName, 
+          "days": 7              
         }), 
       );
 
