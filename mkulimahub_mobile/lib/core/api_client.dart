@@ -175,6 +175,30 @@ class ApiClient {
     return [];
   }
 
+  // --- AI CLUSTERING ---
+
+  Future<Map<String, dynamic>> getClusters([String? crop]) async {
+    try {
+      String url = '$baseUrl/api/clusters';
+      
+      if (crop != null && crop != 'All') {
+        url += '?crop=$crop';
+      }
+
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        print("Failed to fetch clusters: ${response.statusCode}");
+        return {'hubs': [], 'total_farmers_analyzed': 0};
+      }
+    } catch (e) {
+      print("Error fetching clusters: $e");
+      return {'hubs': [], 'total_farmers_analyzed': 0};
+    }
+  }
+
   // --- HELPER METHODS ---
 
   Future<void> _saveToken(String token) async {

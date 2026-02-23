@@ -1,13 +1,15 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:geolocator/geolocator.dart'; // NEW: GPS Package
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/auth/login_screen.dart';
-import 'package:mkulimahub_mobile/features/home/home_screen.dart'; // Import Home
-import 'package:mkulimahub_mobile/core/kenya_locations.dart';
+import 'package:mkulimahub_mobile/features/home/home_screen.dart'; 
 
 class ProfileScreen extends StatefulWidget {
   final bool isNewUser;
@@ -28,11 +30,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _cropsController = TextEditingController();
   final _villageController = TextEditingController();
 
-  // Location State
+  // --- NEW: Dynamic Location State ---
+  List<dynamic> _locationsData = []; 
+  List<String> _counties = [];
+  List<String> _subCounties = [];
+  List<String> _wards = [];
+
   String? _selectedCounty;
   String? _selectedSubCounty;
   String? _selectedWard;
   
+  // --- NEW: Smart GPS State ---
+  bool _isAtFarm = false;
+  double? _latitude;
+  double? _longitude;
+  bool _isFetchingGps = false;
+
   File? _profileImage;
   bool _isLoading = false;
   Map<String, dynamic>? _profileData;
@@ -41,50 +54,87 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     _isEditing = widget.isNewUser;
-    _loadProfile();
+    // We load locations FIRST, then load the profile so the dropdowns populate correctly
+    _initializeData();
   }
 
-  void _loadProfile() async {
+  Future<void> _initializeData() async {
     setState(() => _isLoading = true);
+    await _loadLocationData();
+    await _loadProfile();
+  }
+
+  // --- NEW: Parse the large JSON File ---
+  Future<void> _loadLocationData() async {
+    try {
+      final String response = await rootBundle.loadString('assets/data/kenya_locations.json');
+      final data = await json.decode(response) as List<dynamic>;
+      setState(() {
+        _locationsData = data;
+        _counties = _locationsData.map((c) => c['county_name'].toString()).toList();
+      });
+    } catch (e) {
+      print("Error loading locations JSON: $e");
+    }
+  }
+
+  // --- NEW: GPS Capture Function ---
+  Future<void> _captureFarmGPS() async {
+    setState(() => _isFetchingGps = true);
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+        Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+        setState(() {
+          _latitude = position.latitude;
+          _longitude = position.longitude;
+        });
+        
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ Farm GPS captured successfully!"), backgroundColor: Colors.green));
+      } else {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("GPS Permission Denied."), backgroundColor: Colors.red));
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Failed to get GPS: $e"), backgroundColor: Colors.red));
+    } finally {
+      setState(() => _isFetchingGps = false);
+    }
+  }
+
+  Future<void> _loadProfile() async {
     final data = await _apiClient.getProfile();
     
-    // DEBUG: Print exactly what the backend gave us
-    print("---------------- PROFILE DATA RECEIVED ----------------");
-    print(data); 
-    print("-------------------------------------------------------");
-
     setState(() {
       _isLoading = false;
       if (data != null) {
         _profileData = data;
         
-        // 1. TEXT FIELDS
         _bioController.text = data['bio'] ?? "";
         _cropsController.text = data['main_crops'] ?? "";
-        _villageController.text = data['village'] ?? ""; // Check if key matches backend
+        _villageController.text = data['village'] ?? ""; 
         
-        // 2. LOCATION DROPDOWNS (The Tricky Part)
-        // We ensure the values exist in our KenyaLocations list before setting them
-        // to avoid "Value not in range" errors.
-        
-        final backendCounty = data['county']; // Check key spelling (e.g. 'County' vs 'county')
-        if (backendCounty != null && KenyaLocations.getCounties().contains(backendCounty)) {
+        // --- NEW: Safe cascading load from JSON ---
+        final backendCounty = data['county']; 
+        if (backendCounty != null && _counties.contains(backendCounty)) {
           _selectedCounty = backendCounty;
           
-          // Now try to set Sub-County
-          final backendSub = data['sub_county']; // Check key: 'sub_county' vs 'subCounty'
-          final validSubCounties = KenyaLocations.getSubCounties(_selectedCounty!);
+          var countyObj = _locationsData.firstWhere((c) => c['county_name'] == backendCounty);
+          var constituencies = countyObj['constituencies'] as List<dynamic>;
+          _subCounties = constituencies.map((c) => c['constituency_name'].toString()).toList();
           
-          if (backendSub != null && validSubCounties.contains(backendSub)) {
+          final backendSub = data['sub_county']; 
+          if (backendSub != null && _subCounties.contains(backendSub)) {
             _selectedSubCounty = backendSub;
             
-            // Now try to set Ward
-            final backendWard = data['ward'];
-            final validWards = KenyaLocations.getWards(_selectedSubCounty!);
+            var constituencyObj = constituencies.firstWhere((c) => c['constituency_name'] == backendSub);
+            _wards = List<String>.from(constituencyObj['wards']);
             
-            if (backendWard != null) {
-               // Since Wards are generic in our static file, we just accept the value
-               // or check if it exists if you have a real list.
+            final backendWard = data['ward'];
+            if (backendWard != null && _wards.contains(backendWard)) {
                _selectedWard = backendWard;
             }
           }
@@ -94,7 +144,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _saveProfile() async {
-    // Validation
     if (_selectedCounty == null || _selectedSubCounty == null) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please select your County and Sub-County"), backgroundColor: Colors.red));
       return;
@@ -109,14 +158,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
       "sub_county": _selectedSubCounty,
       "ward": _selectedWard,
       "village": _villageController.text,
+      // Send GPS data to the backend (Python handles the fallback if these are null)
+      "latitude": _latitude,
+      "longitude": _longitude,
     };
 
     final error = await _apiClient.updateProfile(data);
 
     if (error == null) {
-      // --- CRITICAL FIX: Redirect Logic ---
       if (widget.isNewUser) {
-        // 1. If New User -> Go to Home
         if (mounted) {
            Navigator.pushAndRemoveUntil(
             context, 
@@ -125,31 +175,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
           );
         }
       } else {
-        // 2. If Existing User -> Just switch to View Mode
-        await _apiClient.getProfile(); // Refresh Data
-        _loadProfile(); 
+        await _loadProfile(); 
         setState(() {
           _isLoading = false;
           _isEditing = false;
         });
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile Updated!"), backgroundColor: Colors.green));
-        }
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile Updated!"), backgroundColor: Colors.green));
       }
     } else {
       setState(() => _isLoading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Determine Title based on context
-    String title = "My Profile";
-    if (widget.isNewUser) title = "Create Profile";
-    else if (_isEditing) title = "Edit Profile";
+    String title = widget.isNewUser ? "Create Profile" : (_isEditing ? "Edit Profile" : "My Profile");
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
@@ -163,14 +204,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           : null,
         title: Text(title, style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold)),
         actions: [
-          // SETTINGS ICON (Visible only in View Mode)
           if (!_isEditing)
              IconButton(
               icon: const Icon(LucideIcons.settings, color: Colors.black),
               onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Settings Coming Soon!"))),
             ),
-          
-          // CANCEL BUTTON (Visible only if editing an existing profile)
           if (_isEditing && !widget.isNewUser)
             IconButton(
               icon: const Icon(LucideIcons.x, color: Colors.red),
@@ -184,11 +222,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               padding: const EdgeInsets.all(24),
               child: Column(
                 children: [
-                  // 1. PROFILE PICTURE
                   _buildProfileImage(),
                   const SizedBox(height: 30),
-
-                  // 2. CONTENT SWITCHER
                   AnimatedSwitcher(
                     duration: const Duration(milliseconds: 300),
                     child: _isEditing ? _buildEditForm() : _buildViewMode(),
@@ -199,9 +234,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // --- VIEW MODE (Clean Cards) ---
   Widget _buildViewMode() {
-    // SAFE STRING HELPERS
     final location = (_profileData?['county'] != null) 
         ? "${_profileData?['village'] ?? ''}, ${_profileData?['county']}"
         : "Location not set";
@@ -209,20 +242,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Column(
       key: const ValueKey("view"),
       children: [
-        Text(
-          _profileData?['full_name'] ?? "Farmer",
-          style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold),
-        ),
-        Text(
-          location,
-          style: GoogleFonts.poppins(color: Colors.grey[600]),
-        ),
+        Text(_profileData?['full_name'] ?? "Farmer", style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold)),
+        Text(location, style: GoogleFonts.poppins(color: Colors.grey[600])),
         const SizedBox(height: 30),
         
         _buildInfoCard("About", _profileData?['bio'] ?? "No bio added yet."),
         _buildInfoCard("Crops", _profileData?['main_crops'] ?? "No crops listed."),
         
-        // Detailed Location Card
         Container(
           width: double.infinity,
           margin: const EdgeInsets.only(bottom: 15),
@@ -231,10 +257,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text("Detailed Location", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[500])),
             const SizedBox(height: 5),
-            
-            // Safe Display Logic
             _buildLocationRow("County", _profileData?['county']),
-            _buildLocationRow("Sub-County", _profileData?['sub_county']), // Check snake_case
+            _buildLocationRow("Sub-County", _profileData?['sub_county']),
             _buildLocationRow("Ward", _profileData?['ward']),
             _buildLocationRow("Village", _profileData?['village']),
           ]),
@@ -242,7 +266,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
         const SizedBox(height: 20),
         
-        // EDIT BUTTON
         SizedBox(
           width: double.infinity,
           height: 50,
@@ -256,7 +279,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         
         const SizedBox(height: 15),
         
-        // LOGOUT BUTTON
         TextButton.icon(
            icon: const Icon(LucideIcons.logOut, color: Colors.red),
            label: const Text("Log Out", style: TextStyle(color: Colors.red)),
@@ -270,7 +292,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // --- EDIT MODE (Modern Form) ---
   Widget _buildEditForm() {
     return Column(
       key: const ValueKey("edit"),
@@ -283,7 +304,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         FadeInDown(delay: const Duration(milliseconds: 100), child: _buildSectionTitle("Farm Location")),
         const SizedBox(height: 10),
         
-        // Location Card
+        // --- NEW: Dynamic Cascading Location Card ---
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -292,15 +313,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
             boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
           ),
           child: Column(children: [
-             _buildDropdown("County", _selectedCounty, KenyaLocations.getCounties(), (val) {
-               setState(() { _selectedCounty = val; _selectedSubCounty = null; _selectedWard = null; });
+             _buildDropdown("County", _selectedCounty, _counties, (val) {
+               setState(() { 
+                 _selectedCounty = val; 
+                 _selectedSubCounty = null; 
+                 _selectedWard = null; 
+                 _wards = [];
+                 
+                 var countyObj = _locationsData.firstWhere((c) => c['county_name'] == val);
+                 var constituencies = countyObj['constituencies'] as List<dynamic>;
+                 _subCounties = constituencies.map((c) => c['constituency_name'].toString()).toList();
+               });
              }),
              const Divider(),
-             _buildDropdown("Sub-County", _selectedSubCounty, _selectedCounty == null ? [] : KenyaLocations.getSubCounties(_selectedCounty!), (val) {
-               setState(() { _selectedSubCounty = val; _selectedWard = null; });
+             _buildDropdown("Sub-County", _selectedSubCounty, _subCounties, (val) {
+               setState(() { 
+                 _selectedSubCounty = val; 
+                 _selectedWard = null; 
+                 
+                 var countyObj = _locationsData.firstWhere((c) => c['county_name'] == _selectedCounty);
+                 var constituencies = countyObj['constituencies'] as List<dynamic>;
+                 var constituencyObj = constituencies.firstWhere((c) => c['constituency_name'] == val);
+                 _wards = List<String>.from(constituencyObj['wards']);
+               });
              }),
              const Divider(),
-             _buildDropdown("Ward", _selectedWard, _selectedSubCounty == null ? [] : KenyaLocations.getWards(_selectedSubCounty!), (val) => setState(() => _selectedWard = val)),
+             _buildDropdown("Ward", _selectedWard, _wards, (val) => setState(() => _selectedWard = val)),
              const Divider(),
              TextField(
                 controller: _villageController,
@@ -315,13 +353,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
 
         const SizedBox(height: 30),
+
+        // --- NEW: Smart GPS Toggle ---
+        FadeInDown(delay: const Duration(milliseconds: 150), child: _buildSectionTitle("AI Clustering Precision")),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.blue[50],
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: Colors.blue.withOpacity(0.2)),
+          ),
+          child: Column(
+            children: [
+              SwitchListTile(
+                title: Text("Are you currently at your farm?", style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+                subtitle: Text("Boost your visibility by capturing your exact GPS coordinates for bulk buyers.", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[700])),
+                value: _isAtFarm,
+                activeColor: Colors.green,
+                contentPadding: EdgeInsets.zero,
+                onChanged: (bool value) {
+                  setState(() {
+                    _isAtFarm = value;
+                    if (!value) {
+                      _latitude = null;
+                      _longitude = null;
+                    }
+                  });
+                },
+              ),
+              if (_isAtFarm) ...[
+                const SizedBox(height: 15),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton.icon(
+                    onPressed: _isFetchingGps ? null : _captureFarmGPS,
+                    icon: _isFetchingGps 
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                        : const Icon(LucideIcons.mapPin, color: Colors.white),
+                    label: Text(
+                      _latitude != null ? "GPS Captured Successfully" : "Tap to Capture Exact GPS", 
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.white)
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _latitude != null ? Colors.green[800] : Colors.green,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                ),
+              ]
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 30),
         FadeInDown(delay: const Duration(milliseconds: 200), child: _buildSectionTitle("Farming Details")),
         const SizedBox(height: 10),
         _buildModernField(_cropsController, "Main Crops", LucideIcons.sprout, hint: "Maize, Beans, etc."),
 
         const SizedBox(height: 40),
         
-        // SAVE BUTTON
         SizedBox(
           width: double.infinity,
           height: 55,
@@ -410,11 +502,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         value: val, isExpanded: true, 
         hint: Text(label, style: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 14)), 
         icon: const Icon(LucideIcons.chevronDown, size: 18, color: Colors.grey),
-        items: items.map((e) => DropdownMenuItem(value: e, child: Text(e, style: GoogleFonts.poppins(fontSize: 14)))).toList(), 
-        onChanged: changed
+        items: items.map((e) => DropdownMenuItem(value: e, child: Text(e, style: GoogleFonts.poppins(fontSize: 14), overflow: TextOverflow.ellipsis))).toList(), 
+        onChanged: items.isEmpty ? null : changed
       )
     );
   }
+  
   Widget _buildLocationRow(String label, String? value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4.0),

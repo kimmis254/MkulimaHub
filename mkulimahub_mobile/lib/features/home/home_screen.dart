@@ -7,6 +7,8 @@ import 'package:mkulimahub_mobile/features/home/add_harvest_screen.dart';
 import 'package:mkulimahub_mobile/features/home/harvest_model.dart';
 import 'package:mkulimahub_mobile/features/home/prediction_screen.dart';
 import 'package:mkulimahub_mobile/features/home/profile_screen.dart';
+// --- ADD THE IMPORT FOR YOUR NEW SCREEN ---
+import 'package:mkulimahub_mobile/features/home/cluster_screen.dart';
 
 // --- 1. THE MAIN SHELL (Holds the Nav Bar) ---
 class HomeScreen extends StatefulWidget {
@@ -31,8 +33,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _screens = [
       // 2. ASSIGN THE KEY HERE
       MarketplaceView(key: _marketplaceKey),      // 0: Home
-      const Center(child: Text("Map Screen Coming Soon!")), // 1: Map
-      const PredictionScreen(),     // 2: Forecast
+      const ClusterScreen(),                      // 1: AI Sourcing Hubs
+      const PredictionScreen(),                   // 2: Forecast
       const Center(child: Text("AI Chatbot Coming Soon!")), // 3: Chatbot
     ];
   }
@@ -66,7 +68,9 @@ class _HomeScreenState extends State<HomeScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             _buildNavItem(0, LucideIcons.home, "Home"),
-            _buildNavItem(1, LucideIcons.mapPin, "Map"),
+            
+            // --- UPDATED LABEL TO "Hubs" ---
+            _buildNavItem(1, LucideIcons.mapPin, "Hubs"),
             
             // Middle "Add" Button
             GestureDetector(
