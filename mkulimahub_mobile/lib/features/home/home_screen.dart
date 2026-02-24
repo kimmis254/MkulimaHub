@@ -10,7 +10,11 @@ import 'package:mkulimahub_mobile/features/home/profile_screen.dart';
 import 'package:mkulimahub_mobile/features/home/cluster_screen.dart';
 import 'package:mkulimahub_mobile/features/home/contracts_screen.dart';
 
-// --- 1. THE MAIN SHELL (Holds the Nav Bar) ---
+// --- THE MAGIC KEY ---
+// Moving this outside the class makes it a "Global Variable". 
+// Now, ANY screen in the app can force the marketplace to refresh!
+final GlobalKey<MarketplaceViewState> marketplaceKey = GlobalKey<MarketplaceViewState>();
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -20,35 +24,23 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
-
-  // 1. CREATE A KEY TO CONTROL THE MARKETPLACE VIEW
-  // This acts like a remote control for the list of harvests
-  final GlobalKey<MarketplaceViewState> _marketplaceKey = GlobalKey();
-
   late final List<Widget> _screens;
 
   @override
   void initState() {
     super.initState();
     _screens = [
-      // 2. ASSIGN THE KEY HERE
-      MarketplaceView(key: _marketplaceKey),      
+      MarketplaceView(key: marketplaceKey), // Linked to our new Global Key
       const ClusterScreen(),                      
       const PredictionScreen(),                   
-      const ContractsScreen(), 
+      const ContractsScreen(),                    
     ];
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // The Body switches based on index
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: _screens,
-      ),
-
-      // --- CUSTOM FLOATING NAV BAR (Always Visible) ---
+      body: IndexedStack(index: _selectedIndex, children: _screens),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       floatingActionButton: Container(
         margin: const EdgeInsets.fromLTRB(20, 0, 20, 20),
@@ -56,63 +48,33 @@ class _HomeScreenState extends State<HomeScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(25),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 20,
-              offset: const Offset(0, 10),
-            ),
-          ],
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, 10))],
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             _buildNavItem(0, LucideIcons.home, "Home"),
-            
-            // --- UPDATED LABEL TO "Hubs" ---
             _buildNavItem(1, LucideIcons.mapPin, "Hubs"),
-            
-            // Middle "Add" Button
             GestureDetector(
               onTap: () async {
-                // 3. WAIT FOR RESULT
-                final result = await Navigator.push(
-                  context, 
-                  MaterialPageRoute(builder: (_) => const AddHarvestScreen())
-                );
-
-                // 4. IF SUCCESS (result == true), REFRESH THE LIST
+                final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddHarvestScreen()));
                 if (result == true) {
-                  print("Harvest Added! Refreshing list...");
-                  _marketplaceKey.currentState?.loadHarvests(); 
-                  
-                  // Optional: Switch back to home tab to see the new item
-                  if (_selectedIndex != 0) {
-                    setState(() => _selectedIndex = 0);
-                  }
+                  marketplaceKey.currentState?.loadHarvests(); // Auto Refresh
+                  if (_selectedIndex != 0) setState(() => _selectedIndex = 0);
                 }
               },
               child: Container(
                 width: 50, height: 50,
-                decoration: BoxDecoration(
-                  color: Colors.green[800],
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(color: Colors.green.withOpacity(0.4), blurRadius: 10, offset: const Offset(0, 5))
-                  ]
-                ),
+                decoration: BoxDecoration(color: Colors.green[800], shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.green.withOpacity(0.4), blurRadius: 10, offset: const Offset(0, 5))]),
                 child: const Icon(LucideIcons.plus, color: Colors.white, size: 28),
               ),
             ),
-            
             _buildNavItem(2, LucideIcons.trendingUp, "Trends"),
-            
-            // --- UPDATED LABEL TO "Contracts" ---
             _buildNavItem(3, LucideIcons.fileText, "Contracts"),
           ],
         ),
       ),
-      bottomNavigationBar: const SizedBox.shrink(), // Hide default
+      bottomNavigationBar: const SizedBox.shrink(),
     );
   }
 
@@ -123,9 +85,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: isSelected 
-          ? BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(15))
-          : const BoxDecoration(color: Colors.transparent),
+        decoration: isSelected ? BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(15)) : const BoxDecoration(color: Colors.transparent),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -134,11 +94,7 @@ class _HomeScreenState extends State<HomeScreen> {
               transform: Matrix4.translationValues(0, isSelected ? -2 : 0, 0),
               child: Icon(icon, color: isSelected ? Colors.green[800] : Colors.grey, size: 24),
             ),
-            if (isSelected) 
-              FadeInUp(
-                duration: const Duration(milliseconds: 200),
-                child: Text(label, style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green[800])),
-              )
+            if (isSelected) FadeInUp(duration: const Duration(milliseconds: 200), child: Text(label, style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green[800])))
           ],
         ),
       ),
@@ -146,17 +102,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// --- 2. MARKETPLACE VIEW (The Grid & Search) ---
 class MarketplaceView extends StatefulWidget {
-  // Added Key support so HomeScreen can identify this widget
   const MarketplaceView({super.key});
-
   @override
-  // Changed from _MarketplaceViewState to MarketplaceViewState (Public)
   State<MarketplaceView> createState() => MarketplaceViewState();
 }
 
-// 5. PUBLIC STATE CLASS
 class MarketplaceViewState extends State<MarketplaceView> {
   final ApiClient _apiClient = ApiClient();
   late Future<List<Harvest>> _harvestsFuture;
@@ -177,7 +128,6 @@ class MarketplaceViewState extends State<MarketplaceView> {
     loadHarvests();
   }
 
-  // 6. PUBLIC REFRESH METHOD
   void loadHarvests() {
     setState(() {
       _harvestsFuture = _apiClient.getHarvests();
@@ -188,7 +138,8 @@ class MarketplaceViewState extends State<MarketplaceView> {
     final name = cropName.toLowerCase();
     if (name.contains('maize') || name.contains('corn')) return 'https://images.unsplash.com/photo-1551754655-cd27e38d2076?w=500';
     if (name.contains('bean')) return 'https://images.unsplash.com/photo-1551489186-cf8726f514f8?w=500';
-    if (name.contains('mango')) return 'https://images.unsplash.com/photo-1553279768-865429fa0078?w=500';
+    // FIXED MANGO URL
+    if (name.contains('mango')) return 'https://images.unsplash.com/photo-1601493700631-2b16ec4b4716?w=500';
     if (name.contains('avocado')) return 'https://images.unsplash.com/photo-1523049673856-4287b33a18e0?w=500';
     return 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500';
   }
@@ -205,10 +156,7 @@ class MarketplaceViewState extends State<MarketplaceView> {
           padding: const EdgeInsets.all(8.0),
           child: BouncyButton(
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen())),
-            child: CircleAvatar(
-              backgroundColor: Colors.green[50],
-              child: const Icon(LucideIcons.user, color: Colors.green, size: 20),
-            ),
+            child: CircleAvatar(backgroundColor: Colors.green[50], child: const Icon(LucideIcons.user, color: Colors.green, size: 20)),
           ),
         ),
         title: Row(
@@ -219,23 +167,9 @@ class MarketplaceViewState extends State<MarketplaceView> {
             Text("MkulimaHub", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.w900, fontSize: 22)),
           ],
         ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12.0),
-            child: BouncyButton(
-              onPressed: () {},
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.grey[100], shape: BoxShape.circle),
-                child: const Icon(LucideIcons.shoppingBag, color: Colors.black87, size: 20),
-              ),
-            ),
-          ),
-        ],
       ),
       body: CustomScrollView(
         slivers: [
-          // Search & Categories
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(16.0),
@@ -243,31 +177,14 @@ class MarketplaceViewState extends State<MarketplaceView> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(15),
-                      boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.15), blurRadius: 15, offset: const Offset(0, 5))],
-                    ),
-                    child: TextField(
-                      decoration: InputDecoration(
-                        hintText: "What are you craving?",
-                        hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 14),
-                        prefixIcon: const Icon(LucideIcons.search, color: Colors.green),
-                        suffixIcon: const Icon(LucideIcons.slidersHorizontal, color: Colors.green),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
-                      ),
-                    ),
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.15), blurRadius: 15, offset: const Offset(0, 5))]),
+                    child: TextField(decoration: InputDecoration(hintText: "What are you craving?", hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 14), prefixIcon: const Icon(LucideIcons.search, color: Colors.green), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20))),
                   ),
                   const SizedBox(height: 20),
-                  
-                  // Categories List
                   SizedBox(
                     height: 90,
                     child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _categories.length,
-                      physics: const BouncingScrollPhysics(),
+                      scrollDirection: Axis.horizontal, itemCount: _categories.length, physics: const BouncingScrollPhysics(),
                       itemBuilder: (context, index) {
                         final cat = _categories[index];
                         final isSelected = _selectedCategoryIndex == index;
@@ -276,46 +193,22 @@ class MarketplaceViewState extends State<MarketplaceView> {
                           child: GestureDetector(
                             onTap: () => setState(() => _selectedCategoryIndex = index),
                             child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 300),
-                              margin: const EdgeInsets.only(right: 16, bottom: 10),
-                              padding: EdgeInsets.symmetric(horizontal: isSelected ? 20 : 12, vertical: 12),
-                              decoration: BoxDecoration(
-                                color: isSelected ? cat['color'] : Colors.white,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: isSelected ? Colors.transparent : Colors.grey[200]!, width: 1.5),
-                                boxShadow: isSelected ? [BoxShadow(color: (cat['color'] as Color).withOpacity(0.4), blurRadius: 10, offset: const Offset(0, 5))] : [],
-                              ),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(cat['icon'], color: isSelected ? Colors.white : Colors.grey[600], size: isSelected ? 24 : 22),
-                                  const SizedBox(height: 5),
-                                  Text(cat['name'], style: GoogleFonts.poppins(color: isSelected ? Colors.white : Colors.grey[600], fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, fontSize: 12)),
-                                ],
-                              ),
+                              duration: const Duration(milliseconds: 300), margin: const EdgeInsets.only(right: 16, bottom: 10), padding: EdgeInsets.symmetric(horizontal: isSelected ? 20 : 12, vertical: 12),
+                              decoration: BoxDecoration(color: isSelected ? cat['color'] : Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: isSelected ? Colors.transparent : Colors.grey[200]!, width: 1.5), boxShadow: isSelected ? [BoxShadow(color: (cat['color'] as Color).withOpacity(0.4), blurRadius: 10, offset: const Offset(0, 5))] : []),
+                              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(cat['icon'], color: isSelected ? Colors.white : Colors.grey[600], size: isSelected ? 24 : 22), const SizedBox(height: 5), Text(cat['name'], style: GoogleFonts.poppins(color: isSelected ? Colors.white : Colors.grey[600], fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, fontSize: 12))]),
                             ),
                           ),
                         );
                       },
                     ),
                   ),
-                  
                   const SizedBox(height: 20),
-                  // Title
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text("Fresh Arrivals", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
-                      Row(children: [Text("See All", style: GoogleFonts.poppins(color: Colors.green[700], fontWeight: FontWeight.bold)), const SizedBox(width: 4), const Icon(LucideIcons.arrowRight, size: 16, color: Colors.green)]),
-                    ],
-                  ),
+                  Text("Fresh Arrivals", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 16),
                 ],
               ),
             ),
           ),
-
-          // Grid
           FutureBuilder<List<Harvest>>(
             future: _harvestsFuture,
             builder: (context, snapshot) {
@@ -329,9 +222,20 @@ class MarketplaceViewState extends State<MarketplaceView> {
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, childAspectRatio: 0.72, crossAxisSpacing: 16, mainAxisSpacing: 16),
                   delegate: SliverChildBuilderDelegate((context, index) {
                     final harvest = harvests[index];
-                    final displayName = harvest.cropName.length > 1 
-                        ? harvest.cropName[0].toUpperCase() + harvest.cropName.substring(1).toLowerCase()
-                        : harvest.cropName;
+                    
+                    // --- THE SMART BADGE LOGIC ---
+                    bool isBulk = harvest.cropName.contains('Pool)');
+                    String displayTitle = harvest.cropName;
+                    
+                    if (isBulk) {
+                      // Remove the "(Makindu Hub Pool)" text from the title so it looks clean
+                      int start = harvest.cropName.indexOf('(');
+                      if (start != -1) {
+                        displayTitle = harvest.cropName.substring(0, start).trim();
+                      }
+                    } else {
+                      displayTitle = harvest.cropName.length > 1 ? harvest.cropName[0].toUpperCase() + harvest.cropName.substring(1).toLowerCase() : harvest.cropName;
+                    }
 
                     return FadeInUp(
                       delay: Duration(milliseconds: index * 100),
@@ -345,8 +249,24 @@ class MarketplaceViewState extends State<MarketplaceView> {
                                 flex: 5,
                                 child: Stack(
                                   children: [
-                                    Image.network(_getImageForCrop(harvest.cropName), width: double.infinity, height: double.infinity, fit: BoxFit.cover, errorBuilder: (c, e, s) => Container(color: Colors.green[50])),
-                                    Positioned(top: 8, right: 8, child: Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: Colors.white.withOpacity(0.9), shape: BoxShape.circle), child: const Icon(LucideIcons.heart, size: 16, color: Colors.redAccent)))
+                                    Image.network(_getImageForCrop(displayTitle), width: double.infinity, height: double.infinity, fit: BoxFit.cover, errorBuilder: (c, e, s) => Container(color: Colors.green[50], child: const Center(child: Icon(LucideIcons.imageOff, color: Colors.green)))),
+                                    
+                                    // --- THE NEW BULK BADGE ---
+                                    if (isBulk)
+                                      Positioned(
+                                        top: 8, left: 8,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                          decoration: BoxDecoration(color: Colors.orange[700], borderRadius: BorderRadius.circular(8)),
+                                          child: Row(
+                                            children: [
+                                              const Icon(LucideIcons.users, size: 12, color: Colors.white),
+                                              const SizedBox(width: 4),
+                                              Text("BULK HUB", style: GoogleFonts.poppins(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ),
@@ -359,7 +279,7 @@ class MarketplaceViewState extends State<MarketplaceView> {
                                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: [
                                       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                        Text(displayName, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16), maxLines: 1),
+                                        Text(displayTitle, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16), maxLines: 1),
                                         Text("${harvest.weightKg}kg Available", style: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 12)),
                                       ]),
                                       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -380,14 +300,13 @@ class MarketplaceViewState extends State<MarketplaceView> {
               );
             },
           ),
-          const SliverToBoxAdapter(child: SizedBox(height: 100)), // Space for Floating Nav
+          const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
       ),
     );
   }
 }
 
-// --- BOUNCY BUTTON ---
 class BouncyButton extends StatefulWidget {
   final Widget child;
   final VoidCallback onPressed;
@@ -395,7 +314,6 @@ class BouncyButton extends StatefulWidget {
   @override
   State<BouncyButton> createState() => _BouncyButtonState();
 }
-
 class _BouncyButtonState extends State<BouncyButton> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _scaleAnimation;
@@ -409,11 +327,6 @@ class _BouncyButtonState extends State<BouncyButton> with SingleTickerProviderSt
   void dispose() { _controller.dispose(); super.dispose(); }
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => _controller.forward(),
-      onTapUp: (_) { _controller.reverse(); widget.onPressed(); },
-      onTapCancel: () => _controller.reverse(),
-      child: ScaleTransition(scale: _scaleAnimation, child: widget.child),
-    );
+    return GestureDetector(onTapDown: (_) => _controller.forward(), onTapUp: (_) { _controller.reverse(); widget.onPressed(); }, onTapCancel: () => _controller.reverse(), child: ScaleTransition(scale: _scaleAnimation, child: widget.child));
   }
 }

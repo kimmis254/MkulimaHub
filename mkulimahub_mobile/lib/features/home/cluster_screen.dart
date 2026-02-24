@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
+import 'package:mkulimahub_mobile/features/home/hub_chat_screen.dart'; // <-- Added import for the Chat Screen!
 
 class ClusterScreen extends StatefulWidget {
   const ClusterScreen({super.key});
@@ -57,7 +58,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
-        automaticallyImplyLeading: false,
+        automaticallyImplyLeading: false, // Hidden back button for tabs
         title: Text(
           "AI Sourcing Hubs",
           style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold),
@@ -156,10 +157,10 @@ class _ClusterScreenState extends State<ClusterScreen> {
   // --- THE HUB CARD ---
   Widget _buildHubCard(Map<String, dynamic> hub) {
     int farmerCount = hub['farmer_count'] ?? 0;
-    List<dynamic> farmersList = hub['farmers'] ?? []; 
     
     return GestureDetector(
-      onTap: () => _showFarmersBottomSheet(farmersList),
+      // FIX: Passing the ENTIRE hub instead of just the farmers list
+      onTap: () => _showFarmersBottomSheet(hub),
       child: Container(
         margin: const EdgeInsets.only(bottom: 20),
         decoration: BoxDecoration(
@@ -216,7 +217,8 @@ class _ClusterScreenState extends State<ClusterScreen> {
                     ],
                   ),
                   ElevatedButton(
-                    onPressed: () => _showFarmersBottomSheet(farmersList),
+                    // FIX: Passing the ENTIRE hub instead of just the farmers list
+                    onPressed: () => _showFarmersBottomSheet(hub),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue[50],
                       elevation: 0,
@@ -234,7 +236,11 @@ class _ClusterScreenState extends State<ClusterScreen> {
   }
 
   // --- THE EXPANDABLE FARMER LIST ---
-  void _showFarmersBottomSheet(List<dynamic> farmers) {
+  // FIX: Accepting the entire hub Map
+  void _showFarmersBottomSheet(Map<String, dynamic> hub) {
+    List<dynamic> farmers = hub['farmers'] ?? [];
+    String hubName = hub['hub_name'] ?? 'Regional Hub';
+
     if (farmers.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No farmer details available.")));
       return;
@@ -252,7 +258,29 @@ class _ClusterScreenState extends State<ClusterScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text("Farmers in this Hub", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text("Farmers in this Hub", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                  
+                  // --- THE CO-OP CHAT BUTTON ---
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context); // Close sheet
+                      Navigator.push(
+                        context, 
+                        MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubName)) // Open Chat
+                      );
+                    },
+                    icon: const Icon(LucideIcons.messageCircle, size: 16, color: Colors.white),
+                    label: Text("Co-op Chat", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.white)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green[800],
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  )
+                ],
+              ),
               const SizedBox(height: 15),
               Expanded(
                 child: ListView.builder(

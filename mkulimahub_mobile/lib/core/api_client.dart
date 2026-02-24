@@ -268,4 +268,46 @@ class ApiClient {
     }
     return [];
   }
+  Future<List<dynamic>> getHubMessages(String hubName) async {
+    final token = await getToken();
+    if (token == null) return [];
+
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/hubs/$hubName/messages'),
+        headers: {"Authorization": "Bearer $token"},
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+    } catch (e) {
+      print("Error fetching hub messages: $e");
+    }
+    return [];
+  }
+
+  Future<String?> postHubMessage(String hubName, String message) async {
+    final token = await getToken();
+    if (token == null) return "Please login to chat.";
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/hubs/$hubName/messages'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode({"message": message}),
+      );
+
+      if (response.statusCode == 200) {
+        return null; // Success!
+      } else {
+        return "Failed to send: ${response.body}";
+      }
+    } catch (e) {
+      return "Connection error: $e";
+    }
+  }
 } 
