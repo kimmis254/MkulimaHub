@@ -498,6 +498,64 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ),
         const SizedBox(height: 40),
+          // --- MY ACTIVE PLEDGES SECTION ---
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text("My Active Contracts", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(height: 10),
+          
+          _isLoadingPledges 
+              ? const Center(child: CircularProgressIndicator(color: Colors.green))
+              : _myPledges.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Text("You haven't pledged to any contracts yet.", style: GoogleFonts.poppins(color: Colors.grey)),
+                    )
+                  : ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      itemCount: _myPledges.length,
+                      itemBuilder: (context, index) {
+                        final pledge = _myPledges[index];
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 15),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(15),
+                            border: Border.all(color: Colors.green.withOpacity(0.3)),
+                            boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(color: Colors.green[50], shape: BoxShape.circle),
+                                child: const Icon(LucideIcons.checkCircle, color: Colors.green),
+                              ),
+                              const SizedBox(width: 15),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text("${pledge['pledged_weight_kg']}kg ${pledge['crop_name']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16)),
+                                    Text("For: ${pledge['buyer_name']}", style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 13)),
+                                  ],
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(20)),
+                                child: Text(pledge['status'], style: GoogleFonts.poppins(color: Colors.blue[800], fontSize: 10, fontWeight: FontWeight.bold)),
+                              )
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+          const SizedBox(height: 40),
       ],
     );
   }
