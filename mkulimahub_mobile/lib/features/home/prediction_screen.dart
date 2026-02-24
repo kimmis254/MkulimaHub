@@ -57,10 +57,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(LucideIcons.arrowLeft, color: Colors.black),
-          onPressed: () => Navigator.pop(context),
-        ),
+        automaticallyImplyLeading: false,
         title: Text(
           "Market Forecast",
           style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold),

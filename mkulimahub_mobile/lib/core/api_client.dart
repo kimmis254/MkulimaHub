@@ -11,11 +11,9 @@ class ApiClient {
 
   Future<String?> login(String phone, String password) async {
     try {
-      // FIX 1: MATCHED SWAGGER '/auth/login'
       final response = await http.post(
         Uri.parse('$baseUrl/auth/login'), 
         headers: {
-          // Try JSON first as it is a custom endpoint
           "Content-Type": "application/x-www-form-urlencoded" 
         },
         body: {
@@ -39,7 +37,6 @@ class ApiClient {
 
   Future<String?> register(Map<String, dynamic> userData) async {
     try {
-      // FIX 2: MATCHED SWAGGER '/auth/register'
       final response = await http.post(
         Uri.parse('$baseUrl/auth/register'),
         headers: {"Content-Type": "application/json"},
@@ -68,7 +65,6 @@ class ApiClient {
     if (token == null) return null;
 
     try {
-      // FIX 3: MATCHED SWAGGER '/users/me' (This one was correct)
       final response = await http.get(
         Uri.parse('$baseUrl/users/me'),
         headers: {"Authorization": "Bearer $token"},
@@ -88,9 +84,6 @@ class ApiClient {
     if (token == null) return "Not authenticated";
 
     try {
-      print("SENDING UPDATE: ${jsonEncode(data)}");
-
-      // FIX 4: MATCHED SWAGGER '/users/profile' (was /users/me)
       final response = await http.put(
         Uri.parse('$baseUrl/users/profile'),
         headers: {
@@ -114,7 +107,6 @@ class ApiClient {
 
   Future<List<Harvest>> getHarvests() async {
     try {
-      // FIX 5: REMOVED TRAILING SLASH '/harvests'
       final response = await http.get(Uri.parse('$baseUrl/harvests'));
       
       if (response.statusCode == 200) {
@@ -132,7 +124,6 @@ class ApiClient {
     if (token == null) return "Please login first";
 
     try {
-      // FIX 6: REMOVED TRAILING SLASH '/harvests'
       final response = await http.post(
         Uri.parse('$baseUrl/harvests'),
         headers: {
@@ -157,7 +148,7 @@ class ApiClient {
   Future<List<dynamic>> getPrediction(String cropName) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/predict'), // NO trailing slash here!
+        Uri.parse('$baseUrl/predict'), 
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "commodity": cropName, 
@@ -199,6 +190,54 @@ class ApiClient {
     }
   }
 
+  // --- CONTRACTS & PLEDGES ---
+
+  Future<List<dynamic>> getContracts({String? county}) async {
+    try {
+      String url = '$baseUrl/api/contracts';
+      if (county != null && county.isNotEmpty) {
+        url += '?county=$county';
+      }
+
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        print("Failed to fetch contracts: ${response.statusCode}");
+      }
+    } catch (e) {
+      print("Error fetching contracts: $e");
+    }
+    return [];
+  }
+
+  Future<String?> createPledge(int contractId, double weightKg) async {
+    final token = await getToken();
+    if (token == null) return "Please login first to pledge.";
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/contracts/$contractId/pledge'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode({
+          "pledged_weight_kg": weightKg
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return null; // Success!
+      } else {
+        return "Failed to pledge: ${response.body}";
+      }
+    } catch (e) {
+      return "Connection error: $e";
+    }
+  }
+
   // --- HELPER METHODS ---
 
   Future<void> _saveToken(String token) async {
@@ -210,4 +249,23 @@ class ApiClient {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('auth_token');
   }
-}
+
+  Future<List<dynamic>> getMyPledges() async {
+    final token = await getToken();
+    if (token == null) return [];
+
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/my-pledges'),
+        headers: {"Authorization": "Bearer $token"},
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+    } catch (e) {
+      print("Error fetching my pledges: $e");
+    }
+    return [];
+  }
+} 

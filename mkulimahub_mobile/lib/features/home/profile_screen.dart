@@ -30,7 +30,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _cropsController = TextEditingController();
   final _villageController = TextEditingController();
 
-  // --- NEW: Dynamic Location State ---
+  // --- Location State ---
   List<dynamic> _locationsData = []; 
   List<String> _counties = [];
   List<String> _subCounties = [];
@@ -40,7 +40,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _selectedSubCounty;
   String? _selectedWard;
   
-  // --- NEW: Smart GPS State ---
+  // --- Smart GPS State ---
   bool _isAtFarm = false;
   double? _latitude;
   double? _longitude;
@@ -49,12 +49,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   File? _profileImage;
   bool _isLoading = false;
   Map<String, dynamic>? _profileData;
+  
+  // --- NEW: Pledges State ---
+  bool _isLoadingPledges = true;
+  List<dynamic> _myPledges = [];
 
   @override
   void initState() {
     super.initState();
     _isEditing = widget.isNewUser;
-    // We load locations FIRST, then load the profile so the dropdowns populate correctly
     _initializeData();
   }
 
@@ -64,7 +67,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await _loadProfile();
   }
 
-  // --- NEW: Parse the large JSON File ---
   Future<void> _loadLocationData() async {
     try {
       final String response = await rootBundle.loadString('assets/data/kenya_locations.json');
@@ -78,7 +80,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // --- NEW: GPS Capture Function ---
   Future<void> _captureFarmGPS() async {
     setState(() => _isFetchingGps = true);
     try {
@@ -106,10 +107,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _loadProfile() async {
+    setState(() => _isLoadingPledges = true);
+    
     final data = await _apiClient.getProfile();
+    final pledges = await _apiClient.getMyPledges(); // Fetch pledges
     
     setState(() {
       _isLoading = false;
+      _isLoadingPledges = false;
+      _myPledges = pledges; // Save pledges
+
       if (data != null) {
         _profileData = data;
         
@@ -117,7 +124,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _cropsController.text = data['main_crops'] ?? "";
         _villageController.text = data['village'] ?? ""; 
         
-        // --- NEW: Safe cascading load from JSON ---
+        // Safe cascading load from JSON
         final backendCounty = data['county']; 
         if (backendCounty != null && _counties.contains(backendCounty)) {
           _selectedCounty = backendCounty;
@@ -158,7 +165,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       "sub_county": _selectedSubCounty,
       "ward": _selectedWard,
       "village": _villageController.text,
-      // Send GPS data to the backend (Python handles the fallback if these are null)
       "latitude": _latitude,
       "longitude": _longitude,
     };
@@ -241,9 +247,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     return Column(
       key: const ValueKey("view"),
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(_profileData?['full_name'] ?? "Farmer", style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold)),
-        Text(location, style: GoogleFonts.poppins(color: Colors.grey[600])),
+        Center(child: Text(_profileData?['full_name'] ?? "Farmer", style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold))),
+        Center(child: Text(location, style: GoogleFonts.poppins(color: Colors.grey[600]))),
         const SizedBox(height: 30),
         
         _buildInfoCard("About", _profileData?['bio'] ?? "No bio added yet."),
@@ -251,7 +258,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         
         Container(
           width: double.infinity,
-          margin: const EdgeInsets.only(bottom: 15),
+          margin: const EdgeInsets.only(bottom: 25),
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey[200]!)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -264,7 +271,65 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ]),
         ),
 
-        const SizedBox(height: 20),
+        // --- NEW: MY ACTIVE PLEDGES SECTION ---
+        Text("My Active Contracts", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+        const SizedBox(height: 10),
+        
+        _isLoadingPledges 
+            ? const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: Colors.green)))
+            : _myPledges.isEmpty
+                ? Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(20),
+                    margin: const EdgeInsets.only(bottom: 25),
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey[200]!)),
+                    child: Text("You haven't pledged to any contracts yet.", style: GoogleFonts.poppins(color: Colors.grey), textAlign: TextAlign.center),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: const EdgeInsets.only(bottom: 25),
+                    itemCount: _myPledges.length,
+                    itemBuilder: (context, index) {
+                      final pledge = _myPledges[index];
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(15),
+                          border: Border.all(color: Colors.green.withOpacity(0.3)),
+                          boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(color: Colors.green[50], shape: BoxShape.circle),
+                              child: const Icon(LucideIcons.checkCircle, color: Colors.green),
+                            ),
+                            const SizedBox(width: 15),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text("${pledge['pledged_weight_kg']}kg ${pledge['crop_name']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16)),
+                                  Text("For: ${pledge['buyer_name']}", style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(20)),
+                              child: Text(pledge['status'], style: GoogleFonts.poppins(color: Colors.blue[800], fontSize: 10, fontWeight: FontWeight.bold)),
+                            )
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+
+        const SizedBox(height: 10),
         
         SizedBox(
           width: double.infinity,
@@ -279,13 +344,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
         
         const SizedBox(height: 15),
         
-        TextButton.icon(
-           icon: const Icon(LucideIcons.logOut, color: Colors.red),
-           label: const Text("Log Out", style: TextStyle(color: Colors.red)),
-           onPressed: () async {
-             await _apiClient.logout();
-             if (mounted) Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginScreen()), (r) => false);
-           },
+        Center(
+          child: TextButton.icon(
+             icon: const Icon(LucideIcons.logOut, color: Colors.red),
+             label: const Text("Log Out", style: TextStyle(color: Colors.red)),
+             onPressed: () async {
+               await _apiClient.logout();
+               if (mounted) Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginScreen()), (r) => false);
+             },
+          ),
         ),
         const SizedBox(height: 40),
       ],
@@ -304,7 +371,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         FadeInDown(delay: const Duration(milliseconds: 100), child: _buildSectionTitle("Farm Location")),
         const SizedBox(height: 10),
         
-        // --- NEW: Dynamic Cascading Location Card ---
+        // --- Dynamic Cascading Location Card ---
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -354,7 +421,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
         const SizedBox(height: 30),
 
-        // --- NEW: Smart GPS Toggle ---
+        // --- Smart GPS Toggle ---
         FadeInDown(delay: const Duration(milliseconds: 150), child: _buildSectionTitle("AI Clustering Precision")),
         const SizedBox(height: 10),
         Container(

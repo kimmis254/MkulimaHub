@@ -7,8 +7,8 @@ import 'package:mkulimahub_mobile/features/home/add_harvest_screen.dart';
 import 'package:mkulimahub_mobile/features/home/harvest_model.dart';
 import 'package:mkulimahub_mobile/features/home/prediction_screen.dart';
 import 'package:mkulimahub_mobile/features/home/profile_screen.dart';
-// --- ADD THE IMPORT FOR YOUR NEW SCREEN ---
 import 'package:mkulimahub_mobile/features/home/cluster_screen.dart';
+import 'package:mkulimahub_mobile/features/home/contracts_screen.dart';
 
 // --- 1. THE MAIN SHELL (Holds the Nav Bar) ---
 class HomeScreen extends StatefulWidget {
@@ -32,10 +32,10 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _screens = [
       // 2. ASSIGN THE KEY HERE
-      MarketplaceView(key: _marketplaceKey),      // 0: Home
-      const ClusterScreen(),                      // 1: AI Sourcing Hubs
-      const PredictionScreen(),                   // 2: Forecast
-      const Center(child: Text("AI Chatbot Coming Soon!")), // 3: Chatbot
+      MarketplaceView(key: _marketplaceKey),      
+      const ClusterScreen(),                      
+      const PredictionScreen(),                   
+      const ContractsScreen(), 
     ];
   }
 
@@ -76,7 +76,6 @@ class _HomeScreenState extends State<HomeScreen> {
             GestureDetector(
               onTap: () async {
                 // 3. WAIT FOR RESULT
-                // We pause here until the user closes the Add Screen
                 final result = await Navigator.push(
                   context, 
                   MaterialPageRoute(builder: (_) => const AddHarvestScreen())
@@ -85,7 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 // 4. IF SUCCESS (result == true), REFRESH THE LIST
                 if (result == true) {
                   print("Harvest Added! Refreshing list...");
-                  _marketplaceKey.currentState?.loadHarvests(); // <--- MAGIC HAPPENS HERE
+                  _marketplaceKey.currentState?.loadHarvests(); 
                   
                   // Optional: Switch back to home tab to see the new item
                   if (_selectedIndex != 0) {
@@ -107,7 +106,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             
             _buildNavItem(2, LucideIcons.trendingUp, "Trends"),
-            _buildNavItem(3, LucideIcons.bot, "Ask AI"),
+            
+            // --- UPDATED LABEL TO "Contracts" ---
+            _buildNavItem(3, LucideIcons.fileText, "Contracts"),
           ],
         ),
       ),
