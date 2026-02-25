@@ -310,4 +310,22 @@ class ApiClient {
       return "Connection error: $e";
     }
   }
+  Future<String> askAI(String message) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/ai-chat'),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"message": message}),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['reply'] ?? "I couldn't process that.";
+      } else {
+        return "Server error: ${response.statusCode}";
+      }
+    } catch (e) {
+      return "Connection error. Make sure your Python server is running!";
+    }
+  }
 } 

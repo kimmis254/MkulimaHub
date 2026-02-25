@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -9,10 +10,8 @@ import 'package:mkulimahub_mobile/features/home/prediction_screen.dart';
 import 'package:mkulimahub_mobile/features/home/profile_screen.dart';
 import 'package:mkulimahub_mobile/features/home/cluster_screen.dart';
 import 'package:mkulimahub_mobile/features/home/contracts_screen.dart';
+import 'package:mkulimahub_mobile/features/home/ai_chat_screen.dart';
 
-// --- THE MAGIC KEY ---
-// Moving this outside the class makes it a "Global Variable". 
-// Now, ANY screen in the app can force the marketplace to refresh!
 final GlobalKey<MarketplaceViewState> marketplaceKey = GlobalKey<MarketplaceViewState>();
 
 class HomeScreen extends StatefulWidget {
@@ -30,7 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _screens = [
-      MarketplaceView(key: marketplaceKey), // Linked to our new Global Key
+      MarketplaceView(key: marketplaceKey), 
       const ClusterScreen(),                      
       const PredictionScreen(),                   
       const ContractsScreen(),                    
@@ -40,38 +39,56 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBody: true, // This allows the marketplace to scroll UNDER the floating nav
       body: IndexedStack(index: _selectedIndex, children: _screens),
+      
+      // THE NEW SLEEK FLOATING GLASS NAV
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       floatingActionButton: Container(
         margin: const EdgeInsets.fromLTRB(20, 0, 20, 20),
         height: 70,
         decoration: BoxDecoration(
-          color: Colors.white,
           borderRadius: BorderRadius.circular(25),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, 10))],
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 20, offset: const Offset(0, 10))],
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _buildNavItem(0, LucideIcons.home, "Home"),
-            _buildNavItem(1, LucideIcons.mapPin, "Hubs"),
-            GestureDetector(
-              onTap: () async {
-                final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddHarvestScreen()));
-                if (result == true) {
-                  marketplaceKey.currentState?.loadHarvests(); // Auto Refresh
-                  if (_selectedIndex != 0) setState(() => _selectedIndex = 0);
-                }
-              },
-              child: Container(
-                width: 50, height: 50,
-                decoration: BoxDecoration(color: Colors.green[800], shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.green.withOpacity(0.4), blurRadius: 10, offset: const Offset(0, 5))]),
-                child: const Icon(LucideIcons.plus, color: Colors.white, size: 28),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(25),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10), // The magic blur effect
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.5), // Dark transparent tint
+                border: Border.all(color: Colors.white.withOpacity(0.1), width: 1), // Subtle glassy edge
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildNavItem(0, LucideIcons.home, "Home"),
+                  _buildNavItem(1, LucideIcons.mapPin, "Hubs"),
+                  GestureDetector(
+                    onTap: () async {
+                      final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddHarvestScreen()));
+                      if (result == true) {
+                        marketplaceKey.currentState?.loadHarvests(); 
+                        if (_selectedIndex != 0) setState(() => _selectedIndex = 0);
+                      }
+                    },
+                    child: Container(
+                      width: 50, height: 50,
+                      decoration: BoxDecoration(
+                        color: Colors.green, 
+                        shape: BoxShape.circle, 
+                        boxShadow: [BoxShadow(color: Colors.greenAccent.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))]
+                      ),
+                      child: const Icon(LucideIcons.plus, color: Colors.black, size: 28),
+                    ),
+                  ),
+                  _buildNavItem(2, LucideIcons.trendingUp, "Trends"),
+                  _buildNavItem(3, LucideIcons.fileText, "Contracts"),
+                ],
               ),
             ),
-            _buildNavItem(2, LucideIcons.trendingUp, "Trends"),
-            _buildNavItem(3, LucideIcons.fileText, "Contracts"),
-          ],
+          ),
         ),
       ),
       bottomNavigationBar: const SizedBox.shrink(),
@@ -82,19 +99,19 @@ class _HomeScreenState extends State<HomeScreen> {
     bool isSelected = _selectedIndex == index;
     return GestureDetector(
       onTap: () => setState(() => _selectedIndex = index),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+      child: Container(
+        color: Colors.transparent, 
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: isSelected ? BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(15)) : const BoxDecoration(color: Colors.transparent),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             AnimatedContainer(
               duration: const Duration(milliseconds: 200),
-              transform: Matrix4.translationValues(0, isSelected ? -2 : 0, 0),
-              child: Icon(icon, color: isSelected ? Colors.green[800] : Colors.grey, size: 24),
+              transform: Matrix4.translationValues(0, isSelected ? -3 : 0, 0),
+              // White icons when unselected, Neon Green when selected
+              child: Icon(icon, color: isSelected ? Colors.green : Colors.black, size: 24),
             ),
-            if (isSelected) FadeInUp(duration: const Duration(milliseconds: 200), child: Text(label, style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green[800])))
+            if (isSelected) FadeInUp(duration: const Duration(milliseconds: 200), child: Text(label, style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green)))
           ],
         ),
       ),
@@ -110,7 +127,10 @@ class MarketplaceView extends StatefulWidget {
 
 class MarketplaceViewState extends State<MarketplaceView> {
   final ApiClient _apiClient = ApiClient();
-  late Future<List<Harvest>> _harvestsFuture;
+  
+  List<Harvest> _allHarvests = [];
+  bool _isLoading = true;
+  String _searchQuery = "";
   int _selectedCategoryIndex = 0;
 
   final List<Map<String, dynamic>> _categories = [
@@ -128,24 +148,61 @@ class MarketplaceViewState extends State<MarketplaceView> {
     loadHarvests();
   }
 
-  void loadHarvests() {
-    setState(() {
-      _harvestsFuture = _apiClient.getHarvests();
-    });
+  Future<void> loadHarvests() async {
+    setState(() => _isLoading = true);
+    final data = await _apiClient.getHarvests();
+    if (mounted) {
+      setState(() {
+        _allHarvests = data;
+        _isLoading = false;
+      });
+    }
+  }
+
+  String _getCategoryForCrop(String cropName) {
+    final name = cropName.toLowerCase();
+    if (name.contains('maize') || name.contains('wheat') || name.contains('rice') || name.contains('grain')) return 'Grains';
+    if (name.contains('mango') || name.contains('avocado') || name.contains('apple') || name.contains('banana') || name.contains('fruit')) return 'Fruits';
+    if (name.contains('bean') || name.contains('carrot') || name.contains('cabbage') || name.contains('tomato') || name.contains('potato') || name.contains('veg')) return 'Veg';
+    if (name.contains('milk') || name.contains('egg') || name.contains('cheese') || name.contains('dairy')) return 'Dairy';
+    if (name.contains('beef') || name.contains('chicken') || name.contains('meat') || name.contains('pork')) return 'Meat';
+    return 'Other'; 
+  }
+
+  List<Harvest> get _filteredHarvests {
+    return _allHarvests.where((harvest) {
+      final matchesSearch = harvest.cropName.toLowerCase().contains(_searchQuery.toLowerCase());
+      bool matchesCategory = true;
+      if (_selectedCategoryIndex != 0) { 
+        final targetCategory = _categories[_selectedCategoryIndex]['name'];
+        final detectedCategory = _getCategoryForCrop(harvest.cropName);
+        matchesCategory = detectedCategory == targetCategory;
+      }
+      return matchesSearch && matchesCategory;
+    }).toList();
+  }
+
+  String _formatCropName(String rawName) {
+    if (rawName.isEmpty) return rawName;
+    return rawName.split(' ').map((word) {
+      if (word.isEmpty) return '';
+      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+    }).join(' ').trim();
   }
 
   String _getImageForCrop(String cropName) {
     final name = cropName.toLowerCase();
     if (name.contains('maize') || name.contains('corn')) return 'https://images.unsplash.com/photo-1551754655-cd27e38d2076?w=500';
     if (name.contains('bean')) return 'https://images.unsplash.com/photo-1551489186-cf8726f514f8?w=500';
-    // FIXED MANGO URL
-    if (name.contains('mango')) return 'https://images.unsplash.com/photo-1601493700631-2b16ec4b4716?w=500';
+    if (name.contains('mango')) return 'https://images.unsplash.com/photo-1553279768-865429fa0078?w=500';
     if (name.contains('avocado')) return 'https://images.unsplash.com/photo-1523049673856-4287b33a18e0?w=500';
     return 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500';
   }
 
   @override
   Widget build(BuildContext context) {
+    final displayHarvests = _filteredHarvests;
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -167,6 +224,32 @@ class MarketplaceViewState extends State<MarketplaceView> {
             Text("MkulimaHub", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.w900, fontSize: 22)),
           ],
         ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: BouncyButton(
+              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Shopping Cart coming soon!"))),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: Colors.grey[100], shape: BoxShape.circle),
+                child: const Icon(LucideIcons.shoppingBag, color: Colors.black87, size: 20),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 12.0),
+            child: BouncyButton(
+              onPressed: () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const AiChatScreen()));
+              },
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: Colors.green[100], shape: BoxShape.circle),
+                child: Icon(LucideIcons.bot, color: Colors.green[800], size: 22),
+              ),
+            ),
+          ),
+        ],
       ),
       body: CustomScrollView(
         slivers: [
@@ -178,7 +261,16 @@ class MarketplaceViewState extends State<MarketplaceView> {
                 children: [
                   Container(
                     decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.15), blurRadius: 15, offset: const Offset(0, 5))]),
-                    child: TextField(decoration: InputDecoration(hintText: "What are you craving?", hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 14), prefixIcon: const Icon(LucideIcons.search, color: Colors.green), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20))),
+                    child: TextField(
+                      onChanged: (val) => setState(() => _searchQuery = val),
+                      decoration: InputDecoration(
+                        hintText: "Search for crops, hubs...", 
+                        hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 14), 
+                        prefixIcon: const Icon(LucideIcons.search, color: Colors.green), 
+                        border: InputBorder.none, 
+                        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20)
+                      )
+                    ),
                   ),
                   const SizedBox(height: 20),
                   SizedBox(
@@ -203,104 +295,110 @@ class MarketplaceViewState extends State<MarketplaceView> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  Text("Fresh Arrivals", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
+                  Text(
+                    _searchQuery.isNotEmpty ? 'Search Results' : (_selectedCategoryIndex == 0 ? "Fresh Arrivals" : "${_categories[_selectedCategoryIndex]['name']} Available"), 
+                    style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)
+                  ),
                   const SizedBox(height: 16),
                 ],
               ),
             ),
           ),
-          FutureBuilder<List<Harvest>>(
-            future: _harvestsFuture,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) return const SliverFillRemaining(child: Center(child: CircularProgressIndicator()));
-              if (!snapshot.hasData || snapshot.data!.isEmpty) return const SliverFillRemaining(child: Center(child: Text("No harvests yet.")));
-              
-              final harvests = snapshot.data!;
-              return SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                sliver: SliverGrid(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, childAspectRatio: 0.72, crossAxisSpacing: 16, mainAxisSpacing: 16),
-                  delegate: SliverChildBuilderDelegate((context, index) {
-                    final harvest = harvests[index];
-                    
-                    // --- THE SMART BADGE LOGIC ---
-                    bool isBulk = harvest.cropName.contains('Pool)');
-                    String displayTitle = harvest.cropName;
-                    
-                    if (isBulk) {
-                      // Remove the "(Makindu Hub Pool)" text from the title so it looks clean
-                      int start = harvest.cropName.indexOf('(');
-                      if (start != -1) {
-                        displayTitle = harvest.cropName.substring(0, start).trim();
-                      }
-                    } else {
-                      displayTitle = harvest.cropName.length > 1 ? harvest.cropName[0].toUpperCase() + harvest.cropName.substring(1).toLowerCase() : harvest.cropName;
+          
+          if (_isLoading)
+            const SliverFillRemaining(child: Center(child: CircularProgressIndicator(color: Colors.green)))
+          else if (displayHarvests.isEmpty)
+            SliverFillRemaining(
+              child: Center(
+                child: Text(
+                  "No crops found matching your filters.", 
+                  style: GoogleFonts.poppins(color: Colors.grey)
+                )
+              )
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, childAspectRatio: 0.72, crossAxisSpacing: 16, mainAxisSpacing: 16),
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  final harvest = displayHarvests[index];
+                  
+                  bool isBulk = harvest.cropName.contains('Pool)');
+                  String rawTitle = harvest.cropName;
+                  
+                  if (isBulk) {
+                    int start = harvest.cropName.indexOf('(');
+                    if (start != -1) {
+                      rawTitle = harvest.cropName.substring(0, start).trim();
                     }
+                  }
 
-                    return FadeInUp(
-                      delay: Duration(milliseconds: index * 100),
-                      child: Container(
-                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 15, offset: const Offset(0, 8))]),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(20),
-                          child: Column(
-                            children: [
-                              Expanded(
-                                flex: 5,
-                                child: Stack(
-                                  children: [
-                                    Image.network(_getImageForCrop(displayTitle), width: double.infinity, height: double.infinity, fit: BoxFit.cover, errorBuilder: (c, e, s) => Container(color: Colors.green[50], child: const Center(child: Icon(LucideIcons.imageOff, color: Colors.green)))),
-                                    
-                                    // --- THE NEW BULK BADGE ---
-                                    if (isBulk)
-                                      Positioned(
-                                        top: 8, left: 8,
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                          decoration: BoxDecoration(color: Colors.orange[700], borderRadius: BorderRadius.circular(8)),
-                                          child: Row(
-                                            children: [
-                                              const Icon(LucideIcons.users, size: 12, color: Colors.white),
-                                              const SizedBox(width: 4),
-                                              Text("BULK HUB", style: GoogleFonts.poppins(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                                            ],
-                                          ),
+                  String cleanDisplayTitle = _formatCropName(rawTitle);
+
+                  return FadeInUp(
+                    delay: Duration(milliseconds: index * 50), 
+                    child: Container(
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 15, offset: const Offset(0, 8))]),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: Column(
+                          children: [
+                            Expanded(
+                              flex: 5,
+                              child: Stack(
+                                children: [
+                                  Image.network(_getImageForCrop(cleanDisplayTitle), width: double.infinity, height: double.infinity, fit: BoxFit.cover, errorBuilder: (c, e, s) => Container(color: Colors.green[50], child: const Center(child: Icon(LucideIcons.imageOff, color: Colors.green)))),
+                                  
+                                  if (isBulk)
+                                    Positioned(
+                                      top: 8, left: 8,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(color: Colors.orange[700], borderRadius: BorderRadius.circular(8)),
+                                        child: Row(
+                                          children: [
+                                            const Icon(LucideIcons.users, size: 12, color: Colors.white),
+                                            const SizedBox(width: 4),
+                                            Text("BULK HUB", style: GoogleFonts.poppins(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                          ],
                                         ),
                                       ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            Expanded(
+                              flex: 4,
+                              child: Padding(
+                                padding: const EdgeInsets.all(12.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                      Text(cleanDisplayTitle, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16), maxLines: 1),
+                                      Text("${harvest.weightKg}kg Available", style: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 12)),
+                                    ]),
+                                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                                      Text("KES ${harvest.pricePerKg}", style: GoogleFonts.poppins(color: Colors.green[800], fontWeight: FontWeight.w700, fontSize: 16)),
+                                      Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(10)), child: const Icon(LucideIcons.plus, color: Colors.white, size: 16))
+                                    ])
                                   ],
                                 ),
                               ),
-                              Expanded(
-                                flex: 4,
-                                child: Padding(
-                                  padding: const EdgeInsets.all(12.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                        Text(displayTitle, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16), maxLines: 1),
-                                        Text("${harvest.weightKg}kg Available", style: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 12)),
-                                      ]),
-                                      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                                        Text("KES ${harvest.pricePerKg}", style: GoogleFonts.poppins(color: Colors.green[800], fontWeight: FontWeight.w700, fontSize: 16)),
-                                        Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(10)), child: const Icon(LucideIcons.plus, color: Colors.white, size: 16))
-                                      ])
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
-                    );
-                  }, childCount: harvests.length),
-                ),
-              );
-            },
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                    ),
+                  );
+                }, childCount: displayHarvests.length),
+              ),
+            ),
+          
+          // Extra padding so items don't hide under the floating nav!
+          const SliverToBoxAdapter(child: SizedBox(height: 120)),
         ],
       ),
     );
