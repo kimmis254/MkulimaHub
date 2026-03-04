@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart'; // 🔥 Import dotenv
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/auth/login_screen.dart';
 import 'package:mkulimahub_mobile/features/home/home_screen.dart';
 
-void main() {
+// 🔥 Change main to async to load environment variables first
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized(); // Required for async main
+  await dotenv.load(fileName: ".env"); // Load the variables
   runApp(const MkulimaHubApp());
 }
 
@@ -16,27 +20,22 @@ class MkulimaHubApp extends StatelessWidget {
 
     return MaterialApp(
       title: 'MkulimaHub',
-      debugShowCheckedModeBanner: false,
+      debugShowCheckedModeBanner: false, // Cleaner production look
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
         useMaterial3: true,
-        // Standard input styling for the whole app
         inputDecorationTheme: InputDecorationTheme(
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           filled: true,
           fillColor: Colors.grey[100],
         ),
       ),
-      // LOGIC: Check for token on startup
       home: FutureBuilder<String?>(
         future: apiClient.getToken(),
         builder: (context, snapshot) {
-          // 1. While checking, show a blank loading screen
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Scaffold(body: Center(child: CircularProgressIndicator()));
+            return const Scaffold(body: Center(child: CircularProgressIndicator(color: Colors.green)));
           }
-
-          // 2. If token exists, go to Home. If not, Login.
           if (snapshot.hasData && snapshot.data != null) {
             return const HomeScreen();
           } else {

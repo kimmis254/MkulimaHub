@@ -46,6 +46,7 @@ dependencies:
   lucide_icons: ^0.257.0
   image_picker: ^1.2.1
   shared_preferences: ^2.5.4
+  flutter_dotenv: ^6.0.0
   
 
 dev_dependencies:
@@ -71,6 +72,7 @@ flutter:
  
   assets:
     - assets/data/kenya_locations.json
+    - .env
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

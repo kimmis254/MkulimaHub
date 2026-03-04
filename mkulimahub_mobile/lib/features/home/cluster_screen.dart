@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
-import 'package:mkulimahub_mobile/features/home/hub_chat_screen.dart'; // <-- Added import for the Chat Screen!
+import 'package:mkulimahub_mobile/features/home/hub_chat_screen.dart'; 
 
 class ClusterScreen extends StatefulWidget {
   const ClusterScreen({super.key});
@@ -58,7 +58,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
-        automaticallyImplyLeading: false, // Hidden back button for tabs
+        automaticallyImplyLeading: false, 
         title: Text(
           "AI Sourcing Hubs",
           style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold),
@@ -66,7 +66,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
       ),
       body: Column(
         children: [
-          // --- TOP FILTER SECTION ---
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
             child: Row(
@@ -102,7 +101,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
             ),
           ),
           
-          // --- MAIN CONTENT ---
           Expanded(
             child: _isLoading 
                 ? _buildAILoadingState() 
@@ -126,7 +124,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
     );
   }
 
-  // --- THE AI LOADING ANIMATION ---
   Widget _buildAILoadingState() {
     return Center(
       child: Column(
@@ -154,12 +151,10 @@ class _ClusterScreenState extends State<ClusterScreen> {
     );
   }
 
-  // --- THE HUB CARD ---
   Widget _buildHubCard(Map<String, dynamic> hub) {
     int farmerCount = hub['farmer_count'] ?? 0;
     
     return GestureDetector(
-      // FIX: Passing the ENTIRE hub instead of just the farmers list
       onTap: () => _showFarmersBottomSheet(hub),
       child: Container(
         margin: const EdgeInsets.only(bottom: 20),
@@ -172,7 +167,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Top Graphic Header
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -196,7 +190,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
               ),
             ),
             
-            // Bottom Info Section
             Padding(
               padding: const EdgeInsets.all(20),
               child: Row(
@@ -217,7 +210,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
                     ],
                   ),
                   ElevatedButton(
-                    // FIX: Passing the ENTIRE hub instead of just the farmers list
                     onPressed: () => _showFarmersBottomSheet(hub),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue[50],
@@ -235,8 +227,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
     );
   }
 
-  // --- THE EXPANDABLE FARMER LIST ---
-  // FIX: Accepting the entire hub Map
+  
   void _showFarmersBottomSheet(Map<String, dynamic> hub) {
     List<dynamic> farmers = hub['farmers'] ?? [];
     String hubName = hub['hub_name'] ?? 'Regional Hub';
@@ -263,10 +254,9 @@ class _ClusterScreenState extends State<ClusterScreen> {
                 children: [
                   Text("Farmers in this Hub", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
                   
-                  // --- THE CO-OP CHAT BUTTON ---
                   ElevatedButton.icon(
                     onPressed: () {
-                      Navigator.pop(context); // Close sheet
+                      Navigator.pop(context); 
                       Navigator.push(
                         context, 
                         MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubName)) // Open Chat

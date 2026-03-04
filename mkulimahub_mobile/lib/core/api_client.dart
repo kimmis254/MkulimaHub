@@ -1,13 +1,13 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter_dotenv/flutter_dotenv.dart'; // 🔥 Import dotenv
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mkulimahub_mobile/features/home/harvest_model.dart';
 
 class ApiClient {
-  // 1. YOUR IP ADDRESS (Ensure this is correct)
-  static const String baseUrl = 'http://192.168.100.4:8000'; 
-
-  // --- AUTHENTICATION ---
+  // 🔥 Dynamic base URL! No more hardcoded IPs. 
+  // It checks the .env file. If it fails, it defaults to the Android Emulator IP.
+  String get baseUrl => dotenv.env['API_BASE_URL'] ?? 'http://192.168.100.4:8000'; 
 
   Future<String?> login(String phone, String password) async {
     try {
@@ -26,12 +26,12 @@ class ApiClient {
         final data = jsonDecode(response.body);
         final token = data['access_token'];
         await _saveToken(token); 
-        return null; // Success
+        return null; 
       } else {
         return "Login failed: ${response.body}";
       }
     } catch (e) {
-      return "Connection error. Check IP or Server.";
+      return "Connection error. Check your network or server.";
     }
   }
 
@@ -57,8 +57,6 @@ class ApiClient {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
   }
-
-  // --- PROFILE ---
 
   Future<Map<String, dynamic>?> getProfile() async {
     final token = await getToken(); 
@@ -94,7 +92,7 @@ class ApiClient {
       );
 
       if (response.statusCode == 200) {
-        return null; // Success
+        return null; 
       } else {
         return "Update failed: ${response.body}";
       }
@@ -102,8 +100,6 @@ class ApiClient {
       return "Connection error: $e";
     }
   }
-
-  // --- HARVESTS ---
 
   Future<List<Harvest>> getHarvests() async {
     try {
@@ -143,30 +139,40 @@ class ApiClient {
     }
   }
 
-  // --- PREDICTIONS ---
+  Future<List<dynamic>> getPrediction(String commodity, String region) async {
+    final url = Uri.parse('$baseUrl/predict');
+    
+    final response = await http.post(
+      url,
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "commodity": commodity.toLowerCase(),
+        "days": 30,
+        "region": region.toLowerCase() 
+      }),
+    );
 
-  Future<List<dynamic>> getPrediction(String cropName) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/predict'), 
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "commodity": cropName, 
-          "days": 7              
-        }), 
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return data['forecast'] ?? [];
-      }
-    } catch (e) {
-      print("Prediction error: $e");
+    if (response.statusCode == 200) {
+      final jsonResponse = jsonDecode(response.body);
+      return jsonResponse['forecast']; 
+    } else {
+      final errorData = jsonDecode(response.body);
+      throw Exception(errorData['detail'] ?? 'AI failed to process this request.');
     }
-    return [];
   }
 
-  // --- AI CLUSTERING ---
+  // 🔥 FIXED: Now uses dynamic baseUrl instead of hardcoded 192.168.X.X
+  Future<Map<String, dynamic>> getMarketMetadata() async {
+    final url = Uri.parse('$baseUrl/api/market-metadata'); 
+    
+    final response = await http.get(url);
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Failed to load market metadata');
+    }
+  }
 
   Future<Map<String, dynamic>> getClusters([String? crop]) async {
     try {
@@ -189,8 +195,6 @@ class ApiClient {
       return {'hubs': [], 'total_farmers_analyzed': 0};
     }
   }
-
-  // --- CONTRACTS & PLEDGES ---
 
   Future<List<dynamic>> getContracts({String? county}) async {
     try {
@@ -229,7 +233,7 @@ class ApiClient {
       );
 
       if (response.statusCode == 200) {
-        return null; // Success!
+        return null; 
       } else {
         return "Failed to pledge: ${response.body}";
       }
@@ -237,8 +241,6 @@ class ApiClient {
       return "Connection error: $e";
     }
   }
-
-  // --- HELPER METHODS ---
 
   Future<void> _saveToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
@@ -268,6 +270,7 @@ class ApiClient {
     }
     return [];
   }
+
   Future<List<dynamic>> getHubMessages(String hubName) async {
     final token = await getToken();
     if (token == null) return [];
@@ -302,7 +305,7 @@ class ApiClient {
       );
 
       if (response.statusCode == 200) {
-        return null; // Success!
+        return null; 
       } else {
         return "Failed to send: ${response.body}";
       }
@@ -310,6 +313,7 @@ class ApiClient {
       return "Connection error: $e";
     }
   }
+
   Future<String> askAI(String message) async {
     try {
       final response = await http.post(
@@ -328,4 +332,4 @@ class ApiClient {
       return "Connection error. Make sure your Python server is running!";
     }
   }
-} 
+}

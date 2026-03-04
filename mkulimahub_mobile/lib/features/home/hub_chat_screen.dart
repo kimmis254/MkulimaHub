@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
-import 'package:mkulimahub_mobile/features/home/home_screen.dart'; // Needed for the global marketplaceKey
+import 'package:mkulimahub_mobile/features/home/home_screen.dart'; 
 
 class HubChatScreen extends StatefulWidget {
   final String hubName;
@@ -73,7 +73,6 @@ class _HubChatScreenState extends State<HubChatScreen> {
     setState(() => _isSending = false);
   }
 
-  // --- THE JOINT LISTING WORKFLOW ---
   void _showJointListingDialog() {
     final cropController = TextEditingController();
     final weightController = TextEditingController();
@@ -99,7 +98,6 @@ class _HubChatScreenState extends State<HubChatScreen> {
                   Text("Push your pooled crops to buyers", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]), textAlign: TextAlign.center),
                 ],
               ),
-              // --- FIX 1: Wrap the Column in a SingleChildScrollView so the keyboard doesn't overflow! ---
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -160,12 +158,10 @@ class _HubChatScreenState extends State<HubChatScreen> {
                     final error = await _apiClient.addHarvest(data);
                     
                     if (error == null && context.mounted) {
-                      Navigator.pop(context); // Close dialog
+                      Navigator.pop(context); 
                       
-                      // --- FIX 2: Auto-refresh the marketplace on the Home Screen! ---
                       marketplaceKey.currentState?.loadHarvests();
                       
-                      // Post an automated message to the chat
                       await _apiClient.postHubMessage(
                         widget.hubName, 
                         "🎉 I just created a Joint Listing for ${weightController.text}kg of ${cropController.text} at KES ${priceController.text}/kg! It is now live on the marketplace."

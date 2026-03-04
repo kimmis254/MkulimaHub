@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:geolocator/geolocator.dart'; // NEW: GPS Package
+import 'package:geolocator/geolocator.dart'; 
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/auth/login_screen.dart';
 import 'package:mkulimahub_mobile/features/home/home_screen.dart'; 
@@ -25,12 +25,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   
   late bool _isEditing;
 
-  // Controllers
   final _bioController = TextEditingController();
   final _cropsController = TextEditingController();
   final _villageController = TextEditingController();
 
-  // --- Location State ---
   List<dynamic> _locationsData = []; 
   List<String> _counties = [];
   List<String> _subCounties = [];
@@ -40,7 +38,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _selectedSubCounty;
   String? _selectedWard;
   
-  // --- Smart GPS State ---
   bool _isAtFarm = false;
   double? _latitude;
   double? _longitude;
@@ -50,7 +47,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isLoading = false;
   Map<String, dynamic>? _profileData;
   
-  // --- NEW: Pledges State ---
   bool _isLoadingPledges = true;
   List<dynamic> _myPledges = [];
 
@@ -110,12 +106,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() => _isLoadingPledges = true);
     
     final data = await _apiClient.getProfile();
-    final pledges = await _apiClient.getMyPledges(); // Fetch pledges
+    final pledges = await _apiClient.getMyPledges(); 
     
     setState(() {
       _isLoading = false;
       _isLoadingPledges = false;
-      _myPledges = pledges; // Save pledges
+      _myPledges = pledges; 
 
       if (data != null) {
         _profileData = data;
@@ -124,7 +120,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _cropsController.text = data['main_crops'] ?? "";
         _villageController.text = data['village'] ?? ""; 
         
-        // Safe cascading load from JSON
         final backendCounty = data['county']; 
         if (backendCounty != null && _counties.contains(backendCounty)) {
           _selectedCounty = backendCounty;
@@ -271,7 +266,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ]),
         ),
 
-        // --- NEW: MY ACTIVE PLEDGES SECTION ---
         Text("My Active Contracts", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
         const SizedBox(height: 10),
         
@@ -371,7 +365,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         FadeInDown(delay: const Duration(milliseconds: 100), child: _buildSectionTitle("Farm Location")),
         const SizedBox(height: 10),
         
-        // --- Dynamic Cascading Location Card ---
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -421,7 +414,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
         const SizedBox(height: 30),
 
-        // --- Smart GPS Toggle ---
         FadeInDown(delay: const Duration(milliseconds: 150), child: _buildSectionTitle("AI Clustering Precision")),
         const SizedBox(height: 10),
         Container(
@@ -498,7 +490,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ),
         const SizedBox(height: 40),
-          // --- MY ACTIVE PLEDGES SECTION ---
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Text("My Active Contracts", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
@@ -560,7 +551,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // --- HELPERS ---
   Widget _buildProfileImage() {
     return Stack(
       children: [

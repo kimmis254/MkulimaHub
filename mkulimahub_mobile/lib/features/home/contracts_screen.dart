@@ -80,7 +80,7 @@ class _ContractsScreenState extends State<ContractsScreen> {
                     if (error == null && context.mounted) {
                       Navigator.pop(context);
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pledge successful!"), backgroundColor: Colors.green));
-                      _fetchContracts(); // Refresh to update the progress bar
+                      _fetchContracts(); 
                     } else if (context.mounted) {
                       setDialogState(() => isSubmitting = false);
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? "Error"), backgroundColor: Colors.red));
@@ -107,7 +107,7 @@ class _ContractsScreenState extends State<ContractsScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
-        automaticallyImplyLeading: false, // Hidden back button for tabs
+        automaticallyImplyLeading: false, 
         title: Text("Open Contracts", style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold)),
       ),
       body: _isLoading 
@@ -123,7 +123,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
                     itemBuilder: (context, index) {
                       final contract = _contracts[index];
                       
-                      // Calculate progress!
                       final targetWeight = contract['target_weight_kg'] ?? 1.0;
                       final pledges = contract['pledges'] as List<dynamic>? ?? [];
                       
@@ -182,7 +181,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
           ),
           const SizedBox(height: 20),
           
-          // Live Progress Bar
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
