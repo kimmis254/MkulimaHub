@@ -4,8 +4,8 @@ from sqlalchemy.sql import func
 from geoalchemy2 import Geometry
 from database import Base
 import enum
+from datetime import datetime
 
-# Define Roles
 class UserRole(str, enum.Enum):
     FARMER = "farmer"
     BUYER = "buyer"
@@ -22,7 +22,6 @@ class Harvest(Base):
     weight_kg = Column(Float, nullable=False)
     price_per_kg = Column(Float, nullable=True) # Optional asking price
     
-    # Link back to specific cluster (Assigned by your DBSCAN script)
     cluster_id = Column(Integer, nullable=True) 
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -37,19 +36,57 @@ class User(Base):
     hashed_password = Column(String)
     role = Column(String, default="farmer")
     
-    # Profile Fields
     bio = Column(String, nullable=True)
     farm_size_acres = Column(Float, nullable=True)
     main_crops = Column(String, nullable=True)
     farming_method = Column(String, nullable=True)
 
-    # --- ADD THESE 4 LINES ---
     county = Column(String, nullable=True)
     sub_county = Column(String, nullable=True)
     ward = Column(String, nullable=True)
     village = Column(String, nullable=True)
 
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+
+    pledges = relationship("Pledge", back_populates="farmer")
+
     harvests = relationship("Harvest", back_populates="farmer")
-# Note: We don't store "Clusters" as a permanent table yet, 
-# because they change every time we run the algorithm.
-# For now, we just assign a 'cluster_id' to the harvest.
+
+class BulkRequest(Base):
+    __tablename__ = "bulk_requests"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    buyer_name = Column(String, index=True) 
+    crop_name = Column(String, index=True)
+    target_weight_kg = Column(Float)
+    price_per_kg = Column(Float)
+    county = Column(String)
+    ward = Column(String, nullable=True) 
+    status = Column(String, default="Open") 
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    pledges = relationship("Pledge", back_populates="bulk_request")
+
+class Pledge(Base):
+    __tablename__ = "pledges"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    bulk_request_id = Column(Integer, ForeignKey("bulk_requests.id"))
+    farmer_id = Column(Integer, ForeignKey("users.id"))
+    pledged_weight_kg = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    bulk_request = relationship("BulkRequest", back_populates="pledges")
+    farmer = relationship("User", back_populates="pledges")
+
+class HubMessage(Base):
+    __tablename__ = "hub_messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    hub_name = Column(String, index=True) # e.g., "Makindu Hub"
+    sender_id = Column(Integer, ForeignKey("users.id"))
+    message = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    sender = relationship("User")

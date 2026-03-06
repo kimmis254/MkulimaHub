@@ -3,24 +3,19 @@ from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-# --- CONFIGURATION ---
-# In a real app, hide this in an Environment Variable!
+
 SECRET_KEY = "supersecret_mkulimahub_key_change_this_later"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 Days (Good for mobile apps)
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 
 
-# Password Hashing Tool
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# 1. Hash a password
 def get_password_hash(password):
     return pwd_context.hash(password)
 
-# 2. Verify a password
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
-# 3. Create a JWT Token
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)

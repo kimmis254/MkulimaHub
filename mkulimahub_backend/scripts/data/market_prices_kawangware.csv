@@ -1,0 +1,87 @@
+ds,price,commodity,pricetype
+2021-01-15,60.0,maize flour,retail
+2021-01-15,50.0,potatoes,retail
+2021-01-15,100.0,rice,retail
+2021-01-15,10.0,bananas,retail
+2021-01-15,40.0,cabbage,retail
+2021-01-15,5.0,kale,retail
+2021-02-15,49.33,maize,retail
+2021-02-15,57.92,maize flour,retail
+2021-02-15,99.2,rice,retail
+2021-02-15,72.0,sorghum,retail
+2021-02-15,132.67,cooking fat,retail
+2021-02-15,111.25,beans,retail
+2021-02-15,5.5,bananas,retail
+2021-02-15,5.0,kale,retail
+2021-03-15,51.1,maize flour,retail
+2021-03-15,50.0,potatoes,retail
+2021-03-15,90.51,rice,retail
+2021-03-15,69.31,sorghum,retail
+2021-03-15,63.92,wheat flour,retail
+2021-03-15,137.14,cooking fat,retail
+2021-03-15,91.05,beans,retail
+2021-03-15,5.0,bananas,retail
+2021-04-15,50.0,maize,retail
+2021-04-15,52.78,maize flour,retail
+2021-04-15,70.0,sorghum,retail
+2021-04-15,58.18,wheat flour,retail
+2021-04-15,103.32,beans,retail
+2021-04-15,5.0,bananas,retail
+2021-05-15,53.84,maize flour,retail
+2021-05-15,100.0,rice,retail
+2021-05-15,79.22,sorghum,retail
+2021-05-15,60.01,wheat flour,retail
+2021-05-15,105.92,beans,retail
+2021-05-15,5.0,bananas,retail
+2021-06-15,48.29,maize,retail
+2021-06-15,54.16,maize flour,retail
+2021-06-15,100.0,rice,retail
+2021-06-15,78.32,sorghum,retail
+2021-06-15,64.58,wheat flour,retail
+2021-06-15,112.63,beans,retail
+2021-06-15,5.0,bananas,retail
+2021-07-15,48.75,maize,retail
+2021-07-15,55.0,maize flour,retail
+2021-07-15,67.5,wheat flour,retail
+2021-07-15,107.5,beans,retail
+2021-07-15,5.0,bananas,retail
+2021-08-15,48.56,maize,retail
+2021-08-15,54.12,maize flour,retail
+2021-08-15,99.36,rice,retail
+2021-08-15,79.38,sorghum,retail
+2021-08-15,172.5,cooking fat,retail
+2021-08-15,112.11,beans,retail
+2021-08-15,6.46,bananas,retail
+2021-09-15,55.0,maize flour,retail
+2021-09-15,49.0,potatoes,retail
+2021-09-15,100.73,rice,retail
+2021-09-15,76.67,sorghum,retail
+2021-09-15,63.44,wheat flour,retail
+2021-09-15,95.1,beans,retail
+2021-09-15,5.91,bananas,retail
+2021-10-15,57.19,maize flour,retail
+2021-10-15,50.0,potatoes,retail
+2021-10-15,100.67,rice,retail
+2021-10-15,77.31,sorghum,retail
+2021-10-15,64.71,wheat flour,retail
+2021-10-15,104.38,beans,retail
+2021-10-15,10.0,bananas,retail
+2021-11-15,50.0,maize,retail
+2021-11-15,63.46,maize flour,retail
+2021-11-15,68.75,potatoes,retail
+2021-11-15,80.0,sorghum,retail
+2021-11-15,120.0,beans,retail
+2021-11-15,10.0,bananas,retail
+2021-12-15,50.0,maize,retail
+2021-12-15,64.62,maize flour,retail
+2021-12-15,100.0,rice,retail
+2021-12-15,80.0,sorghum,retail
+2021-12-15,69.23,wheat flour,retail
+2021-12-15,117.0,beans,retail
+2021-12-15,5.0,bananas,retail
+2022-01-15,58.33,maize flour,retail
+2022-01-15,68.0,potatoes,retail
+2022-01-15,80.0,sorghum,retail
+2022-01-15,70.0,wheat flour,retail
+2022-01-15,116.36,beans,retail
+2022-01-15,7.0,bananas,retail

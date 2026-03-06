@@ -1,0 +1,29 @@
+ds,price,commodity,pricetype
+2023-12-15,96.0,maize,retail
+2023-12-15,169.0,rice,retail
+2023-12-15,140.0,wheat flour,retail
+2023-12-15,218.0,beans,retail
+2023-12-15,200.0,cowpeas,retail
+2023-12-15,100.0,spinach,retail
+2024-03-15,125.0,maize,retail
+2024-03-15,123.0,maize flour,retail
+2024-03-15,157.0,rice,retail
+2024-03-15,193.0,beans,retail
+2024-06-15,108.0,maize,retail
+2024-06-15,103.0,maize flour,retail
+2024-06-15,140.0,rice,retail
+2024-06-15,120.0,wheat flour,retail
+2024-06-15,150.0,cowpeas,retail
+2024-06-15,100.0,kale,retail
+2024-06-15,100.0,spinach,retail
+2024-09-15,120.0,maize,retail
+2024-09-15,120.0,maize flour,retail
+2024-09-15,150.0,rice,retail
+2024-09-15,120.0,wheat flour,retail
+2024-09-15,100.0,kale,retail
+2025-03-15,110.0,maize,retail
+2025-03-15,114.0,maize flour,retail
+2025-03-15,154.0,rice,retail
+2025-03-15,120.0,wheat flour,retail
+2025-03-15,160.0,beans,retail
+2025-03-15,100.0,spinach,retail

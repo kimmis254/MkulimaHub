@@ -139,7 +139,7 @@ class ApiClient {
     }
   }
 
-  Future<List<dynamic>> getPrediction(String commodity, String region) async {
+  Future<Map<String, dynamic>> getPrediction(String commodity, String region, String priceType) async {
     final url = Uri.parse('$baseUrl/predict');
     
     final response = await http.post(
@@ -148,16 +148,16 @@ class ApiClient {
       body: jsonEncode({
         "commodity": commodity.toLowerCase(),
         "days": 30,
-        "region": region.toLowerCase() 
+        "region": region.toLowerCase(),
+        "price_type": priceType.toLowerCase() // Send Retail or Wholesale!
       }),
     );
 
     if (response.statusCode == 200) {
-      final jsonResponse = jsonDecode(response.body);
-      return jsonResponse['forecast']; 
+      return jsonDecode(response.body); // Return the whole map (past, future, trend)
     } else {
       final errorData = jsonDecode(response.body);
-      throw Exception(errorData['detail'] ?? 'AI failed to process this request.');
+      throw Exception(errorData['detail'] ?? 'Failed to analyze market.');
     }
   }
 
