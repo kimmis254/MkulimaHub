@@ -23,6 +23,9 @@ class _PredictionScreenState extends State<PredictionScreen> {
   List<String> _availableCrops = [];
   List<String> _availableRegions = [];
   Map<String, dynamic> _forecastData = {};
+
+  List<String> _allCropsBaseline = []; 
+  Map<String, List<String>> _countyCropMap = {};
   
   bool _isMetadataLoading = true;
   bool _isLoading = false;
@@ -54,9 +57,20 @@ class _PredictionScreenState extends State<PredictionScreen> {
       final metadata = await _apiClient.getMarketMetadata();
       setState(() {
         _availableRegions = List<String>.from(metadata['regions']);
-        _availableCrops = List<String>.from(metadata['crops']);
-        if (_availableRegions.isNotEmpty) _selectedRegion = _availableRegions.first;
-        if (_availableCrops.isNotEmpty) _selectedCrop = _availableCrops.first;
+        _allCropsBaseline = List<String>.from(metadata['crops']);
+        
+        // 🔥 1. Save the mapping dictionary from the backend
+        if (metadata['county_crop_map'] != null) {
+          Map<String, dynamic> rawMap = metadata['county_crop_map'];
+          _countyCropMap = rawMap.map((key, value) => MapEntry(key, List<String>.from(value)));
+        }
+
+        if (_availableRegions.isNotEmpty) {
+          _selectedRegion = _availableRegions.first;
+          // 🔥 2. Filter the crop list for the first region immediately!
+          _updateAvailableCropsForRegion(_selectedRegion!);
+        }
+        
         _isMetadataLoading = false;
       });
       if (_selectedRegion != null && _selectedCrop != null) {
@@ -67,6 +81,23 @@ class _PredictionScreenState extends State<PredictionScreen> {
         _errorMessage = "Failed to connect to MkulimaHub servers.";
         _isMetadataLoading = false;
       });
+    }
+  }
+
+  // 🔥 ADD THIS HELPER FUNCTION right below _fetchMarketMetadata:
+  void _updateAvailableCropsForRegion(String region) {
+    String safeRegionKey = region.toLowerCase().replaceAll(' ', '_');
+    
+    if (_countyCropMap.containsKey(safeRegionKey)) {
+      _availableCrops = _countyCropMap[safeRegionKey]!;
+    } else {
+      // Fallback to Nairobi or the national baseline if county is missing
+      _availableCrops = _countyCropMap['nairobi'] ?? _allCropsBaseline;
+    }
+
+    // Safety check: If the previously selected crop isn't grown in this new county, reset it!
+    if (_availableCrops.isNotEmpty && !_availableCrops.contains(_selectedCrop)) {
+      _selectedCrop = _availableCrops.first;
     }
   }
 
@@ -130,16 +161,40 @@ class _PredictionScreenState extends State<PredictionScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
-                      children: [
-                        Expanded(child: _buildDropdown(value: _selectedRegion, items: _availableRegions, icon: LucideIcons.mapPin, onChanged: (val) {
-                          if (val != null) { setState(() => _selectedRegion = val); _fetchPrediction(); }
-                        })),
-                        const SizedBox(width: 10),
-                        Expanded(child: _buildDropdown(value: _selectedCrop, items: _availableCrops, icon: LucideIcons.leaf, onChanged: (val) {
-                          if (val != null) { setState(() => _selectedCrop = val); _fetchPrediction(); }
-                        })),
-                      ],
-                    ),
+    children: [
+      Expanded(
+        child: _buildDropdown(
+          value: _selectedRegion, 
+          items: _availableRegions, 
+          icon: LucideIcons.mapPin, 
+          onChanged: (val) {
+            if (val != null) { 
+              setState(() {
+                _selectedRegion = val;
+                // 🔥 3. Trigger the Smart Filter when the user changes counties!
+                _updateAvailableCropsForRegion(val);
+              }); 
+              _fetchPrediction(); 
+            }
+          }
+        )
+      ),
+      const SizedBox(width: 10),
+      Expanded(
+        child: _buildDropdown(
+          value: _selectedCrop, 
+          items: _availableCrops, // This list is now dynamically shrinking!
+          icon: LucideIcons.leaf, 
+          onChanged: (val) {
+            if (val != null) { 
+              setState(() => _selectedCrop = val); 
+              _fetchPrediction(); 
+            }
+          }
+        )
+      ),
+    ],
+  ),
                     const SizedBox(height: 15),
                     
                     // 🔥 RETAIL VS WHOLESALE TOGGLE
@@ -187,16 +242,25 @@ class _PredictionScreenState extends State<PredictionScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // 🔥 THIS IS THE ROW THAT IS CRASHING!
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.start, // Align to top in case text wraps
                         children: [
                           Icon(LucideIcons.lightbulb, color: _forecastData['trend'] == 'rising' ? Colors.green[800] : Colors.orange[800]),
                           const SizedBox(width: 10),
-                          Text("Market Advice for ${_selectedCrop![0].toUpperCase()}${_selectedCrop!.substring(1)}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87)),
+                          
+                          // 🔥 THE FIX: Wrap the Title Text in an Expanded widget
+                          Expanded(
+                            child: Text(
+                              "Market Advice for ${_selectedCrop![0].toUpperCase()}${_selectedCrop!.substring(1)}", 
+                              style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87)
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        _getFarmerAdvice(),
+                        _getFarmerAdvice(), // <-- This is where your string gets called!
                         style: GoogleFonts.poppins(color: Colors.black87, fontSize: 14, height: 1.5),
                       ),
                     ],
@@ -216,18 +280,36 @@ class _PredictionScreenState extends State<PredictionScreen> {
     String fallback = _forecastData['fallback_type'] ?? "none";
     
     String crop = _selectedCrop != null ? _selectedCrop![0].toUpperCase() + _selectedCrop!.substring(1) : 'harvest';
+    
+    // 🔥 Extract the exact numbers from the backend
+    double currentPrice = (_forecastData['current_price'] as num).toDouble();
+    List<double> futurePrices = (_forecastData['future_prices'] as List).map((e) => (e as num).toDouble()).toList();
+    double expectedPrice = futurePrices.last;
+    
+    String currentStr = "KES ${currentPrice.toInt()}";
+    String expectedStr = "KES ${expectedPrice.toInt()}";
+
     String advice = "";
     
-    // 🔥 NEW: Tell the farmer why the graph is a flat line
     if (fallback == "flatline") {
-      return "⚠️ Market data for $crop in this region is currently too sparse for our AI to accurately predict future trends.\n\nPrices are projected to remain stable based on the last known records. We recommend checking local market activity directly before selling.";
+      return "⚠️ Market data for $crop is currently too sparse to predict a curve. Prices are currently around $currentStr and are projected to remain stable based on the last known records.";
+    } else if (fallback == "national") {
+      advice += "⚠️ Local data was unavailable, showing the Nationwide average.\n\n";
+    } else if (fallback.contains("alt_type")) {
+      String foundType = fallback.split('_').last; 
+      advice += "⚠️ $_selectedPriceType data was unavailable. Showing $foundType prices instead.\n\n";
+    } else if (fallback.contains("national_alt")) {
+      String foundType = fallback.split('_').last;
+      advice += "⚠️ Local data was sparse. Showing Nationwide $foundType prices instead.\n\n";
     }
 
+    // 🔥 Inject the exact prices into the advice!
     if (isRising) {
-      advice += "Prices are looking good! We expect the price per KG to slowly go up next month because of seasonal market changes. \n\nWhat you should do: If you have safe, dry storage, consider holding onto your $crop for a few more weeks to get a better profit.";
+      advice += "Prices are looking good! The current price is $currentStr, and we expect it to rise to about $expectedStr per KG by next month.\n\nWhat you should do: If you have safe, dry storage, consider holding onto your $crop for a few more weeks to lock in that higher profit.";
     } else {
-      advice += "The market is slowing down. We expect the price per KG to drop slightly over the next month as the market gets crowded. \n\nWhat you should do: If you have already harvested your $crop, it might be best to sell now to lock in the current price.";
+      advice += "The market is slowing down. The current price is $currentStr, but we expect it to drop to about $expectedStr per KG by next month.\n\nWhat you should do: If your $crop is harvested and ready, it might be best to sell it now before the price drops further.";
     }
+    
     return advice;
   }
 
@@ -336,11 +418,34 @@ class _PredictionScreenState extends State<PredictionScreen> {
   }
 
   Widget _buildGraph() {
-    if (_forecastData.isEmpty) return const SizedBox.shrink();
+    // 🔥 1. Safely handle completely empty or null states without crashing
+    if (_forecastData == null || _forecastData.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
-    List<double> past = List<double>.from(_forecastData['past_prices']);
-    List<double> future = List<double>.from(_forecastData['future_prices']);
-    bool isRising = _forecastData['trend'] == 'rising';
+    // 🔥 2. The Bulletproof Extractor: 
+    // Checks both your old key ('past_prices') and our new API key ('historical_prices')
+    final rawPast = _forecastData['historical_prices'] ?? _forecastData['past_prices'];
+    final rawFuture = _forecastData['future_prices'];
+
+    // If the API failed to send the lists, exit gracefully instead of red-screening
+    if (rawPast == null || rawFuture == null || (rawPast as List).isEmpty || (rawFuture as List).isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    // Safely cast to doubles
+    List<double> past = rawPast.map((e) => (e as num).toDouble()).toList();
+    List<double> future = rawFuture.map((e) => (e as num).toDouble()).toList();
+
+    // 🔥 3. Smart Trend Calculator
+    // If the backend sends a trend, use it. If not, calculate it on the fly!
+    bool isRising = false;
+    if (_forecastData['trend'] != null) {
+      isRising = _forecastData['trend'] == 'rising';
+    } else {
+      isRising = future.last >= past.last;
+    }
+    
     Color futureColor = isRising ? Colors.green[600]! : Colors.red[500]!;
 
     List<FlSpot> pastSpots = [];
@@ -349,7 +454,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
     }
 
     List<FlSpot> futureSpots = [];
-    // Start future line exactly where past line ended
+    // Start future line exactly where past line ended for a seamless connection
     futureSpots.add(FlSpot((past.length - 1).toDouble(), past.last));
     for (int i = 0; i < future.length; i++) {
       futureSpots.add(FlSpot((past.length + i).toDouble(), future[i]));    
@@ -357,13 +462,20 @@ class _PredictionScreenState extends State<PredictionScreen> {
 
     double allMin = [...past, ...future].reduce(min);
     double allMax = [...past, ...future].reduce(max);
-    double buffer = (allMax - allMin) * 0.4; // Increased from 0.15 to 0.4
+    double buffer = (allMax - allMin) * 0.4; 
     
-    // Ensure it never goes negative, but gives plenty of headroom
+    // 🔥 THE MATH FIX: If the price is a flatline, artificially create a buffer!
+    if (buffer == 0) {
+      buffer = allMax * 0.2; 
+    }
+    if (buffer == 0) {
+      buffer = 10; // Failsafe if the price is literally 0
+    }
+    
     double bottomY = max(0.0, allMin - buffer); 
     double topY = allMax + buffer;
     
-    // Create clean, evenly spaced grid lines (e.g., every 50 or 100 KES)
+    // Create clean, evenly spaced grid lines
     double yInterval = ((topY - bottomY) / 5).ceilToDouble();
     if (yInterval <= 0) yInterval = 10; 
 
@@ -385,7 +497,6 @@ class _PredictionScreenState extends State<PredictionScreen> {
         ),
         const SizedBox(height: 15),
         
-        // 🔥 NEW: Explicit Price Unit Label
         Padding(
           padding: const EdgeInsets.only(left: 10.0),
           child: Text(
@@ -402,8 +513,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
               maxY: topY,
               minX: 0,
               maxX: finalIndex.toDouble(),
-              
-              // 🔥 NEW: Subtle Dashed Grid Lines to anchor the numbers
+              clipData: const FlClipData.all(),
               gridData: FlGridData(
                 show: true,
                 drawVerticalLine: false,
@@ -420,8 +530,8 @@ class _PredictionScreenState extends State<PredictionScreen> {
                     getTitlesWidget: (value, meta) {
                       if (value.toInt() == 0) {
                         return Padding(
-                          padding: const EdgeInsets.only(top: 8.0, left: 20), // Nudge to prevent cutoff
-                          child: Text("2 Weeks Ago", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey[500])),
+                          padding: const EdgeInsets.only(top: 8.0, left: 20),
+                          child: Text("Start", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey[500])),
                         );
                       } else if (value.toInt() == todayIndex) {
                         return Padding(
@@ -430,7 +540,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
                         );
                       } else if (value.toInt() == finalIndex) {
                         return Padding(
-                          padding: const EdgeInsets.only(top: 8.0, right: 30), // Nudge to prevent cutoff
+                          padding: const EdgeInsets.only(top: 8.0, right: 30),
                           child: Text("Next Month", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey[500])),
                         );
                       }
@@ -441,11 +551,10 @@ class _PredictionScreenState extends State<PredictionScreen> {
                 leftTitles: AxisTitles(
                   sideTitles: SideTitles(
                     showTitles: true, 
-                    reservedSize: 35, // Tighter spacing since we removed "KES " from the numbers
+                    reservedSize: 35, 
                     interval: yInterval,
                     getTitlesWidget: (value, meta) {
                       if (value == bottomY || value == topY) return const SizedBox.shrink();
-                      // Because the label above says "KES per 1 KG", we only need clean numbers here
                       return Text(value.toInt().toString(), style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[600]));
                     },
                   )
@@ -459,7 +568,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
                   spots: pastSpots,
                   isCurved: true,
                   curveSmoothness: 0.15,
-                  preventCurveOverShooting: true, // 🔥 FIX: Stops the line from dipping below the data points
+                  preventCurveOverShooting: true,
                   color: Colors.grey[400],
                   barWidth: 3,
                   dotData: FlDotData(show: false),
@@ -468,7 +577,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
                   spots: futureSpots,
                   isCurved: true,
                   curveSmoothness: 0.15,
-                  preventCurveOverShooting: true, // 🔥 FIX: Stops the prediction from diving off the screen
+                  preventCurveOverShooting: true, 
                   color: futureColor,
                   barWidth: 4,
                   dashArray: [8, 5], 

@@ -189,73 +189,134 @@ class PredictionRequest(BaseModel):
     region: str
     price_type: str
 
+KENYA_COUNTIES = [
+    "Mombasa", "Kwale", "Kilifi", "Tana River", "Lamu", "Taita Taveta", 
+    "Garissa", "Wajir", "Mandera", "Marsabit", "Isiolo", "Meru", 
+    "Tharaka Nithi", "Embu", "Kitui", "Machakos", "Makueni", "Nyandarua", 
+    "Nyeri", "Kirinyaga", "Murang'a", "Kiambu", "Turkana", "West Pokot", 
+    "Samburu", "Trans Nzoia", "Uasin Gishu", "Elgeyo Marakwet", "Nandi", 
+    "Baringo", "Laikipia", "Nakuru", "Narok", "Kajiado", "Kericho", 
+    "Bomet", "Kakamega", "Vihiga", "Bungoma", "Busia", "Siaya", 
+    "Kisumu", "Homa Bay", "Migori", "Kisii", "Nyamira", "Nairobi"
+]
+
+# Map counties to their closest WFP market hub
+COUNTY_MAPPING = {
+    "mombasa": "mombasa", "nairobi": "nairobi", "uasin gishu": "eldoret",
+    "nakuru": "nakuru", "kisumu": "kisumu", "turkana": "lodwar",
+    "garissa": "garissa", "mandera": "mandera", "machakos": "tala",
+    "kajiado": "kajiado", "kitui": "kitui", "baringo": "marigat",
+    "kilifi": "kilifi", "wajir": "wajir", "marsabit": "marsabit",
+    "makueni": "wote", "isiolo": "isiolo"
+}
+
 @app.post("/predict")
 def predict_prices(request: PredictionRequest):
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    safe_region = request.region.lower().strip()
+    DATA_DIR = os.path.join(BASE_DIR, "data")
     
-    local_path = os.path.join(BASE_DIR, "data", f"market_prices_{safe_region}.csv")
-    national_path = os.path.join(BASE_DIR, "data", "market_prices_national.csv")
-
-    fallback_type = "none"
-    file_path = local_path
-
-    # 1. Try Local Data. If missing, pivot to National.
-    if not os.path.exists(file_path):
-        fallback_type = "national"
-        file_path = national_path
-
-    # 2. BULLETPROOFING: What if even the National file is missing?
-    if not os.path.exists(file_path):
-        # Force a flatline fallback immediately
-        df_commodity = pd.DataFrame() 
-    else:
-        df = pd.read_csv(file_path)
-        df_commodity = df[(df['commodity'].str.lower() == request.commodity.lower()) & 
-                          (df['pricetype'] == request.price_type.lower())]
+    safe_region = request.region.lower().strip().replace(" ", "_")
+    req_crop = request.commodity.lower().strip()
+    req_type = request.price_type.lower().strip()
     
-    # 3. Try National Data if Local exists but lacks this specific crop
-    if len(df_commodity) < 10 and fallback_type == "none" and os.path.exists(national_path):
-        fallback_type = "national"
-        df_national = pd.read_csv(national_path)
-        df_commodity = df_national[(df_national['commodity'].str.lower() == request.commodity.lower()) & 
-                                   (df_national['pricetype'] == request.price_type.lower())]
+    local_path = os.path.join(DATA_DIR, f"master_{safe_region}.csv")
 
-    # 4. THE ZERO DEAD-END FIX (Flatline Forecast)
-    if len(df_commodity) < 10:
-        if len(df_commodity) > 0:
-            last_real_price = df_commodity['price'].iloc[-1]
-        else:
-            last_real_price = 100.0 # Absolute failsafe
+    def get_crop_data(filepath):
+        if not os.path.exists(filepath): 
+            return pd.DataFrame()
+        df = pd.read_csv(filepath)
+        if 'commodity' not in df.columns or 'pricetype' not in df.columns: 
+            return pd.DataFrame()
+        df['commodity'] = df['commodity'].astype(str).str.lower().str.strip()
+        df['pricetype'] = df['pricetype'].astype(str).str.lower().str.strip()
+        return df[(df['commodity'] == req_crop) & (df['pricetype'] == req_type)].copy()
+
+    # 🔥 1. Try to get the data for their exact county
+    df_filtered = get_crop_data(local_path)
+
+    # 🔥 2. TRUE NATIONAL AVERAGE: If missing locally, sweep the entire country!
+    if df_filtered.empty:
+        print(f"🔀 AI Router: {req_crop} missing in {safe_region}. Building True National Average...")
+        all_frames = []
+        
+        if os.path.exists(DATA_DIR):
+            for file in os.listdir(DATA_DIR):
+                if file.startswith("master_") and file.endswith(".csv"):
+                    temp_df = get_crop_data(os.path.join(DATA_DIR, file))
+                    if not temp_df.empty:
+                        all_frames.append(temp_df)
+        
+        if all_frames:
+            # Combine every county that tracks this crop
+            combined_df = pd.concat(all_frames, ignore_index=True)
+            combined_df['ds'] = pd.to_datetime(combined_df['ds'])
             
+            # Group by Date and calculate the mathematical average price for all of Kenya
+            df_filtered = combined_df.groupby(['ds', 'commodity', 'pricetype'], as_index=False)['price'].mean()
+            print(f"✅ Success! Computed National Baseline from {len(all_frames)} different counties.")
+
+    # 3. If it is somehow still empty, trigger the 404 (Flutter will now catch this cleanly and show an empty box)
+    if df_filtered.empty:
+        raise HTTPException(status_code=404, detail="Crop not found anywhere in the database.")
+
+    # Ensure Date format
+    df_filtered['ds'] = pd.to_datetime(df_filtered['ds'])
+    df_filtered = df_filtered.sort_values(by='ds')
+    
+    historical_dates = df_filtered['ds'].dt.strftime('%Y-%m-%d').tolist()
+    historical_prices = df_filtered['price'].tolist()
+
+    # 🔥 THE LIMITLESS BYPASS (Bypass Prophet if there is not enough history)
+    if len(df_filtered) < 3:
+        print(f"⚠️ Only {len(df_filtered)} rows found for {req_crop}. Bypassing AI, returning raw data.")
+        last_date = df_filtered['ds'].iloc[-1]
+        last_price = float(df_filtered['price'].iloc[-1])
+        future_dates = [(last_date + pd.Timedelta(days=i)).strftime('%Y-%m-%d') for i in [7, 14, 30]]
+        future_prices = [last_price, last_price, last_price] 
+        
         return {
-            "past_prices": [last_real_price] * 14,
-            "future_prices": [last_real_price] * request.days,
-            "trend": "stable",
-            "current_price": last_real_price,
-            "fallback_type": "flatline" 
+            "historical_dates": historical_dates,
+            "historical_prices": historical_prices,
+            "future_dates": future_dates,
+            "future_prices": future_prices,
+            # Add these so Flutter UI text widgets don't crash!
+            "current_price": last_price,
+            "predicted_price": last_price,
+            "trend": "stable" 
         }
 
-    # 5. Proceed with Prophet AI as normal
-    df_prophet = df_commodity[['ds', 'price']].rename(columns={'price': 'y'})
-    past_data = df_prophet.tail(14)['y'].tolist()
-    last_real_price = past_data[-1]
+    # If we have 3 or more points, Unleash Prophet!
+    try:
+        m = Prophet(daily_seasonality=False, yearly_seasonality=True)
+        m.fit(df_filtered[['ds', 'price']].rename(columns={'price': 'y'}))
+        
+        future = m.make_future_dataframe(periods=90)
+        forecast = m.predict(future)
+        
+        future_forecast = forecast[forecast['ds'] > df_filtered['ds'].max()]
+        
+        future_dates_list = future_forecast['ds'].dt.strftime('%Y-%m-%d').tolist()
+        future_prices_list = future_forecast['yhat'].round(2).tolist()
+        
+        # Calculate summary stats for the Flutter UI
+        current_price_val = float(historical_prices[-1])
+        predicted_price_val = float(future_prices_list[-1]) if future_prices_list else current_price_val
+        trend_val = "rising" if predicted_price_val > current_price_val else "falling"
+        
+        return {
+            "historical_dates": historical_dates,
+            "historical_prices": historical_prices,
+            "future_dates": future_dates_list,
+            "future_prices": future_prices_list,
+            # Add these so Flutter UI text widgets don't crash!
+            "current_price": current_price_val,
+            "predicted_price": predicted_price_val,
+            "trend": trend_val
+        }
+    except Exception as e:
+        print(f"Prophet AI Error: {e}")
+        raise HTTPException(status_code=500, detail="AI prediction failed")
 
-    m = Prophet(daily_seasonality=False, yearly_seasonality=True)
-    m.fit(df_prophet)
-    future = m.make_future_dataframe(periods=request.days)
-    forecast = m.predict(future)
-    
-    future_prices = forecast[['ds', 'yhat']].tail(request.days)['yhat'].tolist()
-    trend = "rising" if future_prices[-1] > last_real_price else "falling"
-
-    return {
-        "past_prices": past_data,
-        "future_prices": future_prices,
-        "trend": trend,
-        "current_price": last_real_price,
-        "fallback_type": fallback_type
-    }
 @app.get("/api/clusters")
 def get_farmer_clusters(crop: str = None, db: Session = Depends(get_db)):
     query = db.query(models.User).filter(
@@ -490,26 +551,33 @@ def advanced_agri_bot(chat: schemas.ChatMessage):
     
 @app.get("/api/market-metadata")
 def get_market_metadata():
-    """Returns all available regions and crops so Flutter can build dynamic dropdowns."""
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(BASE_DIR, "scripts", "data") # Adjust if your data folder is elsewhere
+    data_dir = os.path.join(BASE_DIR, "data") 
     
-    regions = set()
-    crops = set()
+    all_crops = set()
+    county_crop_map = {} # 🔥 The new map!
     
-    # Scan the data folder for all generated CSVs
-    for file_path in glob.glob(os.path.join(data_dir, "market_prices_*.csv")):
-        # Extract region from filename (e.g., 'market_prices_kisumu.csv' -> 'kisumu')
-        filename = os.path.basename(file_path)
-        region = filename.replace("market_prices_", "").replace(".csv", "")
-        regions.add(region.title())
-        
-        # Read the CSV to find what crops are available in it
-        df = pd.read_csv(file_path)
-        crops.update(df['commodity'].unique().tolist())
-        
+    if os.path.exists(data_dir):
+        for file in os.listdir(data_dir):
+            if file.startswith("master_") and file.endswith(".csv"):
+                # Extract the exact county name from the filename
+                county_name = file.replace("master_", "").replace(".csv", "")
+                
+                try:
+                    file_path = os.path.join(data_dir, file)
+                    df = pd.read_csv(file_path)
+                    
+                    if 'commodity' in df.columns:
+                        found_crops = df['commodity'].dropna().astype(str).str.lower().str.strip().unique().tolist()
+                        all_crops.update(found_crops)
+                        
+                        # Save the specific crops for this specific county
+                        county_crop_map[county_name] = sorted(found_crops)
+                except Exception as e:
+                    print(f"Error reading {file}: {e}")
+                    
     return {
-        "regions": sorted(list(regions)),
-        # ✅ FIX: Use list comprehension to apply .title() to each string individually
-        "crops": sorted([crop.title() for crop in crops]) 
+        "regions": sorted(KENYA_COUNTIES), 
+        "crops": sorted(list(all_crops)),          # The fallback list
+        "county_crop_map": county_crop_map         # The smart mapping list
     }

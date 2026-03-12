@@ -1,0 +1,445 @@
+ds,price,commodity,pricetype
+2006-02-15,28.0,maize,retail
+2006-03-15,27.0,maize,retail
+2006-05-15,26.0,maize,retail
+2006-08-15,27.0,maize,retail
+2006-09-15,29.0,maize,retail
+2006-10-15,30.0,maize,retail
+2006-11-15,28.0,maize,retail
+2007-04-15,31.0,maize,retail
+2007-05-15,29.0,maize,retail
+2007-06-15,30.0,maize,retail
+2007-07-15,30.0,maize,retail
+2007-10-15,27.0,maize,retail
+2007-11-15,27.0,maize,retail
+2008-02-15,38.0,maize,retail
+2008-06-15,50.0,maize,retail
+2008-09-15,45.0,maize,retail
+2008-12-15,42.0,maize,retail
+2009-03-15,40.0,maize,retail
+2009-04-15,41.0,maize,retail
+2009-05-15,46.0,maize,retail
+2009-09-15,51.0,maize,retail
+2009-11-15,46.7,maize,retail
+2010-01-15,49.6,maize,retail
+2010-02-15,45.7,maize,retail
+2010-03-15,44.5,maize,retail
+2010-04-15,44.93,maize,retail
+2010-05-15,46.0,maize,retail
+2010-06-15,44.0,maize,retail
+2010-08-15,44.0,maize,retail
+2010-09-15,46.29,maize,retail
+2011-01-15,44.0,maize,retail
+2011-05-15,60.0,maize,retail
+2011-07-15,74.8,maize,retail
+2011-12-15,64.58,maize,retail
+2012-07-15,68.2,maize,retail
+2012-08-15,62.55,maize,retail
+2012-10-15,76.62,maize,retail
+2013-01-15,75.8,maize,retail
+2013-03-15,82.7,maize,retail
+2013-04-15,87.8,maize,retail
+2013-06-15,86.35,maize,retail
+2013-08-15,76.04,maize,retail
+2013-12-15,71.93,maize,retail
+2014-04-15,70.1,maize,retail
+2014-05-15,75.02,maize,retail
+2014-08-15,80.78,maize,retail
+2014-11-15,72.0,maize,retail
+2015-01-15,82.0,maize,retail
+2015-03-15,70.0,maize,retail
+2015-05-15,69.0,maize,retail
+2015-07-15,75.0,maize,retail
+2015-09-15,76.0,maize,retail
+2015-10-15,79.0,maize,retail
+2015-11-15,78.0,maize,retail
+2016-05-15,84.0,maize,retail
+2016-07-15,75.0,maize,retail
+2016-10-15,73.0,maize,retail
+2017-04-15,92.6,maize,retail
+2017-06-15,100.0,maize,retail
+2017-08-15,88.0,maize,retail
+2017-09-15,87.0,maize,retail
+2017-11-15,80.0,maize,retail
+2017-12-15,81.0,maize,retail
+2018-02-15,85.5,maize,retail
+2018-03-15,86.3,maize,retail
+2018-04-15,85.0,maize,retail
+2018-05-15,84.0,maize,retail
+2018-07-15,81.0,maize,retail
+2018-08-15,59.0,maize,retail
+2018-09-15,63.0,maize,retail
+2018-10-15,61.0,maize,retail
+2018-11-15,62.0,maize,retail
+2018-12-15,60.0,maize,retail
+2019-01-15,66.0,maize,retail
+2019-03-15,61.0,maize,retail
+2019-04-15,61.0,maize,retail
+2019-06-15,63.0,maize,retail
+2019-07-15,66.7,maize,retail
+2019-08-15,67.1,maize,retail
+2019-09-15,66.3,maize,retail
+2019-10-15,67.0,maize,retail
+2019-11-15,64.0,maize,retail
+2020-01-15,64.0,maize,retail
+2020-02-15,64.0,maize,retail
+2020-04-15,60.0,maize,retail
+2020-06-15,69.0,maize,retail
+2020-07-15,71.0,maize,retail
+2020-08-15,70.0,maize,retail
+2020-09-15,70.0,maize,retail
+2020-10-15,68.0,maize,retail
+2020-11-15,65.0,maize,retail
+2020-12-15,65.0,maize,retail
+2021-01-15,20.0,kale,retail
+2021-01-15,20.0,bananas,retail
+2021-01-15,100.0,rice,retail
+2021-01-15,110.0,beans,retail
+2021-01-15,72.5,wheat flour,retail
+2021-01-15,45.0,maize,retail
+2021-01-15,70.0,maize flour,retail
+2021-01-15,50.0,potatoes,retail
+2021-01-15,70.0,cabbage,retail
+2021-02-15,200.0,cooking fat,retail
+2021-02-15,125.0,beans,retail
+2021-02-15,60.0,cabbage,retail
+2021-02-15,20.0,bananas,retail
+2021-02-15,74.17,wheat flour,retail
+2021-02-15,100.0,rice,retail
+2021-02-15,55.0,potatoes,retail
+2021-02-15,68.54,maize flour,retail
+2021-02-15,40.62,maize,retail
+2021-02-15,40.0,sorghum,retail
+2021-03-15,100.0,rice,retail
+2021-03-15,71.91,wheat flour,retail
+2021-03-15,113.63,beans,retail
+2021-03-15,37.71,maize,retail
+2021-03-15,63.54,maize flour,retail
+2021-03-15,20.0,bananas,retail
+2021-03-15,50.0,potatoes,retail
+2021-04-15,112.0,beans,retail
+2021-04-15,230.0,cooking fat,retail
+2021-04-15,50.0,sorghum,retail
+2021-04-15,17.92,bananas,retail
+2021-04-15,40.98,maize,retail
+2021-04-15,67.72,maize flour,retail
+2021-04-15,50.0,potatoes,retail
+2021-04-15,102.5,rice,retail
+2021-04-15,70.94,wheat flour,retail
+2021-05-15,120.0,cooking fat,retail
+2021-05-15,100.0,rice,retail
+2021-05-15,40.15,maize,retail
+2021-05-15,20.0,bananas,retail
+2021-05-15,61.11,maize flour,retail
+2021-05-15,50.0,potatoes,retail
+2021-05-15,70.37,wheat flour,retail
+2021-06-15,37.5,sorghum,retail
+2021-06-15,20.0,bananas,retail
+2021-06-15,50.0,maize,retail
+2021-06-15,50.0,potatoes,retail
+2021-06-15,67.94,maize flour,retail
+2021-06-15,100.88,rice,retail
+2021-06-15,70.0,wheat flour,retail
+2021-06-15,110.29,beans,retail
+2021-07-15,260.0,cooking fat,retail
+2021-07-15,102.94,rice,retail
+2021-07-15,66.18,maize flour,retail
+2021-07-15,44.24,maize,retail
+2021-07-15,70.0,wheat flour,retail
+2021-07-15,50.0,potatoes,retail
+2021-07-15,20.0,bananas,retail
+2021-08-15,43.92,maize,retail
+2021-08-15,17.5,bananas,retail
+2021-08-15,100.0,potatoes,retail
+2021-08-15,100.0,rice,retail
+2021-08-15,80.0,wheat flour,retail
+2021-08-15,250.0,cooking fat,retail
+2021-08-15,150.0,beans,retail
+2021-08-15,70.0,maize flour,retail
+2021-09-15,180.0,cooking fat,retail
+2021-09-15,100.0,rice,retail
+2021-09-15,60.0,maize flour,retail
+2021-09-15,45.0,maize,retail
+2021-09-15,40.0,sorghum,retail
+2021-09-15,20.0,bananas,retail
+2021-09-15,110.0,beans,retail
+2021-09-15,80.0,wheat flour,retail
+2021-09-15,100.0,potatoes,retail
+2021-10-15,100.0,rice,retail
+2021-10-15,80.0,beans,retail
+2021-10-15,42.5,maize,retail
+2021-10-15,74.17,wheat flour,retail
+2021-10-15,63.33,maize flour,retail
+2021-10-15,20.0,bananas,retail
+2021-10-15,50.0,potatoes,retail
+2021-11-15,17.5,bananas,retail
+2021-11-15,72.5,beans,retail
+2021-11-15,260.0,cooking fat,retail
+2021-11-15,70.0,wheat flour,retail
+2021-11-15,85.0,rice,retail
+2021-11-15,40.0,potatoes,retail
+2021-11-15,65.0,maize flour,retail
+2021-11-15,36.67,maize,retail
+2021-12-15,110.0,beans,retail
+2021-12-15,100.0,rice,retail
+2021-12-15,80.0,wheat flour,retail
+2021-12-15,47.5,maize,retail
+2021-12-15,40.0,potatoes,retail
+2021-12-15,65.0,maize flour,retail
+2022-01-15,20.0,bananas,retail
+2022-01-15,114.0,beans,retail
+2022-01-15,70.0,maize flour,retail
+2022-01-15,83.83,wheat flour,retail
+2022-01-15,100.0,rice,retail
+2022-01-15,47.33,maize,retail
+2022-01-15,50.0,potatoes,retail
+2022-02-15,20.0,bananas,retail
+2022-02-15,104.62,beans,retail
+2022-02-15,83.65,wheat flour,retail
+2022-02-15,100.0,rice,retail
+2022-02-15,50.0,potatoes,retail
+2022-02-15,46.35,maize,retail
+2022-02-15,60.0,maize flour,retail
+2023-01-15,70.0,sorghum,retail
+2023-01-15,140.83,beans,retail
+2023-01-15,200.0,cooking fat,retail
+2023-01-15,114.17,wheat flour,retail
+2023-01-15,20.0,bananas,retail
+2023-01-15,125.0,rice,retail
+2023-01-15,100.0,potatoes,retail
+2023-01-15,65.0,maize,retail
+2023-01-15,105.0,maize flour,retail
+2023-02-15,20.0,bananas,retail
+2023-02-15,122.78,wheat flour,retail
+2023-02-15,80.0,potatoes,retail
+2023-02-15,153.89,beans,retail
+2023-02-15,150.0,sorghum,retail
+2023-02-15,110.0,maize flour,retail
+2023-02-15,60.0,maize,retail
+2023-02-15,138.06,rice,retail
+2023-03-15,150.0,beans,retail
+2023-03-15,75.0,maize,retail
+2023-03-15,110.0,wheat flour,retail
+2023-03-15,120.0,rice,retail
+2023-03-15,110.0,maize flour,retail
+2023-05-15,200.0,beans,retail
+2023-05-15,190.0,rice,retail
+2023-05-15,120.0,wheat flour,retail
+2023-05-15,80.0,sorghum,retail
+2023-05-15,92.5,maize,retail
+2023-05-15,115.0,maize flour,retail
+2023-06-15,190.0,beans,retail
+2023-06-15,100.0,wheat flour,retail
+2023-06-15,60.0,potatoes,retail
+2023-06-15,100.0,sorghum,retail
+2023-06-15,124.17,rice,retail
+2023-06-15,120.0,maize flour,retail
+2023-06-15,84.0,maize,retail
+2023-06-15,250.0,cooking fat,retail
+2023-07-15,20.0,bananas,retail
+2023-07-15,190.0,beans,retail
+2023-07-15,113.13,wheat flour,retail
+2023-07-15,120.62,rice,retail
+2023-07-15,40.0,potatoes,retail
+2023-07-15,120.0,maize flour,retail
+2023-07-15,80.94,maize,retail
+2023-08-15,80.0,maize,retail
+2023-08-15,190.0,beans,retail
+2023-08-15,125.0,rice,retail
+2023-08-15,120.0,maize flour,retail
+2023-08-15,100.0,wheat flour,retail
+2023-09-15,130.0,rice,retail
+2023-09-15,103.33,wheat flour,retail
+2023-09-15,180.0,beans,retail
+2023-09-15,105.0,maize flour,retail
+2023-09-15,65.0,maize,retail
+2023-09-15,70.0,potatoes,retail
+2023-10-15,170.0,beans,retail
+2023-10-15,110.0,wheat flour,retail
+2023-10-15,120.0,rice,retail
+2023-10-15,110.0,maize flour,retail
+2023-10-15,80.0,potatoes,retail
+2023-11-15,85.0,sorghum,retail
+2023-11-15,200.0,beans,retail
+2023-11-15,104.79,wheat flour,retail
+2023-11-15,123.85,rice,retail
+2023-11-15,80.0,potatoes,retail
+2023-11-15,100.1,maize flour,retail
+2023-11-15,63.12,maize,retail
+2023-11-15,200.0,cooking fat,retail
+2023-12-15,20.0,bananas,retail
+2023-12-15,200.0,cooking fat,retail
+2023-12-15,70.0,potatoes,retail
+2023-12-15,100.0,kale,retail
+2023-12-15,107.0,maize flour,retail
+2023-12-15,170.0,cowpeas,retail
+2023-12-15,98.0,maize,retail
+2023-12-15,105.0,rice,retail
+2023-12-15,118.0,wheat flour,retail
+2023-12-15,130.0,spinach,retail
+2023-12-15,200.0,beans,retail
+2024-01-15,70.0,maize,retail
+2024-01-15,80.0,potatoes,retail
+2024-01-15,110.0,wheat flour,retail
+2024-01-15,100.0,maize flour,retail
+2024-01-15,200.0,rice,retail
+2024-02-15,150.0,rice,retail
+2024-02-15,100.0,maize flour,retail
+2024-02-15,100.0,wheat flour,retail
+2024-03-15,100.0,kale,retail
+2024-03-15,120.0,spinach,retail
+2024-03-15,140.0,pigeon peas,retail
+2024-03-15,120.0,cowpeas,retail
+2024-03-15,156.0,rice,retail
+2024-03-15,128.0,beans,retail
+2024-03-15,67.0,maize,retail
+2024-03-15,120.0,wheat flour,retail
+2024-03-15,108.0,maize flour,retail
+2024-04-15,160.0,beans,retail
+2024-04-15,60.0,maize,retail
+2024-04-15,90.0,maize flour,retail
+2024-04-15,130.0,rice,retail
+2024-04-15,96.67,wheat flour,retail
+2024-05-15,70.0,potatoes,retail
+2024-05-15,138.33,rice,retail
+2024-05-15,100.0,wheat flour,retail
+2024-05-15,60.0,maize,retail
+2024-05-15,90.0,maize flour,retail
+2024-05-15,160.0,beans,retail
+2024-06-15,103.0,kale,retail
+2024-06-15,70.0,sorghum,retail
+2024-06-15,95.0,spinach,retail
+2024-06-15,50.0,maize,retail
+2024-06-15,280.0,pigeon peas,retail
+2024-06-15,250.0,cowpeas,retail
+2024-06-15,143.0,beans,retail
+2024-06-15,120.0,wheat flour,retail
+2024-06-15,137.0,rice,retail
+2024-06-15,103.0,maize flour,retail
+2024-07-15,20.0,bananas,retail
+2024-07-15,120.0,rice,retail
+2024-07-15,50.0,maize,retail
+2024-07-15,80.0,maize flour,retail
+2024-07-15,140.0,beans,retail
+2024-07-15,85.0,wheat flour,retail
+2024-08-15,80.0,sorghum,retail
+2024-08-15,85.0,maize flour,retail
+2024-08-15,40.0,maize,retail
+2024-08-15,100.0,rice,retail
+2024-08-15,82.5,wheat flour,retail
+2024-09-15,100.0,potatoes,retail
+2024-09-15,140.0,pigeon peas,retail
+2024-09-15,80.0,kale,retail
+2024-09-15,100.0,cowpeas,retail
+2024-09-15,120.0,spinach,retail
+2024-09-15,100.0,wheat flour,retail
+2024-09-15,155.0,rice,retail
+2024-09-15,74.0,maize,retail
+2024-09-15,110.0,maize flour,retail
+2024-09-15,170.0,beans,retail
+2024-10-15,20.0,bananas,retail
+2024-10-15,90.0,wheat flour,retail
+2024-10-15,110.0,rice,retail
+2024-10-15,75.0,potatoes,retail
+2024-10-15,72.5,maize flour,retail
+2024-10-15,55.0,maize,retail
+2024-11-15,147.14,beans,retail
+2024-11-15,60.0,sorghum,retail
+2024-11-15,80.0,maize flour,retail
+2024-11-15,70.0,potatoes,retail
+2024-11-15,126.67,rice,retail
+2024-11-15,90.0,wheat flour,retail
+2024-11-15,20.0,bananas,retail
+2024-11-15,50.0,maize,retail
+2024-12-15,380.0,cooking fat,retail
+2024-12-15,20.0,bananas,retail
+2024-12-15,130.0,beans,retail
+2024-12-15,85.0,potatoes,retail
+2024-12-15,48.75,maize,retail
+2024-12-15,100.0,pigeon peas,retail
+2024-12-15,60.0,spinach,retail
+2024-12-15,97.5,maize flour,retail
+2024-12-15,120.0,rice,retail
+2024-12-15,130.0,cowpeas,retail
+2024-12-15,50.0,kale,retail
+2024-12-15,84.83,wheat flour,retail
+2025-01-15,45.0,sorghum,retail
+2025-01-15,20.0,bananas,retail
+2025-01-15,50.0,potatoes,retail
+2025-01-15,76.67,maize flour,retail
+2025-01-15,150.0,beans,retail
+2025-01-15,96.67,wheat flour,retail
+2025-01-15,116.67,rice,retail
+2025-01-15,50.0,maize,retail
+2025-02-15,176.67,rice,retail
+2025-02-15,20.0,bananas,retail
+2025-02-15,166.67,beans,retail
+2025-02-15,100.0,potatoes,retail
+2025-02-15,80.0,maize flour,retail
+2025-02-15,96.67,wheat flour,retail
+2025-03-15,100.0,potatoes,retail
+2025-03-15,20.0,bananas,retail
+2025-03-15,215.0,cowpeas,retail
+2025-03-15,133.0,maize,retail
+2025-03-15,115.5,maize flour,retail
+2025-03-15,139.0,rice,retail
+2025-03-15,117.0,wheat flour,retail
+2025-03-15,250.0,pigeon peas,retail
+2025-03-15,70.0,kale,retail
+2025-03-15,55.0,spinach,retail
+2025-03-15,120.0,beans,retail
+2025-05-15,80.0,wheat flour,retail
+2025-05-15,113.33,rice,retail
+2025-05-15,80.0,maize flour,retail
+2025-05-15,90.0,potatoes,retail
+2025-05-15,130.0,beans,retail
+2025-05-15,20.0,bananas,retail
+2025-05-15,62.5,maize,retail
+2025-06-15,104.0,wheat flour,retail
+2025-06-15,80.0,spinach,retail
+2025-06-15,20.0,bananas,retail
+2025-06-15,87.0,maize flour,retail
+2025-06-15,120.0,beans,retail
+2025-06-15,167.0,cowpeas,retail
+2025-06-15,67.0,kale,retail
+2025-06-15,60.0,potatoes,retail
+2025-06-15,107.0,rice,retail
+2025-06-15,106.0,maize,retail
+2025-07-15,60.0,maize,retail
+2025-07-15,120.0,rice,retail
+2025-07-15,80.0,wheat flour,retail
+2025-07-15,140.0,beans,retail
+2025-07-15,20.0,bananas,retail
+2025-07-15,75.0,potatoes,retail
+2025-07-15,90.0,maize flour,retail
+2025-08-15,20.0,bananas,retail
+2025-08-15,90.0,wheat flour,retail
+2025-08-15,75.0,potatoes,retail
+2025-08-15,80.0,maize flour,retail
+2025-08-15,70.0,maize,retail
+2025-08-15,100.0,beans,retail
+2025-08-15,120.0,rice,retail
+2025-09-15,20.0,bananas,retail
+2025-09-15,73.33,potatoes,retail
+2025-09-15,120.0,wheat flour,retail
+2025-09-15,100.0,spinach,retail
+2025-09-15,113.0,rice,retail
+2025-09-15,157.0,cowpeas,retail
+2025-09-15,67.0,kale,retail
+2025-09-15,62.0,maize,retail
+2025-09-15,80.0,maize flour,retail
+2025-09-15,124.0,beans,retail
+2025-10-15,102.86,beans,retail
+2025-10-15,84.29,wheat flour,retail
+2025-10-15,60.0,sorghum,retail
+2025-10-15,52.86,maize,retail
+2025-10-15,80.0,maize flour,retail
+2025-10-15,70.0,potatoes,retail
+2025-11-15,120.0,beans,retail
+2025-11-15,90.0,wheat flour,retail
+2025-11-15,80.0,maize flour,retail
+2025-11-15,65.0,maize,retail
+2025-11-15,75.56,sorghum,retail
+2025-11-15,77.78,potatoes,retail
+2025-11-15,100.0,rice,retail
+2025-11-15,20.0,bananas,retail
