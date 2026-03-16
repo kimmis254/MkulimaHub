@@ -274,14 +274,31 @@ class _PredictionScreenState extends State<PredictionScreen> {
     );
   }
 
+  String _getUnitMeasurement(String? crop, String priceType) {
+    if (crop == null) return "1 KG";
+    String c = crop.toLowerCase();
+    
+    // Retail is often sold individually
+    if (priceType.toLowerCase() == 'retail') {
+      if (c.contains('banana') || c.contains('mango') || c.contains('avocado') || c.contains('pineapple')) {
+        return "Piece";
+      }
+      if (c.contains('cabbage')) return "Head";
+      if (c.contains('egg')) return "Tray";
+      if (c.contains('sukuma') || c.contains('spinach')) return "Bunch";
+    }
+    
+    // Default fallback
+    return "1 KG";
+  }
+
   // Jargon-Free Advice Generator
   String _getFarmerAdvice() {
-    bool isRising = _forecastData['trend'] == 'rising';
+    String trend = _forecastData['trend'] ?? 'stable';
     String fallback = _forecastData['fallback_type'] ?? "none";
     
     String crop = _selectedCrop != null ? _selectedCrop![0].toUpperCase() + _selectedCrop!.substring(1) : 'harvest';
     
-    // 🔥 Extract the exact numbers from the backend
     double currentPrice = (_forecastData['current_price'] as num).toDouble();
     List<double> futurePrices = (_forecastData['future_prices'] as List).map((e) => (e as num).toDouble()).toList();
     double expectedPrice = futurePrices.last;
@@ -294,22 +311,25 @@ class _PredictionScreenState extends State<PredictionScreen> {
     if (fallback == "flatline") {
       return "⚠️ Market data for $crop is currently too sparse to predict a curve. Prices are currently around $currentStr and are projected to remain stable based on the last known records.";
     } else if (fallback == "national") {
-      advice += "⚠️ Local data was unavailable, showing the Nationwide average.\n\n";
+      advice += "⚠️ Local data was unavailable. Showing the Nationwide average.\n\n";
     } else if (fallback.contains("alt_type")) {
       String foundType = fallback.split('_').last; 
-      advice += "⚠️ $_selectedPriceType data was unavailable. Showing $foundType prices instead.\n\n";
+      // 🔥 Tell the user they are looking at Retail instead of Wholesale!
+      advice += "⚠️ $_selectedPriceType data was unavailable locally. Showing ${foundType[0].toUpperCase()}${foundType.substring(1)} prices instead.\n\n";
     } else if (fallback.contains("national_alt")) {
       String foundType = fallback.split('_').last;
-      advice += "⚠️ Local data was sparse. Showing Nationwide $foundType prices instead.\n\n";
+      advice += "⚠️ Local data was unavailable. Showing Nationwide ${foundType[0].toUpperCase()}${foundType.substring(1)} prices instead.\n\n";
     }
 
-    // 🔥 Inject the exact prices into the advice!
-    if (isRising) {
-      advice += "Prices are looking good! The current price is $currentStr, and we expect it to rise to about $expectedStr per KG by next month.\n\nWhat you should do: If you have safe, dry storage, consider holding onto your $crop for a few more weeks to lock in that higher profit.";
+    String unit = _getUnitMeasurement(_selectedCrop, _selectedPriceType);
+
+    if (trend == 'rising') {
+      advice += "Prices are looking good! The current price is $currentStr, and we expect it to rise to about $expectedStr per $unit by next month.\n\nWhat you should do: If you have safe, dry storage, consider holding onto your $crop for a few more weeks to lock in that higher profit.";
+    } else if (trend == 'falling') {
+      advice += "The market is slowing down. The current price is $currentStr, but we expect it to drop to about $expectedStr per $unit by next month.\n\nWhat you should do: If your $crop is harvested and ready, it might be best to sell it now before the price drops further.";
     } else {
-      advice += "The market is slowing down. The current price is $currentStr, but we expect it to drop to about $expectedStr per KG by next month.\n\nWhat you should do: If your $crop is harvested and ready, it might be best to sell it now before the price drops further.";
+      advice += "The market is relatively stable. The current price is $currentStr, and we expect it to hover around $expectedStr per $unit next month.\n\nWhat you should do: You can sell your $crop at your convenience, as prices are not expected to fluctuate significantly in the near future.";
     }
-    
     return advice;
   }
 
@@ -500,7 +520,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
         Padding(
           padding: const EdgeInsets.only(left: 10.0),
           child: Text(
-            "Price (KES per 1 KG)",
+            "Price (KES per ${_getUnitMeasurement(_selectedCrop, _selectedPriceType)})",
             style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey[500]),
           ),
         ),
@@ -529,6 +549,9 @@ class _PredictionScreenState extends State<PredictionScreen> {
                     interval: 1,
                     getTitlesWidget: (value, meta) {
                       if (value.toInt() == 0) {
+                        // 🔥 THE FIX: Hide "Start" if the history is too short!
+                        if (todayIndex < 4) return const SizedBox.shrink(); 
+                        
                         return Padding(
                           padding: const EdgeInsets.only(top: 8.0, left: 20),
                           child: Text("Start", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey[500])),
@@ -566,18 +589,14 @@ class _PredictionScreenState extends State<PredictionScreen> {
               lineBarsData: [
                 LineChartBarData(
                   spots: pastSpots,
-                  isCurved: true,
-                  curveSmoothness: 0.15,
-                  preventCurveOverShooting: true,
+                  isCurved: false, // 🔥 FIX: Set this to false!
                   color: Colors.grey[400],
                   barWidth: 3,
                   dotData: FlDotData(show: false),
                 ),
                 LineChartBarData(
                   spots: futureSpots,
-                  isCurved: true,
-                  curveSmoothness: 0.15,
-                  preventCurveOverShooting: true, 
+                  isCurved: false, // 🔥 FIX: Set this to false!
                   color: futureColor,
                   barWidth: 4,
                   dashArray: [8, 5], 

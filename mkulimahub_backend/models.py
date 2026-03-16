@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Enum, UniqueConstraint, Date
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from geoalchemy2 import Geometry
@@ -90,3 +90,18 @@ class HubMessage(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     sender = relationship("User")
+
+class MarketPrice(Base):
+    __tablename__ = "market_prices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    county = Column(String, index=True)      # e.g., "nairobi"
+    commodity = Column(String, index=True)   # e.g., "beans"
+    pricetype = Column(String, index=True)   # "wholesale" or "retail"
+    price = Column(Float)
+    ds = Column(Date, index=True)            # The date of the price
+
+    # 🔥 ENTERPRISE SHIELD: Prevent the daily scraper from accidentally inserting duplicate prices for the same day
+    __table_args__ = (
+        UniqueConstraint('county', 'commodity', 'pricetype', 'ds', name='_county_commodity_price_date_uc'),
+    )

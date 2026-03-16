@@ -163,17 +163,16 @@ class ApiClient {
 
   // 🔥 FIXED: Now uses dynamic baseUrl instead of hardcoded 192.168.X.X
   Future<Map<String, dynamic>> getMarketMetadata() async {
-    final url = Uri.parse('$baseUrl/api/market-metadata'); 
-    
-    final response = await http.get(url);
+    // 🔥 THE FIX: Added '/api/' to the URL path!
+    final response = await http.get(Uri.parse('$baseUrl/api/market-metadata'));
 
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      return json.decode(response.body); 
     } else {
-      throw Exception('Failed to load market metadata');
+      throw Exception('Failed to load metadata');
     }
   }
-
+  
   Future<Map<String, dynamic>> getClusters([String? crop]) async {
     try {
       String url = '$baseUrl/api/clusters';
