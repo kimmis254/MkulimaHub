@@ -32,8 +32,15 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     full_name = Column(String, index=True)
-    phone_number = Column(String, unique=True, index=True)
-    hashed_password = Column(String)
+    
+    # 🔥 ADD THESE TWO FOR GOOGLE:
+    email = Column(String, unique=True, index=True, nullable=True)
+    google_uid = Column(String, unique=True, nullable=True)
+    
+    # 🔥 FIX: Add `nullable=True` to these so Google users don't crash the DB!
+    phone_number = Column(String, unique=True, index=True, nullable=True)
+    hashed_password = Column(String, nullable=True)
+    
     role = Column(String, default="farmer")
     
     bio = Column(String, nullable=True)

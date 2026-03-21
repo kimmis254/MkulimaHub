@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:geolocator/geolocator.dart'; 
+import 'package:firebase_auth/firebase_auth.dart'; // 🔥 Required for Firebase deletion
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/auth/login_screen.dart';
 import 'package:mkulimahub_mobile/features/home/home_screen.dart'; 
@@ -45,6 +46,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   File? _profileImage;
   bool _isLoading = false;
+  bool _isDeleting = false; // Track deletion state
   Map<String, dynamic>? _profileData;
   
   bool _isLoadingPledges = true;
@@ -91,12 +93,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _longitude = position.longitude;
         });
         
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ Farm GPS captured successfully!"), backgroundColor: Colors.green));
+        if (mounted) _showSnackBar("✅ Farm GPS captured successfully!", Colors.green.shade700);
       } else {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("GPS Permission Denied."), backgroundColor: Colors.red));
+        if (mounted) _showSnackBar("GPS Permission Denied.", Colors.redAccent);
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Failed to get GPS: $e"), backgroundColor: Colors.red));
+      if (mounted) _showSnackBar("Failed to get GPS: $e", Colors.redAccent);
     } finally {
       setState(() => _isFetchingGps = false);
     }
@@ -147,7 +149,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _saveProfile() async {
     if (_selectedCounty == null || _selectedSubCounty == null) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please select your County and Sub-County"), backgroundColor: Colors.red));
+      if (mounted) _showSnackBar("Please select your County and Sub-County", Colors.redAccent);
       return;
     }
 
@@ -181,12 +183,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _isLoading = false;
           _isEditing = false;
         });
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile Updated!"), backgroundColor: Colors.green));
+        if (mounted) _showSnackBar("Profile Updated!", Colors.green.shade700);
       }
     } else {
       setState(() => _isLoading = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+      if (mounted) _showSnackBar(error, Colors.redAccent);
     }
+  }
+
+  // 🔥 The Corrected Deletion Logic
+  Future<void> _handleDeleteAccount() async {
+    // 1. Confirm Deletion
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Delete Account", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+        content: Text("Are you sure you want to permanently delete your MkulimaHub account? This cannot be undone.", style: GoogleFonts.poppins()),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text("Cancel", style: GoogleFonts.poppins(color: Colors.grey))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true), 
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: Text("Delete", style: GoogleFonts.poppins(color: Colors.white))
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _isDeleting = true);
+
+    // 2. Delete from FastAPI Database first
+    final dbError = await _apiClient.deleteAccount();
+
+    if (dbError == null) {
+      // 3. Delete from Firebase 
+      try {
+        await FirebaseAuth.instance.currentUser?.delete();
+      } catch (e) {
+        print("Firebase deletion error (user might need to re-login to delete): $e");
+      }
+      
+      // 4. Send them to the Login Screen
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginScreen()), (route) => false);
+      }
+    } else {
+      setState(() => _isDeleting = false);
+      if (mounted) _showSnackBar(dbError, Colors.redAccent);
+    }
+  }
+
+  void _showSnackBar(String message, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: GoogleFonts.poppins()), 
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   @override
@@ -195,42 +252,77 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        automaticallyImplyLeading: !widget.isNewUser, 
-        leading: (!widget.isNewUser) 
-          ? IconButton(icon: const Icon(LucideIcons.arrowLeft, color: Colors.black), onPressed: () => Navigator.pop(context)) 
-          : null,
-        title: Text(title, style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold)),
-        actions: [
-          if (!_isEditing)
-             IconButton(
-              icon: const Icon(LucideIcons.settings, color: Colors.black),
-              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Settings Coming Soon!"))),
-            ),
-          if (_isEditing && !widget.isNewUser)
-            IconButton(
-              icon: const Icon(LucideIcons.x, color: Colors.red),
-              onPressed: () => setState(() => _isEditing = false),
-            )
-        ],
-      ),
       body: _isLoading && _profileData == null && !widget.isNewUser
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                children: [
-                  _buildProfileImage(),
-                  const SizedBox(height: 30),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 300),
-                    child: _isEditing ? _buildEditForm() : _buildViewMode(),
+          ? const Center(child: CircularProgressIndicator(color: Colors.green))
+          : Stack(
+              children: [
+                // Top Background Gradient
+                Container(
+                  height: MediaQuery.of(context).size.height * 0.35,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.green.shade900, Colors.green.shade500],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
                   ),
-                ],
-              ),
+                ),
+                
+                SafeArea(
+                  child: Column(
+                    children: [
+                      // Custom AppBar Area
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            if (!widget.isNewUser)
+                              IconButton(
+                                icon: const Icon(LucideIcons.arrowLeft, color: Colors.white),
+                                onPressed: () => Navigator.pop(context),
+                              )
+                            else
+                              const SizedBox(width: 48), 
+                            
+                            Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                            
+                            if (!_isEditing)
+                              IconButton(
+                                icon: const Icon(LucideIcons.settings, color: Colors.white),
+                                onPressed: () => _showSnackBar("Settings Coming Soon!", Colors.blueGrey),
+                              )
+                            else if (_isEditing && !widget.isNewUser)
+                              IconButton(
+                                icon: const Icon(LucideIcons.x, color: Colors.white),
+                                onPressed: () => setState(() => _isEditing = false),
+                              )
+                            else
+                              const SizedBox(width: 48), 
+                          ],
+                        ),
+                      ),
+                      
+                      // Scrollable Content
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.only(left: 24, right: 24, bottom: 40, top: 20),
+                          child: Column(
+                            children: [
+                              _buildProfileImage(),
+                              const SizedBox(height: 30),
+                              AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 300),
+                                child: _isEditing ? _buildEditForm() : _buildViewMode(),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
     );
   }
@@ -244,21 +336,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
       key: const ValueKey("view"),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Center(child: Text(_profileData?['full_name'] ?? "Farmer", style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold))),
-        Center(child: Text(location, style: GoogleFonts.poppins(color: Colors.grey[600]))),
+        // Name & Location Header inside a floating card
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, 10))],
+          ),
+          child: Column(
+            children: [
+              Text(_profileData?['full_name'] ?? "Farmer", style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87)),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(LucideIcons.mapPin, size: 16, color: Colors.green.shade700),
+                  const SizedBox(width: 6),
+                  Text(location, style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 14)),
+                ],
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: 30),
         
-        _buildInfoCard("About", _profileData?['bio'] ?? "No bio added yet."),
-        _buildInfoCard("Crops", _profileData?['main_crops'] ?? "No crops listed."),
+        _buildInfoCard("About", _profileData?['bio'] ?? "No bio added yet.", LucideIcons.user),
+        _buildInfoCard("Main Crops", _profileData?['main_crops'] ?? "No crops listed.", LucideIcons.sprout),
         
         Container(
           width: double.infinity,
           margin: const EdgeInsets.only(bottom: 25),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey[200]!)),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey.shade200)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text("Detailed Location", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[500])),
-            const SizedBox(height: 5),
+            Row(
+              children: [
+                Icon(LucideIcons.map, size: 18, color: Colors.green.shade700),
+                const SizedBox(width: 8),
+                Text("Detailed Location", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
             _buildLocationRow("County", _profileData?['county']),
             _buildLocationRow("Sub-County", _profileData?['sub_county']),
             _buildLocationRow("Ward", _profileData?['ward']),
@@ -267,22 +389,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
 
         Text("My Active Contracts", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
-        const SizedBox(height: 10),
+        const SizedBox(height: 15),
         
         _isLoadingPledges 
             ? const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: Colors.green)))
             : _myPledges.isEmpty
                 ? Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(20),
-                    margin: const EdgeInsets.only(bottom: 25),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey[200]!)),
-                    child: Text("You haven't pledged to any contracts yet.", style: GoogleFonts.poppins(color: Colors.grey), textAlign: TextAlign.center),
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey.shade200)),
+                    child: Column(
+                      children: [
+                        Icon(LucideIcons.fileText, size: 40, color: Colors.grey.shade400),
+                        const SizedBox(height: 12),
+                        Text("No active pledges yet.", style: GoogleFonts.poppins(color: Colors.grey.shade600), textAlign: TextAlign.center),
+                      ],
+                    ),
                   )
                 : ListView.builder(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    padding: const EdgeInsets.only(bottom: 25),
+                    padding: EdgeInsets.zero,
                     itemCount: _myPledges.length,
                     itemBuilder: (context, index) {
                       final pledge = _myPledges[index];
@@ -323,32 +450,55 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     },
                   ),
 
-        const SizedBox(height: 10),
+        const SizedBox(height: 30),
         
         SizedBox(
           width: double.infinity,
-          height: 50,
+          height: 55,
           child: ElevatedButton.icon(
-            icon: const Icon(LucideIcons.edit3, color: Colors.white),
-            label: const Text("Edit Profile", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            icon: const Icon(LucideIcons.edit3, color: Colors.white, size: 18),
+            label: Text("Edit Profile", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 16)),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green[700], shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
             onPressed: () => setState(() => _isEditing = true),
           ),
         ),
         
-        const SizedBox(height: 15),
+        const SizedBox(height: 20),
         
-        Center(
-          child: TextButton.icon(
-             icon: const Icon(LucideIcons.logOut, color: Colors.red),
-             label: const Text("Log Out", style: TextStyle(color: Colors.red)),
-             onPressed: () async {
-               await _apiClient.logout();
-               if (mounted) Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginScreen()), (r) => false);
-             },
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                 icon: const Icon(LucideIcons.logOut, color: Colors.grey),
+                 label: Text("Log Out", style: GoogleFonts.poppins(color: Colors.grey, fontWeight: FontWeight.w600)),
+                 style: OutlinedButton.styleFrom(
+                   padding: const EdgeInsets.symmetric(vertical: 16),
+                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))
+                 ),
+                 onPressed: () async {
+                   await _apiClient.logout();
+                   if (mounted) Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginScreen()), (r) => false);
+                 },
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: ElevatedButton.icon(
+                 icon: _isDeleting 
+                    ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(color: Colors.red, strokeWidth: 2)) 
+                    : const Icon(LucideIcons.trash2, color: Colors.red),
+                 label: Text("Delete", style: GoogleFonts.poppins(color: Colors.red, fontWeight: FontWeight.w600)),
+                 style: ElevatedButton.styleFrom(
+                   padding: const EdgeInsets.symmetric(vertical: 16),
+                   backgroundColor: Colors.red.shade50,
+                   elevation: 0,
+                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))
+                 ),
+                 onPressed: _isDeleting ? null : _handleDeleteAccount,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 40),
       ],
     );
   }
@@ -370,6 +520,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           decoration: BoxDecoration(
             color: Colors.white, 
             borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: Colors.grey.shade200),
             boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
           ),
           child: Column(children: [
@@ -385,7 +536,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                  _subCounties = constituencies.map((c) => c['constituency_name'].toString()).toList();
                });
              }),
-             const Divider(),
+             Divider(color: Colors.grey.shade200, height: 1),
              _buildDropdown("Sub-County", _selectedSubCounty, _subCounties, (val) {
                setState(() { 
                  _selectedSubCounty = val; 
@@ -397,14 +548,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                  _wards = List<String>.from(constituencyObj['wards']);
                });
              }),
-             const Divider(),
+             Divider(color: Colors.grey.shade200, height: 1),
              _buildDropdown("Ward", _selectedWard, _wards, (val) => setState(() => _selectedWard = val)),
-             const Divider(),
-             TextField(
+             Divider(color: Colors.grey.shade200, height: 1),
+             TextFormField(
                 controller: _villageController,
                 style: GoogleFonts.poppins(fontSize: 14),
                 decoration: InputDecoration(
-                  labelText: "Village",
+                  labelText: "Village / Landmark",
+                  labelStyle: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 13),
                   prefixIcon: Icon(LucideIcons.mapPin, color: Colors.green[700], size: 18),
                   border: InputBorder.none,
                 ),
@@ -419,17 +571,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.blue[50],
+            color: _isAtFarm ? Colors.green.shade50 : Colors.blue.shade50,
             borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: Colors.blue.withOpacity(0.2)),
+            border: Border.all(color: _isAtFarm ? Colors.green.withOpacity(0.3) : Colors.blue.withOpacity(0.2)),
           ),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SwitchListTile(
                 title: Text("Are you currently at your farm?", style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
                 subtitle: Text("Boost your visibility by capturing your exact GPS coordinates for bulk buyers.", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[700])),
                 value: _isAtFarm,
-                activeColor: Colors.green,
+                activeColor: Colors.green.shade700,
                 contentPadding: EdgeInsets.zero,
                 onChanged: (bool value) {
                   setState(() {
@@ -450,14 +603,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     onPressed: _isFetchingGps ? null : _captureFarmGPS,
                     icon: _isFetchingGps 
                         ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                        : const Icon(LucideIcons.mapPin, color: Colors.white),
+                        : Icon(LucideIcons.target, color: _latitude != null ? Colors.green.shade800 : Colors.white, size: 18),
                     label: Text(
-                      _latitude != null ? "GPS Captured Successfully" : "Tap to Capture Exact GPS", 
-                      style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.white)
+                      _latitude != null ? "GPS Captured Successfully!" : "Tap to Capture Exact GPS", 
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: _latitude != null ? Colors.green.shade800 : Colors.white)
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: _latitude != null ? Colors.green[800] : Colors.green,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      backgroundColor: _latitude != null ? Colors.green.shade100 : Colors.green.shade700,
+                      elevation: _latitude != null ? 0 : 2,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
                 ),
@@ -469,7 +623,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         const SizedBox(height: 30),
         FadeInDown(delay: const Duration(milliseconds: 200), child: _buildSectionTitle("Farming Details")),
         const SizedBox(height: 10),
-        _buildModernField(_cropsController, "Main Crops", LucideIcons.sprout, hint: "Maize, Beans, etc."),
+        _buildModernField(_cropsController, "Main Crops", LucideIcons.sprout, hint: "E.g. Maize, Beans, Potatoes"),
 
         const SizedBox(height: 40),
         
@@ -486,123 +640,89 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             child: _isLoading 
               ? const CircularProgressIndicator(color: Colors.white) 
-              : Text(widget.isNewUser ? "Create Profile" : "Save Changes", style: const TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+              : Text(widget.isNewUser ? "Create Profile" : "Save Changes", style: GoogleFonts.poppins(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ),
-        const SizedBox(height: 40),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Text("My Active Contracts", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
-          ),
-          const SizedBox(height: 10),
-          
-          _isLoadingPledges 
-              ? const Center(child: CircularProgressIndicator(color: Colors.green))
-              : _myPledges.isEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Text("You haven't pledged to any contracts yet.", style: GoogleFonts.poppins(color: Colors.grey)),
-                    )
-                  : ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      itemCount: _myPledges.length,
-                      itemBuilder: (context, index) {
-                        final pledge = _myPledges[index];
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 15),
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(15),
-                            border: Border.all(color: Colors.green.withOpacity(0.3)),
-                            boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(color: Colors.green[50], shape: BoxShape.circle),
-                                child: const Icon(LucideIcons.checkCircle, color: Colors.green),
-                              ),
-                              const SizedBox(width: 15),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text("${pledge['pledged_weight_kg']}kg ${pledge['crop_name']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16)),
-                                    Text("For: ${pledge['buyer_name']}", style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 13)),
-                                  ],
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                                decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(20)),
-                                child: Text(pledge['status'], style: GoogleFonts.poppins(color: Colors.blue[800], fontSize: 10, fontWeight: FontWeight.bold)),
-                              )
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-          const SizedBox(height: 40),
       ],
     );
   }
 
   Widget _buildProfileImage() {
     return Stack(
+      alignment: Alignment.center,
       children: [
         Container(
-          decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 4), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.2), blurRadius: 10)]),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle, 
+            border: Border.all(color: Colors.white, width: 4), 
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 15, offset: const Offset(0, 5))],
+          ),
           child: CircleAvatar(
             radius: 55,
-            backgroundColor: Colors.green[50],
+            backgroundColor: Colors.white,
             backgroundImage: _profileImage != null ? FileImage(_profileImage!) : null,
-            child: _profileImage == null ? Icon(LucideIcons.user, size: 40, color: Colors.green[700]) : null,
+            child: _profileImage == null ? Icon(LucideIcons.user, size: 45, color: Colors.green.shade200) : null,
           ),
         ),
         if (_isEditing)
           Positioned(
-            bottom: 0, right: 0,
+            bottom: 0, 
+            right: 0,
             child: GestureDetector(
               onTap: () async {
                 final img = await _picker.pickImage(source: ImageSource.gallery);
                 if (img != null) setState(() => _profileImage = File(img.path));
               },
-              child: Container(padding: const EdgeInsets.all(8), decoration: const BoxDecoration(color: Colors.green, shape: BoxShape.circle), child: const Icon(LucideIcons.camera, color: Colors.white, size: 18)),
+              child: Container(
+                padding: const EdgeInsets.all(10), 
+                decoration: BoxDecoration(color: Colors.green.shade700, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)), 
+                child: const Icon(LucideIcons.camera, color: Colors.white, size: 16)
+              ),
             ),
           )
       ],
     );
   }
 
-  Widget _buildInfoCard(String title, String value) {
+  Widget _buildInfoCard(String title, String value, IconData icon) {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 15),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey[200]!)),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey.shade200)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[500])),
-        const SizedBox(height: 4),
-        Text(value, style: GoogleFonts.poppins(fontSize: 15, fontWeight: FontWeight.w500)),
+        Row(
+          children: [
+            Icon(icon, size: 18, color: Colors.green.shade700),
+            const SizedBox(width: 8),
+            Text(title, style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        const Divider(height: 1),
+        const SizedBox(height: 12),
+        Text(value, style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey.shade700, height: 1.5)),
       ]),
     );
   }
 
-  Widget _buildSectionTitle(String title) => Align(alignment: Alignment.centerLeft, child: Text(title, style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey[800])));
+  Widget _buildSectionTitle(String title) => Align(alignment: Alignment.centerLeft, child: Text(title, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)));
   
   Widget _buildModernField(TextEditingController c, String label, IconData icon, {int maxLines = 1, String? hint}) {
     return Container(
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))]),
+      decoration: BoxDecoration(
+        color: Colors.white, 
+        borderRadius: BorderRadius.circular(15), 
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
+      ),
       child: TextField(
         controller: c, maxLines: maxLines, 
+        style: GoogleFonts.poppins(fontSize: 14),
         decoration: InputDecoration(
           labelText: label, hintText: hint,
           hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 13),
-          labelStyle: GoogleFonts.poppins(color: Colors.grey[600]),
+          labelStyle: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 13),
           prefixIcon: Icon(icon, color: Colors.green[700], size: 20), 
           border: InputBorder.none, 
           contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)
@@ -612,24 +732,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildDropdown(String label, String? val, List<String> items, Function(String?) changed) {
-    return DropdownButtonHideUnderline(
-      child: DropdownButton<String>(
-        value: val, isExpanded: true, 
-        hint: Text(label, style: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 14)), 
-        icon: const Icon(LucideIcons.chevronDown, size: 18, color: Colors.grey),
-        items: items.map((e) => DropdownMenuItem(value: e, child: Text(e, style: GoogleFonts.poppins(fontSize: 14), overflow: TextOverflow.ellipsis))).toList(), 
-        onChanged: items.isEmpty ? null : changed
-      )
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: val, isExpanded: true, 
+          hint: Text(label, style: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 14)), 
+          icon: const Icon(LucideIcons.chevronDown, size: 18, color: Colors.grey),
+          items: items.map((e) => DropdownMenuItem(value: e, child: Text(e, style: GoogleFonts.poppins(fontSize: 14), overflow: TextOverflow.ellipsis))).toList(), 
+          onChanged: items.isEmpty ? null : changed
+        )
+      ),
     );
   }
   
   Widget _buildLocationRow(String label, String? value) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4.0),
+      padding: const EdgeInsets.only(bottom: 8.0),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text("$label: ", style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 13)),
-          Text(value ?? "Not set", style: GoogleFonts.poppins(color: Colors.black87, fontSize: 13)),
+          Text(label, style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13)),
+          Text(value ?? "Not set", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.w500, fontSize: 13)),
         ],
       ),
     );

@@ -22,7 +22,7 @@ class Token(BaseModel):
 class UserResponse(BaseModel):
     id: int
     full_name: str
-    phone_number: str
+    phone_number: Optional[str]
     role: str
     
     class Config:
@@ -49,7 +49,7 @@ class UserProfileUpdate(BaseModel):
 class UserRead(BaseModel):
     id: int
     full_name: str
-    phone_number: str
+    phone_number: Optional[str]
     role: str
     bio: str | None = None
     main_crops: str | None = None

@@ -53,6 +53,51 @@ class ApiClient {
     }
   }
 
+  // 🔥 NEW: Google Login/Signup Endpoint
+  Future<String?> googleLogin({
+    required String email, 
+    required String name, 
+    required String uid
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/google'), // Adjust this if your FastAPI route is different
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'email': email,
+          'full_name': name,
+          'google_uid': uid,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final token = data['access_token'];
+        
+        // 🔥 FIX: ALWAYS save the token first if it exists!
+        if (token != null) {
+          await _saveToken(token); 
+        }
+
+        // NOW we can safely check the status and route the user
+        if (data['status'] == 'needs_profile') {
+          return 'needs_profile';
+        }
+
+        if (token != null) {
+          return null; // Success! No errors.
+        } else {
+          return 'Failed to retrieve access token.';
+        }
+      } else {
+        final errorData = jsonDecode(response.body);
+        return errorData['detail'] ?? 'Authentication failed. Please try again.';
+      }
+    } catch (e) {
+      return 'Network error. Please check your connection.';
+    }
+  }
+
   Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
@@ -149,21 +194,19 @@ class ApiClient {
         "commodity": commodity.toLowerCase(),
         "days": 30,
         "region": region.toLowerCase(),
-        "price_type": priceType.toLowerCase() // Send Retail or Wholesale!
+        "price_type": priceType.toLowerCase() 
       }),
     );
 
     if (response.statusCode == 200) {
-      return jsonDecode(response.body); // Return the whole map (past, future, trend)
+      return jsonDecode(response.body); 
     } else {
       final errorData = jsonDecode(response.body);
       throw Exception(errorData['detail'] ?? 'Failed to analyze market.');
     }
   }
 
-  // 🔥 FIXED: Now uses dynamic baseUrl instead of hardcoded 192.168.X.X
   Future<Map<String, dynamic>> getMarketMetadata() async {
-    // 🔥 THE FIX: Added '/api/' to the URL path!
     final response = await http.get(Uri.parse('$baseUrl/api/market-metadata'));
 
     if (response.statusCode == 200) {
@@ -329,6 +372,27 @@ class ApiClient {
       }
     } catch (e) {
       return "Connection error. Make sure your Python server is running!";
+    }
+  }
+
+  Future<String?> deleteAccount() async {
+    final token = await getToken();
+    if (token == null) return "Not authenticated";
+
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/users/me'),
+        headers: {"Authorization": "Bearer $token"},
+      );
+
+      if (response.statusCode == 200) {
+        await logout(); // Clear the local token
+        return null; 
+      } else {
+        return "Failed to delete account data.";
+      }
+    } catch (e) {
+      return "Network error: $e";
     }
   }
 }

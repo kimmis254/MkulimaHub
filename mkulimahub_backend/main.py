@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import APIRouter,FastAPI, HTTPException, Depends, status
 from sqlalchemy.orm import Session
 from geoalchemy2.elements import WKTElement
 import models
@@ -23,6 +23,8 @@ import google.generativeai as genai
 import random
 import glob
 from sqlalchemy import select, distinct
+from sqlalchemy import text
+from typing import Optional
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -35,6 +37,44 @@ def get_db():
     finally:
         db.close()
 
+class GoogleAuthRequest(BaseModel):
+    email: str
+    full_name: str
+    google_uid: str    
+
+@app.post("/auth/google")
+def google_login(request: GoogleAuthRequest, db: Session = Depends(get_db)):
+    
+    user = db.query(models.User).filter(models.User.email == request.email).first()
+    
+    if user:
+        access_token = security.create_access_token(data={"sub": str(user.id), "role": user.role})
+        
+        return {
+            "access_token": access_token, 
+            "token_type": "bearer", 
+            "status": "success"
+        }
+    else:
+        new_user = models.User(
+            full_name=request.full_name,
+            email=request.email,
+            google_uid=request.google_uid,
+            role="farmer"
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        
+        # 🔥 Changed to security.create_access_token
+        access_token = security.create_access_token(data={"sub": str(new_user.id), "role": new_user.role})
+        
+        return {
+            "access_token": access_token, 
+            "token_type": "bearer", 
+            "status": "needs_profile"
+        }
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -45,13 +85,14 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     )
     try:
         payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
-        phone_number: str = payload.get("sub")
-        if phone_number is None:
+        user_id: str = payload.get("sub") # 🔥 Extract ID, not phone number!
+        if user_id is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
         
-    user = db.query(models.User).filter(models.User.phone_number == phone_number).first()
+    # 🔥 Look up by ID!
+    user = db.query(models.User).filter(models.User.id == int(user_id)).first()
     if user is None:
         raise credentials_exception
         
@@ -91,7 +132,8 @@ def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = D
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    access_token = security.create_access_token(data={"sub": user.phone_number, "role": user.role})
+    # 🔥 Save str(user.id) instead of phone_number!
+    access_token = security.create_access_token(data={"sub": str(user.id), "role": user.role})
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.post("/harvests", status_code=status.HTTP_201_CREATED)
@@ -112,16 +154,15 @@ def create_harvest(harvest: schemas.HarvestCreate, db: Session = Depends(get_db)
 
 class HarvestRead(schemas.HarvestCreate):
     id: int
-    farmer_id: int
+    farmer_id: Optional[int] = None
     created_at: datetime
     class Config:
         from_attributes = True
 
 @app.get("/harvests", response_model=List[HarvestRead])
 def get_harvests(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    harvests = db.query(models.Harvest).offset(skip).limit(limit).all()
+    harvests = db.query(models.Harvest).filter(models.Harvest.farmer_id.isnot(None)).offset(skip).limit(limit).all()
     return harvests
-
 
 @app.put("/users/profile", response_model=schemas.UserRead)
 def update_profile(profile_data: schemas.UserProfileUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -579,6 +620,8 @@ def advanced_agri_bot(chat: schemas.ChatMessage):
         
     except Exception as e:
         return {"reply": f"MkulimaBot is resting. (Error: {str(e)})"}
+
+
     
 @app.get("/api/market-metadata")
 def get_market_metadata(db: Session = Depends(get_db)):
@@ -603,3 +646,10 @@ def get_market_metadata(db: Session = Depends(get_db)):
         "crops": crops_list, 
         "county_crop_map": county_crop_map 
     }
+
+@app.delete("/users/me")
+def delete_my_account(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # Delete the user (this will also cascade and delete their harvests/pledges if your DB is set up for it!)
+    db.delete(current_user)
+    db.commit()
+    return {"message": "Account deleted successfully"}

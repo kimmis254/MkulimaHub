@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "654543955611",
+    "project_id": "mkulimahub-b4341",
+    "storage_bucket": "mkulimahub-b4341.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:654543955611:android:40db2c8c9ceaa2913e883e",
+        "android_client_info": {
+          "package_name": "com.example.mkulimahub_mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC5L7qeGlO8Hf4myhVzY2vy0m1_HMX_5u4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
