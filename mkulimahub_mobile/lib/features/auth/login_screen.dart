@@ -6,7 +6,9 @@ import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/auth/register_screen.dart';
 import 'package:mkulimahub_mobile/features/home/home_screen.dart';
 import 'package:mkulimahub_mobile/features/auth/auth_service.dart';
-import 'package:mkulimahub_mobile/features/home/profile_screen.dart'; 
+import 'package:mkulimahub_mobile/features/home/profile_screen.dart';
+import 'package:mkulimahub_mobile/features/auth/otp_verification_screen.dart';
+import 'package:mkulimahub_mobile/features/auth/google_phone_link_screen.dart'; 
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -25,42 +27,112 @@ class _LoginScreenState extends State<LoginScreen> {
   
   bool _isLoading = false;
   bool _isGoogleLoading = false; 
+  bool _isResettingPassword = false;
 
   void _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
     
-    final error = await _apiClient.login(
-      _phoneController.text.trim(),
-      _passwordController.text.trim()
-    );
+    final phone = _phoneController.text.trim();
+    final password = _passwordController.text.trim();
 
-    setState(() => _isLoading = false);
+    // 1. Ask FastAPI if the password is correct FIRST
+    final error = await _apiClient.verifyCredentials(phone, password);
 
     if (error == null) {
-      if (mounted) {
-        Navigator.pushAndRemoveUntil(
-          context, 
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
-          (route) => false
-        );
+      // 2. PASSWORD IS CORRECT! Now trigger the 2FA SMS.
+      String formattedPhone = phone;
+      if (formattedPhone.startsWith('0')) {
+        formattedPhone = '+254${formattedPhone.substring(1)}';
+      } else if (!formattedPhone.startsWith('+')) {
+        formattedPhone = '+254$formattedPhone';
       }
+
+      await _authService.sendPhoneOTP(
+        phoneNumber: formattedPhone,
+        onCodeSent: (verificationId) {
+          setState(() => _isLoading = false);
+          
+          if (mounted) {
+            // 3. Send them to the OTP Screen, flagging it as a 2FA Login
+            Navigator.push(
+              context, 
+              MaterialPageRoute(
+                builder: (_) => OtpVerificationScreen(
+                  verificationId: verificationId,
+                  phoneNumber: formattedPhone,
+                  is2FALogin: true, 
+                  pendingLoginData: {'phone': phone, 'password': password}, 
+                )
+              )
+            );
+          }
+        },
+        onError: (errorMsg) {
+          setState(() => _isLoading = false);
+          if (mounted) _showError(errorMsg);
+        }
+      );
     } else {
+      // Password was wrong
+      setState(() => _isLoading = false);
       if (mounted) _showError(error);
     }
   }
 
-  // 🔥 Updated Google Sign-In Logic to sync with your Database
+  // 🔥 NEW: Forgot Password Logic
+  void _handleForgotPassword() async {
+    final phone = _phoneController.text.trim();
+    
+    if (!RegExp(r'^0(7|1)\d{8}$').hasMatch(phone) && !phone.startsWith('+254')) {
+      _showError("Please enter your registered phone number above first.");
+      return;
+    }
+
+    setState(() => _isResettingPassword = true);
+
+    String formattedPhone = phone;
+    if (formattedPhone.startsWith('0')) {
+      formattedPhone = '+254${formattedPhone.substring(1)}';
+    } else if (!formattedPhone.startsWith('+')) {
+      formattedPhone = '+254$formattedPhone';
+    }
+
+    // Trigger Firebase SMS for Password Reset
+    await _authService.sendPhoneOTP(
+      phoneNumber: formattedPhone,
+      onCodeSent: (verificationId) {
+        setState(() => _isResettingPassword = false);
+        if (mounted) {
+          Navigator.push(
+            context, 
+            MaterialPageRoute(
+              builder: (_) => OtpVerificationScreen(
+                verificationId: verificationId,
+                phoneNumber: formattedPhone,
+                isPasswordReset: true, // 🔥 Flag as a Password Reset!
+              )
+            )
+          );
+        }
+      },
+      onError: (errorMsg) {
+        setState(() => _isResettingPassword = false);
+        if (mounted) _showError(errorMsg);
+      }
+    );
+  }
+
+  // Google Sign-In Logic
   void _handleGoogleSignIn() async {
     setState(() => _isGoogleLoading = true);
     
-    // 1. Authenticate securely with Firebase
     final userCredential = await _authService.signInWithGoogle();
 
     if (userCredential != null && userCredential.user != null) {
-      // 2. Send the Google User's details to YOUR backend database
-      final error = await _apiClient.googleLogin(
+      // 1. Send the Google User's details to the backend
+      final apiStatus = await _apiClient.googleLogin(
         email: userCredential.user!.email ?? '',
         name: userCredential.user!.displayName ?? 'Farmer',
         uid: userCredential.user!.uid, 
@@ -68,8 +140,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
       setState(() => _isGoogleLoading = false);
 
-      if (error == null) {
-        // 🎉 Existing user in DB, token received! Go to Home.
+      // 2. Route the user based on exactly what the backend needs
+      if (apiStatus == 'success') {
+        // 🎉 Existing user with everything set up!
         if (mounted) {
           Navigator.pushAndRemoveUntil(
             context, 
@@ -77,8 +150,8 @@ class _LoginScreenState extends State<LoginScreen> {
             (route) => false
           );
         }
-      } else if (error == 'needs_profile') {
-        // 🔥 THE FIX: Route them directly to the Profile Screen!
+      } else if (apiStatus == 'needs_profile') {
+        // User has a phone number but hasn't set up their farm location
         if (mounted) {
           Navigator.pushAndRemoveUntil(
             context, 
@@ -86,8 +159,23 @@ class _LoginScreenState extends State<LoginScreen> {
             (route) => false
           );
         }
+      } else if (apiStatus == 'needs_phone') {
+        // 🔥 NEW: User bypassed the phone step, force them to link one!
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => GooglePhoneLinkScreen(
+                email: userCredential.user!.email ?? '',
+                name: userCredential.user!.displayName ?? 'Farmer',
+                uid: userCredential.user!.uid,
+              )
+            )
+          );
+        }
       } else {
-        if (mounted) _showError(error);
+        // If it's none of the above, it's an actual error message (e.g., "Network Error")
+        if (mounted) _showError(apiStatus ?? 'Authentication failed.');
       }
     } else {
       setState(() => _isGoogleLoading = false);
@@ -108,11 +196,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // 🔥 New Premium UI using a Stack and Gradients
     return Scaffold(
       body: Stack(
         children: [
-          // Background Gradient Header
           Container(
             height: MediaQuery.of(context).size.height * 0.45,
             decoration: BoxDecoration(
@@ -131,7 +217,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // 1. Header Icon & Text (Now White to pop on the green background)
                     FadeInDown(
                       duration: const Duration(milliseconds: 600),
                       child: Container(
@@ -155,7 +240,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 30),
 
-                    // 2. The Main Form Floating Card
                     FadeInUp(
                       delay: const Duration(milliseconds: 300),
                       child: Container(
@@ -185,7 +269,6 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               const SizedBox(height: 30),
 
-                              // Form Fields
                               _buildModernField(
                                 controller: _phoneController,
                                 label: "Phone Number",
@@ -193,7 +276,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                 inputType: TextInputType.phone,
                                 validator: (value) {
                                   if (value == null || value.isEmpty) return 'Required';
-                                  if (!RegExp(r'^0(7|1)\d{8}$').hasMatch(value)) return 'Invalid format (e.g., 0712...)';
+                                  if (!RegExp(r'^0(7|1)\d{8}$').hasMatch(value) && !value.startsWith('+254')) {
+                                    return 'Invalid format (e.g., 0712...)';
+                                  }
                                   return null;
                                 }
                               ),
@@ -207,12 +292,17 @@ class _LoginScreenState extends State<LoginScreen> {
                                 validator: (value) => value!.isEmpty ? 'Required' : null,
                               ),
                               
-                              // Forgot Password
+                              // 🔥 Restored: Forgot Password Link
                               Align(
                                 alignment: Alignment.centerRight,
                                 child: TextButton(
-                                  onPressed: () {}, // TODO: Implement Forgot Password
-                                  child: Text("Forgot Password?", style: GoogleFonts.poppins(color: Colors.green.shade700, fontSize: 13, fontWeight: FontWeight.w600)),
+                                  onPressed: (_isLoading || _isGoogleLoading || _isResettingPassword) ? null : _handleForgotPassword,
+                                  child: _isResettingPassword 
+                                    ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(color: Colors.green, strokeWidth: 2))
+                                    : Text(
+                                        "Forgot Password?", 
+                                        style: GoogleFonts.poppins(color: Colors.green.shade700, fontSize: 13, fontWeight: FontWeight.w600)
+                                      ),
                                 ),
                               ),
                               const SizedBox(height: 10),
@@ -221,7 +311,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               SizedBox(
                                 height: 55,
                                 child: ElevatedButton(
-                                  onPressed: (_isLoading || _isGoogleLoading) ? null : _handleLogin,
+                                  onPressed: (_isLoading || _isGoogleLoading || _isResettingPassword) ? null : _handleLogin,
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.green.shade700,
                                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -234,7 +324,6 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               const SizedBox(height: 24),
 
-                              // Divider OR
                               Row(
                                 children: [
                                   Expanded(child: Divider(color: Colors.grey[200], thickness: 1.5)),
@@ -247,11 +336,10 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               const SizedBox(height: 24),
 
-                              // Google Sign-In Button
                               SizedBox(
                                 height: 55,
                                 child: OutlinedButton(
-                                  onPressed: (_isLoading || _isGoogleLoading) ? null : _handleGoogleSignIn,
+                                  onPressed: (_isLoading || _isGoogleLoading || _isResettingPassword) ? null : _handleGoogleSignIn,
                                   style: OutlinedButton.styleFrom(
                                     backgroundColor: Colors.grey.shade50,
                                     side: BorderSide(color: Colors.grey.shade300, width: 1.5),
@@ -283,7 +371,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 24),
                     
-                    // Register Link at the bottom
                     FadeInUp(
                       delay: const Duration(milliseconds: 400),
                       child: Row(
@@ -312,7 +399,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  // Refined Helper Widget for Cleaner Fields
   Widget _buildModernField({
     required TextEditingController controller,
     required String label,

@@ -40,40 +40,63 @@ def get_db():
 class GoogleAuthRequest(BaseModel):
     email: str
     full_name: str
-    google_uid: str    
+    google_uid: str
+
+class GoogleRegisterRequest(BaseModel):
+    email: str
+    full_name: str
+    google_uid: str
+    phone_number: str
 
 @app.post("/auth/google")
 def google_login(request: GoogleAuthRequest, db: Session = Depends(get_db)):
-    
     user = db.query(models.User).filter(models.User.email == request.email).first()
     
     if user:
+        if not user.phone_number:
+            # They exist, but bypassed the phone step in the past! 
+            return {"status": "needs_phone"}
+            
+        # 🎉 EXISTING USER: Generate token
         access_token = security.create_access_token(data={"sub": str(user.id), "role": user.role})
-        
         return {
             "access_token": access_token, 
             "token_type": "bearer", 
             "status": "success"
         }
     else:
-        new_user = models.User(
+        # 🆕 NEW USER: Don't create them yet! Ask Flutter for a phone number.
+        return {"status": "needs_phone"}
+
+@app.post("/auth/google-register")
+def google_register(request: GoogleRegisterRequest, db: Session = Depends(get_db)):
+    # Check if this phone is already attached to someone else
+    existing_phone = db.query(models.User).filter(models.User.phone_number == request.phone_number).first()
+    if existing_phone and existing_phone.email != request.email:
+        raise HTTPException(status_code=400, detail="Phone number already registered to another account.")
+    
+    user = db.query(models.User).filter(models.User.email == request.email).first()
+    
+    if user:
+        # Update existing user who lacked a phone number
+        user.phone_number = request.phone_number
+        db.commit()
+        db.refresh(user)
+    else:
+        # Create brand new user with ALL details combined
+        user = models.User(
             full_name=request.full_name,
             email=request.email,
             google_uid=request.google_uid,
+            phone_number=request.phone_number,
             role="farmer"
         )
-        db.add(new_user)
+        db.add(user)
         db.commit()
-        db.refresh(new_user)
+        db.refresh(user)
         
-        # 🔥 Changed to security.create_access_token
-        access_token = security.create_access_token(data={"sub": str(new_user.id), "role": new_user.role})
-        
-        return {
-            "access_token": access_token, 
-            "token_type": "bearer", 
-            "status": "needs_profile"
-        }
+    access_token = security.create_access_token(data={"sub": str(user.id), "role": user.role})
+    return {"access_token": access_token, "token_type": "bearer", "status": "needs_profile"}
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
@@ -653,3 +676,56 @@ def delete_my_account(db: Session = Depends(get_db), current_user: models.User =
     db.delete(current_user)
     db.commit()
     return {"message": "Account deleted successfully"}
+
+class PhoneAuthRequest(BaseModel):
+    phone_number: str
+    uid: str # Firebase UID just for extra security checks if needed
+
+@app.post("/auth/phone-login")
+def phone_login(request: PhoneAuthRequest, db: Session = Depends(get_db)):
+    # 1. Normalize the phone number to match how it's stored in your DB 
+    # (e.g., converting +2547... to 07... if that's how you save it)
+    search_phone = request.phone_number
+    if search_phone.startswith("+254"):
+        search_phone = "0" + search_phone[4:]
+
+    # 2. Check if the farmer actually exists in your database
+    user = db.query(models.User).filter(models.User.phone_number == search_phone).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Account not found. Please register first."
+        )
+    
+    # 3. Success! They are verified by Firebase, so we issue them a JWT
+    access_token = security.create_access_token(data={"sub": str(user.id), "role": user.role})
+    
+    return {"access_token": access_token, "token_type": "bearer", "status": "success"}
+
+class PasswordResetRequest(BaseModel):
+    phone_number: str
+    uid: str
+    new_password: str
+
+@app.post("/auth/reset-password")
+def reset_password(request: PasswordResetRequest, db: Session = Depends(get_db)):
+    # 1. Normalize phone number
+    search_phone = request.phone_number
+    if search_phone.startswith("+254"):
+        search_phone = "0" + search_phone[4:]
+
+    # 2. Find the user
+    user = db.query(models.User).filter(models.User.phone_number == search_phone).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Account not found."
+        )
+    
+    # 3. Securely hash and update the new password
+    user.hashed_password = security.get_password_hash(request.new_password)
+    db.commit()
+    
+    return {"message": "Password updated successfully", "status": "success"}

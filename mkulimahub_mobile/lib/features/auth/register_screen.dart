@@ -8,6 +8,8 @@ import 'package:mkulimahub_mobile/features/auth/login_screen.dart';
 import 'package:mkulimahub_mobile/features/home/home_screen.dart';
 import 'package:mkulimahub_mobile/features/home/profile_screen.dart';
 import 'package:mkulimahub_mobile/features/auth/auth_service.dart';
+import 'package:mkulimahub_mobile/features/auth/otp_verification_screen.dart';
+import 'package:mkulimahub_mobile/features/auth/google_phone_link_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -101,7 +103,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     setState(() => _isLoading = true);
 
-    // 2. Get Location
+    // 2. Get Location (Exactly as you had it)
     final position = await _determinePosition();
     
     if (position == null) {
@@ -109,7 +111,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return; 
     }
 
-    // 3. Prepare Data
+    // 3. Prepare Data (But DO NOT send to API yet!)
     final userData = {
       "full_name": _nameController.text.trim(),
       "phone_number": _phoneController.text.trim(),
@@ -119,26 +121,40 @@ class _RegisterScreenState extends State<RegisterScreen> {
       "longitude": position.longitude
     };
 
-    // 4. Call API
-    final error = await _apiClient.register(userData);
-
-    if (error == null) {
-      await _apiClient.login(_phoneController.text.trim(), _passwordController.text.trim());
-      
-      setState(() => _isLoading = false);
-      
-      if (mounted) {
-         // --- REDIRECT TO PROFILE (Force Edit Mode) ---
-         Navigator.pushAndRemoveUntil(
-          context, 
-          MaterialPageRoute(builder: (_) => ProfileScreen(isNewUser: true)),
-          (route) => false
-        );
-      }
-    } else {
-      setState(() => _isLoading = false);
-      if(mounted) _showCustomSnackBar(error, isError: true);
+    // 4. 🔥 THE NEW GATEWAY: Trigger Firebase SMS instead of Backend API
+    // Ensure the phone number has the +254 country code (Firebase requires it)
+    String formattedPhone = _phoneController.text.trim();
+    if (formattedPhone.startsWith('0')) {
+      formattedPhone = '+254${formattedPhone.substring(1)}';
+    } else if (!formattedPhone.startsWith('+')) {
+      formattedPhone = '+254$formattedPhone'; // Fallback
     }
+
+    await _authService.sendPhoneOTP(
+      phoneNumber: formattedPhone,
+      onCodeSent: (verificationId) {
+        setState(() => _isLoading = false);
+        
+        // 5. Navigate to the OTP Screen, passing the verification ID AND the user's form data!
+        if (mounted) {
+           // We need to import OtpVerificationScreen at the top of this file!
+           Navigator.push(
+            context, 
+            MaterialPageRoute(
+              builder: (_) => OtpVerificationScreen(
+                verificationId: verificationId,
+                phoneNumber: formattedPhone,
+                pendingRegistrationData: userData, // Pass the data!
+              )
+            )
+          );
+        }
+      },
+      onError: (errorMsg) {
+        setState(() => _isLoading = false);
+        if (mounted) _showCustomSnackBar(errorMsg, isError: true);
+      }
+    );
   }
 
   // 🔥 Google Sign-In Logic for Registration
@@ -148,7 +164,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final userCredential = await _authService.signInWithGoogle();
 
     if (userCredential != null && userCredential.user != null) {
-      final error = await _apiClient.googleLogin(
+      final apiStatus = await _apiClient.googleLogin(
         email: userCredential.user!.email ?? '',
         name: userCredential.user!.displayName ?? 'Farmer',
         uid: userCredential.user!.uid, 
@@ -156,8 +172,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       setState(() => _isGoogleLoading = false);
 
-      if (error == null) {
-        // 🎉 Existing user returning! Go to Home.
+      if (apiStatus == 'success') {
+        // Existing user somehow clicking register, send to Home
         if (mounted) {
           Navigator.pushAndRemoveUntil(
             context, 
@@ -165,8 +181,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
             (route) => false
           );
         }
-      } else if (error == 'needs_profile') {
-        // 🔥 THE FIX: Route them directly to the Profile Screen!
+      } else if (apiStatus == 'needs_profile') {
+        // Has phone, needs profile setup
         if (mounted) {
            Navigator.pushAndRemoveUntil(
             context, 
@@ -174,8 +190,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
             (route) => false
           );
         }
+      } else if (apiStatus == 'needs_phone') {
+        // 🔥 THE FIX: Route brand new Google users to the Phone Link Screen!
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => GooglePhoneLinkScreen(
+                email: userCredential.user!.email ?? '',
+                name: userCredential.user!.displayName ?? 'Farmer',
+                uid: userCredential.user!.uid,
+              )
+            )
+          );
+        }
       } else {
-        if (mounted) _showCustomSnackBar(error, isError: true);
+        if (mounted) _showCustomSnackBar(apiStatus ?? 'Authentication failed.', isError: true);
       }
     } else {
       setState(() => _isGoogleLoading = false);

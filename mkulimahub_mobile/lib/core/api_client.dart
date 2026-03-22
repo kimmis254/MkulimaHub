@@ -61,37 +61,43 @@ class ApiClient {
   }) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/google'), // Adjust this if your FastAPI route is different
+        Uri.parse('$baseUrl/auth/google'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'email': email,
-          'full_name': name,
-          'google_uid': uid,
-        }),
+        body: jsonEncode({'email': email, 'full_name': name, 'google_uid': uid}),
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final token = data['access_token'];
         
-        // 🔥 FIX: ALWAYS save the token first if it exists!
-        if (token != null) {
-          await _saveToken(token); 
-        }
+        if (token != null) await _saveToken(token); 
 
-        // NOW we can safely check the status and route the user
-        if (data['status'] == 'needs_profile') {
-          return 'needs_profile';
-        }
-
-        if (token != null) {
-          return null; // Success! No errors.
-        } else {
-          return 'Failed to retrieve access token.';
-        }
+        // 🔥 Return the exact status to the UI (success, needs_profile, or needs_phone)
+        return data['status']; 
       } else {
         final errorData = jsonDecode(response.body);
-        return errorData['detail'] ?? 'Authentication failed. Please try again.';
+        return errorData['detail'] ?? 'Authentication failed.';
+      }
+    } catch (e) {
+      return 'Network error. Please check your connection.';
+    }
+  }
+  Future<String?> googleRegister(Map<String, dynamic> data) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/google-register'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(data),
+      );
+
+      if (response.statusCode == 200) {
+        final respData = jsonDecode(response.body);
+        final token = respData['access_token'];
+        if (token != null) await _saveToken(token); 
+        return respData['status']; // Usually returns 'needs_profile'
+      } else {
+        final errorData = jsonDecode(response.body);
+        return errorData['detail'] ?? 'Registration failed.';
       }
     } catch (e) {
       return 'Network error. Please check your connection.';
@@ -393,6 +399,77 @@ class ApiClient {
       }
     } catch (e) {
       return "Network error: $e";
+    }
+  }
+
+  Future<String?> phoneLogin({required String phone, required String uid}) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/phone-login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'phone_number': phone,
+          'uid': uid,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final token = data['access_token'];
+        
+        if (token != null) {
+          await _saveToken(token); 
+          return null; // Success!
+        } else {
+          return 'Failed to retrieve access token.';
+        }
+      } else {
+        final errorData = jsonDecode(response.body);
+        return errorData['detail'] ?? 'Login failed. Please try again.';
+      }
+    } catch (e) {
+      return 'Network error. Please check your connection.';
+    }
+  }
+
+  Future<String?> verifyCredentials(String phone, String password) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/login'), // We can reuse the login endpoint to check the password
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+        body: {"username": phone, "password": password},
+      );
+
+      if (response.statusCode == 200) {
+        return null; // Password is correct!
+      } else {
+        return "Invalid phone number or password.";
+      }
+    } catch (e) {
+      return "Connection error. Check your network.";
+    }
+  }
+
+  Future<String?> resetPassword({required String phone, required String uid, required String newPassword}) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/reset-password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'phone_number': phone,
+          'uid': uid,
+          'new_password': newPassword,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return null; // Success!
+      } else {
+        final errorData = jsonDecode(response.body);
+        return errorData['detail'] ?? 'Failed to reset password. Please try again.';
+      }
+    } catch (e) {
+      return 'Network error. Please check your connection.';
     }
   }
 }

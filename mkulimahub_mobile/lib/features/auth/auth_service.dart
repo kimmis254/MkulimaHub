@@ -38,6 +38,57 @@ class AuthService {
     }
   }
 
+Future<void> sendPhoneOTP({
+    required String phoneNumber,
+    required Function(String verificationId) onCodeSent,
+    required Function(String error) onError,
+  }) async {
+    try {
+      await _auth.verifyPhoneNumber(
+        phoneNumber: phoneNumber, // Must include country code, e.g., +254...
+        
+        // Android can sometimes automatically read the SMS and log in!
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          await _auth.signInWithCredential(credential);
+        },
+        
+        // If the phone number is invalid or blocked
+        verificationFailed: (FirebaseAuthException e) {
+          onError(e.message ?? "Failed to send OTP. Check the phone number.");
+        },
+        
+        // When Firebase successfully sends the SMS, it gives us an ID
+        codeSent: (String verificationId, int? resendToken) {
+          onCodeSent(verificationId);
+        },
+        
+        // If it takes too long
+        codeAutoRetrievalTimeout: (String verificationId) {},
+      );
+    } catch (e) {
+      onError("An unexpected error occurred: $e");
+    }
+  }
+
+  // Step B: Verify the code the user typed in
+  Future<UserCredential?> verifyOTP({
+    required String verificationId,
+    required String smsCode,
+  }) async {
+    try {
+      // Create a credential using the ID and the 6-digit code
+      PhoneAuthCredential credential = PhoneAuthProvider.credential(
+        verificationId: verificationId,
+        smsCode: smsCode,
+      );
+      
+      // Sign them into Firebase!
+      return await _auth.signInWithCredential(credential);
+    } catch (e) {
+      print("OTP Verification Error: $e");
+      return null; // Code was wrong or expired
+    }
+  }
   // 🔥 Logout Logic
   Future<void> signOut() async {
     await _googleSignIn.signOut();
