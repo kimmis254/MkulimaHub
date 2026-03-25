@@ -1,13 +1,21 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:flutter_dotenv/flutter_dotenv.dart'; // 🔥 Import dotenv
+import 'package:flutter_dotenv/flutter_dotenv.dart'; 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mkulimahub_mobile/features/home/harvest_model.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiClient {
   // 🔥 Dynamic base URL! No more hardcoded IPs. 
   // It checks the .env file. If it fails, it defaults to the Android Emulator IP.
   String get baseUrl => dotenv.env['API_BASE_URL'] ?? 'http://192.168.100.4:8000'; 
+
+
+  Future<String?> _getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('auth_token'); // Must match the line above perfectly!
+  }
+
 
   Future<String?> login(String phone, String password) async {
     try {
@@ -292,7 +300,7 @@ class ApiClient {
 
   Future<void> _saveToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('auth_token', token);
+    await prefs.setString('auth_token', token); // We will use 'auth_token' as the master key
   }
 
   Future<String?> getToken() async {
@@ -470,6 +478,76 @@ class ApiClient {
       }
     } catch (e) {
       return 'Network error. Please check your connection.';
+    }
+  }
+
+  Future<List<dynamic>?> getNearbyHubs() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/hubs/nearby'),
+        // Make sure to include your auth token header!
+        headers: {'Authorization': 'Bearer ${await _getToken()}'}, 
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 🔥 Send a Join Request to a specific Hub
+  Future<String?> joinHub(int hubId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/hubs/$hubId/join'),
+        headers: {'Authorization': 'Bearer ${await _getToken()}'},
+      );
+
+      final body = jsonDecode(response.body);
+
+      if (response.statusCode == 200) {
+        return null; // Success! No error message.
+      } else {
+        return body['detail'] ?? body['message'] ?? 'Failed to send request.';
+      }
+    } catch (e) {
+      return 'Network error occurred.';
+    }
+  }
+
+  Future<List<dynamic>?> getCoordinatorRequests() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/coordinator/requests'),
+        headers: {'Authorization': 'Bearer ${await _getToken()}'},
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 🔥 Approve or Reject a Farmer
+  Future<String?> respondToHubRequest(int requestId, String action) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/coordinator/requests/$requestId?action=$action'),
+        headers: {'Authorization': 'Bearer ${await _getToken()}'},
+      );
+      if (response.statusCode == 200) {
+        return null; // Success!
+      } else {
+        final body = jsonDecode(response.body);
+        return body['detail'] ?? 'Failed to update request.';
+      }
+    } catch (e) {
+      return 'Network error occurred.';
     }
   }
 }

@@ -2,6 +2,7 @@ import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'dart:async';
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/auth/auth_service.dart';
 import 'package:mkulimahub_mobile/features/home/home_screen.dart';
@@ -14,7 +15,7 @@ class OtpVerificationScreen extends StatefulWidget {
   
   // Scenarios
   final Map<String, dynamic>? pendingRegistrationData; 
-  final Map<String, dynamic>? pendingLoginData; // 🔥 For 2FA Login
+  final Map<String, dynamic>? pendingLoginData; 
   final bool is2FALogin; 
   final bool isPasswordReset;
   final Map<String, dynamic>? pendingGoogleData;
@@ -40,6 +41,65 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   final _apiClient = ApiClient();
   
   bool _isLoading = false;
+
+  Timer? _timer;
+  int _start = 60; // 60 seconds countdown
+  bool _canResend = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _startTimer(); // Start the countdown as soon as the screen loads
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel(); // Always cancel timers when leaving the screen to prevent memory leaks!
+    _otpController.dispose();
+    super.dispose();
+  }
+
+  void _startTimer() {
+    setState(() {
+      _start = 60;
+      _canResend = false;
+    });
+    
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_start == 0) {
+        setState(() {
+          _canResend = true;
+          timer.cancel();
+        });
+      } else {
+        setState(() {
+          _start--;
+        });
+      }
+    });
+  }
+
+  void _resendOTP() async {
+    if (!_canResend) return;
+    
+    setState(() => _isLoading = true);
+    
+    await _authService.sendPhoneOTP(
+      phoneNumber: widget.phoneNumber,
+      onCodeSent: (newVerificationId) {
+        setState(() => _isLoading = false);
+        _showSnackBar("New code sent!", Colors.green.shade700);
+        _startTimer(); // Restart the clock!
+        
+        // Note: You might need to update the verificationId in state if Firebase generates a new one, 
+        // but usually, Firebase handles the active session intelligently.
+      },
+      onError: (errorMsg) {
+        setState(() => _isLoading = false);
+        _showSnackBar(errorMsg, Colors.redAccent);
+      }
+    );
+  }
 
   void _verifyCode() async {
     final code = _otpController.text.trim();
@@ -273,12 +333,14 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                               children: [
                                 Text("Didn't receive the code? ", style: GoogleFonts.poppins(color: Colors.black54, fontSize: 13)),
                                 GestureDetector(
-                                  onTap: () {
-                                    _showSnackBar("Requesting new code...", Colors.blueGrey);
-                                  },
+                                  onTap: _canResend ? _resendOTP : null,
                                   child: Text(
-                                    "Resend", 
-                                    style: GoogleFonts.poppins(color: Colors.green.shade800, fontWeight: FontWeight.bold, fontSize: 13)
+                                    _canResend ? "Resend" : "Resend in 00:${_start.toString().padLeft(2, '0')}", 
+                                    style: GoogleFonts.poppins(
+                                      color: _canResend ? Colors.green.shade800 : Colors.grey, 
+                                      fontWeight: FontWeight.bold, 
+                                      fontSize: 13
+                                    )
                                   ),
                                 )
                               ],

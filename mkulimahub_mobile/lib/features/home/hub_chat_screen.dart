@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/home/home_screen.dart'; 
+import 'package:intl/intl.dart'; // 🔥 Ensure you add 'intl: ^0.19.0' to pubspec.yaml
 
 class HubChatScreen extends StatefulWidget {
   final String hubName;
@@ -21,36 +23,60 @@ class _HubChatScreenState extends State<HubChatScreen> {
   String? _myFullName; 
   bool _isLoading = true;
   bool _isSending = false;
+  
+  Timer? _refreshTimer; // 🔥 For real-time updates
 
   @override
   void initState() {
     super.initState();
-    _fetchMessages();
+    _fetchInitialData();
+    
+    // 🔥 Start polling for new messages every 5 seconds
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (mounted) _fetchMessages(silent: true);
+    });
   }
 
-  Future<void> _fetchMessages() async {
-    if (_myFullName == null) {
-      final profile = await _apiClient.getProfile();
-      _myFullName = profile?['full_name'] ?? '';
-    }
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _messageController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
 
-    final data = await _apiClient.getHubMessages(widget.hubName);
-    setState(() {
-      _messages = data;
-      _isLoading = false;
-    });
+  Future<void> _fetchInitialData() async {
+    final profile = await _apiClient.getProfile();
+    _myFullName = profile?['full_name'] ?? '';
+    await _fetchMessages(silent: false);
+  }
+
+  Future<void> _fetchMessages({bool silent = false}) async {
+    if (!silent) setState(() => _isLoading = true);
     
-    _scrollToBottom();
+    final data = await _apiClient.getHubMessages(widget.hubName);
+    
+    if (mounted) {
+      setState(() {
+        _messages = data ?? []; // Ensure we don't pass null
+        if (!silent) _isLoading = false;
+      });
+      
+      // Only scroll to bottom on initial load or if we are already near the bottom
+      if (!silent) _scrollToBottom();
+    }
   }
 
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
-      Future.delayed(const Duration(milliseconds: 100), () {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
       });
     }
   }
@@ -61,12 +87,27 @@ class _HubChatScreenState extends State<HubChatScreen> {
 
     setState(() => _isSending = true);
     
+    // Optimistic UI update: Add message locally immediately for snappy feel
+    final optimisticMsg = {
+      'sender_name': _myFullName,
+      'message': text,
+      'timestamp': DateTime.now().toIso8601String() // Assuming backend uses standard ISO strings
+    };
+    
+    setState(() {
+      _messages.add(optimisticMsg);
+      _messageController.clear();
+    });
+    _scrollToBottom();
+    
+    // Actually send to backend
     final error = await _apiClient.postHubMessage(widget.hubName, text);
     
-    if (error == null) {
-      _messageController.clear();
-      await _fetchMessages(); 
-    } else {
+    if (error != null) {
+      // Revert optimistic update if it failed
+      setState(() {
+         _messages.removeLast();
+      });
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
     }
     
@@ -102,34 +143,11 @@ class _HubChatScreenState extends State<HubChatScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    TextField(
-                      controller: cropController,
-                      decoration: InputDecoration(
-                        labelText: "Crop Name (e.g., Mangoes)",
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                        prefixIcon: const Icon(LucideIcons.sprout, color: Colors.green),
-                      ),
-                    ),
+                    _buildDialogField(controller: cropController, label: "Crop Name (e.g., Mangoes)", icon: LucideIcons.sprout),
                     const SizedBox(height: 15),
-                    TextField(
-                      controller: weightController,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        labelText: "Total Pooled Weight (KG)",
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                        prefixIcon: const Icon(LucideIcons.scale, color: Colors.green),
-                      ),
-                    ),
+                    _buildDialogField(controller: weightController, label: "Total Pooled Weight (KG)", icon: LucideIcons.scale, isNumber: true),
                     const SizedBox(height: 15),
-                    TextField(
-                      controller: priceController,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        labelText: "Asking Price per KG (KES)",
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                        prefixIcon: const Icon(LucideIcons.banknote, color: Colors.green),
-                      ),
-                    ),
+                    _buildDialogField(controller: priceController, label: "Asking Price per KG (KES)", icon: LucideIcons.banknote, isNumber: true),
                   ],
                 ),
               ),
@@ -148,7 +166,6 @@ class _HubChatScreenState extends State<HubChatScreen> {
                     setDialogState(() => isSubmitting = true);
                     
                     final specialCropName = "${cropController.text.trim()} (${widget.hubName} Pool)";
-                    
                     final data = {
                       "crop_name": specialCropName,
                       "weight_kg": double.tryParse(weightController.text) ?? 0,
@@ -160,13 +177,15 @@ class _HubChatScreenState extends State<HubChatScreen> {
                     if (error == null && context.mounted) {
                       Navigator.pop(context); 
                       
+                      // NOTE: Ensure marketplaceKey is correctly defined globally if you use this
                       marketplaceKey.currentState?.loadHarvests();
                       
                       await _apiClient.postHubMessage(
                         widget.hubName, 
-                        "🎉 I just created a Joint Listing for ${weightController.text}kg of ${cropController.text} at KES ${priceController.text}/kg! It is now live on the marketplace."
+                        "🎉 NEW JOINT LISTING\n\nWe just pooled ${weightController.text}kg of ${cropController.text} at KES ${priceController.text}/kg! It is now live on the marketplace."
                       );
-                      await _fetchMessages();
+                      await _fetchMessages(silent: true);
+                      _scrollToBottom();
                       
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Joint Listing Published!"), backgroundColor: Colors.green));
                     } else if (context.mounted) {
@@ -187,13 +206,38 @@ class _HubChatScreenState extends State<HubChatScreen> {
     );
   }
 
+  Widget _buildDialogField({required TextEditingController controller, required String label, required IconData icon, bool isNumber = false}) {
+    return TextField(
+      controller: controller,
+      keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: GoogleFonts.poppins(fontSize: 13),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+        prefixIcon: Icon(icon, color: Colors.green),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
+      ),
+    );
+  }
+
+  // Formats the timestamp nicely (e.g., "10:45 AM")
+  String _formatTime(String? isoTimestamp) {
+    if (isoTimestamp == null) return "";
+    try {
+      final date = DateTime.parse(isoTimestamp).toLocal();
+      return DateFormat('h:mm a').format(date);
+    } catch (e) {
+      return "";
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: Colors.grey[100], // Slightly darker background for chat contrast
       appBar: AppBar(
         backgroundColor: Colors.green[800],
-        elevation: 0,
+        elevation: 2,
         centerTitle: true,
         leading: IconButton(
           icon: const Icon(LucideIcons.arrowLeft, color: Colors.white),
@@ -211,13 +255,6 @@ class _HubChatScreenState extends State<HubChatScreen> {
             tooltip: "Create Joint Listing",
             onPressed: _showJointListingDialog,
           ),
-          IconButton(
-            icon: const Icon(LucideIcons.refreshCw, color: Colors.white, size: 20),
-            onPressed: () {
-              setState(() => _isLoading = true);
-              _fetchMessages();
-            },
-          )
         ],
       ),
       body: Column(
@@ -229,90 +266,164 @@ class _HubChatScreenState extends State<HubChatScreen> {
                     ? Center(child: Text("Start the conversation!\nCoordinate your harvests here.", textAlign: TextAlign.center, style: GoogleFonts.poppins(color: Colors.grey)))
                     : ListView.builder(
                         controller: _scrollController,
-                        padding: const EdgeInsets.all(20),
+                        padding: const EdgeInsets.all(15),
                         itemCount: _messages.length,
                         itemBuilder: (context, index) {
                           final msg = _messages[index];
                           final senderName = msg['sender_name'] ?? 'Unknown';
                           final isMe = senderName == _myFullName;
-                          return _buildMessageBubble(senderName, msg['message'], isMe);
+                          
+                          // Check if previous message is from same sender to group bubbles
+                          bool showAvatar = true;
+                          if (index > 0) {
+                            final prevSender = _messages[index - 1]['sender_name'];
+                            if (prevSender == senderName) showAvatar = false;
+                          }
+
+                          return _buildMessageBubble(senderName, msg['message'], msg['timestamp'], isMe, showAvatar);
                         },
                       ),
           ),
           
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, -5))]
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    textCapitalization: TextCapitalization.sentences,
-                    decoration: InputDecoration(
-                      hintText: "Type a message...",
-                      hintStyle: GoogleFonts.poppins(color: Colors.grey[400]),
-                      filled: true,
-                      fillColor: Colors.grey[100],
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(25), borderSide: BorderSide.none),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                GestureDetector(
-                  onTap: _isSending ? null : _sendMessage,
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: Colors.green[800], shape: BoxShape.circle),
-                    child: _isSending 
-                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                        : const Icon(LucideIcons.send, color: Colors.white, size: 20),
-                  ),
-                )
-              ],
-            ),
-          )
+          _buildMessageInput(),
         ],
       ),
     );
   }
 
-  Widget _buildMessageBubble(String senderName, String message, bool isMe) {
-    bool isSystemMessage = message.startsWith("🎉 I just created a Joint Listing");
+  Widget _buildMessageBubble(String senderName, String message, String? timestamp, bool isMe, bool showAvatar) {
+    bool isSystemMessage = message.startsWith("🎉 NEW JOINT LISTING");
+    final timeString = _formatTime(timestamp);
+
+    if (isSystemMessage) {
+      return _buildSystemMessage(message, timeString);
+    }
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 15),
-      child: Column(
-        crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      padding: EdgeInsets.only(bottom: showAvatar ? 15 : 4),
+      child: Row(
+        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          if (!isMe)
-            Padding(
-              padding: const EdgeInsets.only(left: 12, bottom: 4, right: 12),
-              child: Text(senderName, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey[600])),
+          if (!isMe) 
+            SizedBox(
+              width: 30, 
+              child: showAvatar 
+                ? CircleAvatar(radius: 14, backgroundColor: Colors.green[200], child: Text(senderName[0].toUpperCase(), style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold)))
+                : null
             ),
           
-          Align(
-            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-            child: Container(
-              constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: isSystemMessage ? Colors.blue[50] : (isMe ? Colors.green[100] : Colors.white),
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(20),
-                  topRight: const Radius.circular(20),
-                  bottomLeft: isMe ? const Radius.circular(20) : Radius.zero,
-                  bottomRight: isMe ? Radius.zero : const Radius.circular(20),
+          if (!isMe) const SizedBox(width: 8),
+
+          Column(
+            crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            children: [
+              if (!isMe && showAvatar)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 4),
+                  child: Text(senderName, style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey[700])),
                 ),
-                border: Border.all(color: isSystemMessage ? Colors.blue[200]! : (isMe ? Colors.green[200]! : Colors.grey[200]!)),
+              
+              Container(
+                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.70),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: isMe ? Colors.green[100] : Colors.white,
+                  borderRadius: BorderRadius.only(
+                    topLeft: const Radius.circular(20),
+                    topRight: const Radius.circular(20),
+                    bottomLeft: isMe ? const Radius.circular(20) : (showAvatar ? Radius.zero : const Radius.circular(20)),
+                    bottomRight: isMe ? (showAvatar ? Radius.zero : const Radius.circular(20)) : const Radius.circular(20),
+                  ),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 5, offset: const Offset(0, 2))],
+                  border: Border.all(color: isMe ? Colors.green[200]! : Colors.grey[200]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(message, style: GoogleFonts.poppins(fontSize: 14, color: Colors.black87)),
+                  ],
+                ),
               ),
-              child: Text(message, style: GoogleFonts.poppins(fontSize: 14, color: Colors.black87)),
+              
+              // Timestamp below the bubble
+              if (timeString.isNotEmpty && showAvatar)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, left: 4, right: 4),
+                  child: Text(timeString, style: GoogleFonts.poppins(fontSize: 9, color: Colors.grey[500])),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Special UI for Announcements
+  Widget _buildSystemMessage(String message, String timeString) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 20, horizontal: 10),
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: Colors.blue[50],
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.blue[200]!),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(LucideIcons.megaphone, size: 16, color: Colors.blue),
+              const SizedBox(width: 8),
+              Text("HUB ANNOUNCEMENT", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blue[800])),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(message, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
+          const SizedBox(height: 6),
+          Text(timeString, style: GoogleFonts.poppins(fontSize: 9, color: Colors.blue[300])),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageInput() {
+    return Container(
+      padding: const EdgeInsets.only(left: 16, right: 16, top: 12, bottom: 24), // Extra bottom padding for safe area
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, -5))]
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _messageController,
+              textCapitalization: TextCapitalization.sentences,
+              maxLines: null, // Allow expanding for multi-line messages
+              keyboardType: TextInputType.multiline,
+              decoration: InputDecoration(
+                hintText: "Message the Co-op...",
+                hintStyle: GoogleFonts.poppins(color: Colors.grey[400]),
+                filled: true,
+                fillColor: Colors.grey[100],
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(25), borderSide: BorderSide.none),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              ),
             ),
           ),
+          const SizedBox(width: 10),
+          GestureDetector(
+            onTap: _isSending ? null : _sendMessage,
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(color: Colors.green[800], shape: BoxShape.circle),
+              child: _isSending 
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Icon(LucideIcons.send, color: Colors.white, size: 20),
+            ),
+          )
         ],
       ),
     );
