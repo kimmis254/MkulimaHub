@@ -25,8 +25,11 @@ class _ClusterScreenState extends State<ClusterScreen> {
   int _totalFarmersAnalyzed = 0;
   String? _errorMessage;
   
-  // 🔥 In a real app, this would be fetched from the backend or shared preferences
-  final String _currentUserId = "USER_123"; 
+  // 🔥 Election State
+  String? _electionStatus;
+  bool _hasVoted = false;
+  List<dynamic> _candidates = [];
+  
   String? _myClusterId; 
 
   @override
@@ -48,34 +51,35 @@ class _ClusterScreenState extends State<ClusterScreen> {
       final results = await Future.wait([
         _apiClient.getClusters(cropParam),
         _apiClient.getProfile(),
-        _apiClient.getCoordinatorRequests(), // Will return empty if not a coordinator
+        _apiClient.getCoordinatorRequests(), 
+        _apiClient.getElectionBallot(), // 🔥 Fetch ballot
       ]);
 
       final clusterData = results[0] as Map<String, dynamic>?;
       final profileData = results[1] as Map<String, dynamic>?;
       final pendingReqs = results[2] as List<dynamic>?;
+      final ballotData = results[3] as Map<String, dynamic>?;
       
       if (clusterData != null && mounted) {
         setState(() {
           _hubs = clusterData['hubs'] ?? [];
           _independentFarmers = clusterData['independent_farmers'] ?? [];
           _totalFarmersAnalyzed = clusterData['total_farmers_analyzed'] ?? 0;
-          
-          // 🔥 2. Set Coordinator Requests so the UI Banner shows up!
           _pendingRequests = pendingReqs ?? [];
 
-          // 🔥 3. Dynamically set the exact Hub Status from the database!
+          // 🔥 Update Election State
+          if (ballotData != null) {
+            _electionStatus = ballotData['status'];
+            _hasVoted = ballotData['has_voted'] ?? false;
+            _candidates = ballotData['candidates'] ?? [];
+          }
+
           final myHubId = profileData?['hub_id'];
-          
           if (myHubId != null) {
-            // Find the name of the hub they belong to from the list
-            final myHub = _hubs.firstWhere(
-              (h) => h['hub_id'] == myHubId, 
-              orElse: () => <String, dynamic>{}
-            );
+            final myHub = _hubs.firstWhere((h) => h['hub_id'] == myHubId, orElse: () => <String, dynamic>{});
             _myClusterId = myHub.isNotEmpty ? myHub['hub_name'] : "My Co-op Hub";
           } else {
-            _myClusterId = null; // Leaves them as Independent/Noise
+            _myClusterId = null; 
           }
           
           _isLoading = false;
@@ -98,13 +102,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
     }
   }
 
-  // Helper to simulate finding the current user's status
-  String? _findMyCluster() {
-    // This is placeholder logic. 
-    // Ideally, the backend just tells you: "You are in Cluster 3" or "You are Independent".
-    return null; 
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -121,7 +118,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
       ),
       body: Column(
         children: [
-          // 🔥 Header & Filter Section
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
             decoration: BoxDecoration(
@@ -134,23 +130,14 @@ class _ClusterScreenState extends State<ClusterScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        "Network Scale", 
-                        style: GoogleFonts.poppins(color: Colors.green.shade200, fontSize: 12)
-                      ),
-                      Text(
-                        "$_totalFarmersAnalyzed Active Farmers", 
-                        style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)
-                      ),
+                      Text("Network Scale", style: GoogleFonts.poppins(color: Colors.green.shade200, fontSize: 12)),
+                      Text("$_totalFarmersAnalyzed Active Farmers", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                     ],
                   ),
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
                       value: _selectedCrop,
@@ -183,10 +170,13 @@ class _ClusterScreenState extends State<ClusterScreen> {
                             if (_pendingRequests.isNotEmpty)
                               FadeInDown(child: _buildCoordinatorBanner()),
 
+                            // 🔥 2. Show Election/Democracy Banner (if applicable)
+                            if (_electionStatus == 'voting_active')
+                              FadeInDown(child: _buildElectionBanner()),
+
                             _buildMyStatusCard(),
                             const SizedBox(height: 25),
 
-                            // 🔥 2. Show the Hubs
                             if (_hubs.isNotEmpty) ...[
                               Text("Active Co-op Hubs", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
                               const SizedBox(height: 15),
@@ -205,7 +195,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
 
                             const SizedBox(height: 30),
 
-                            // 🔥 3. Show Independent Farmers (Noise)
                             if (_independentFarmers.isNotEmpty) ...[
                               Divider(color: Colors.grey.shade300),
                               const SizedBox(height: 15),
@@ -223,9 +212,8 @@ class _ClusterScreenState extends State<ClusterScreen> {
     );
   }
 
-  // 🔥 NEW: Displays the user's current status and offers a "Join" button if they are independent
   Widget _buildMyStatusCard() {
-    bool isIndependent = _myClusterId == null; // Assuming null means they are noise for now
+    bool isIndependent = _myClusterId == null; 
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -262,7 +250,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
           ),
           if (isIndependent)
             ElevatedButton(
-              onPressed: _showNearbyHubsBottomSheet, // 🔥 THE FIX: Call the new function
+              onPressed: _showNearbyHubsBottomSheet, 
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.orange.shade600,
                 elevation: 0,
@@ -373,7 +361,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: () {
-                      // 🔥 THIS IS THE FIX: Actually navigate to the chat screen
                       Navigator.push(
                         context, 
                         MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubName))
@@ -396,7 +383,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
     );
   }
 
-  // 🔥 NEW: A stripped-down tile for independent farmers (no phone numbers!)
   Widget _buildIndependentFarmerTile(Map<String, dynamic> farmer) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -471,7 +457,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
                           leading: CircleAvatar(backgroundColor: Colors.green[50], child: Text(f['name'][0].toUpperCase(), style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))),
                           title: Text(f['name'] ?? 'Unknown', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
                           subtitle: Text("${f['village'] ?? ''} • ${f['crops'] ?? ''}", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
-                          // 🔥 Removed the trailing call button entirely
                         );
                       },
                     ),
@@ -484,6 +469,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
       }
     );
   }
+
   void _showNearbyHubsBottomSheet() {
     showModalBottomSheet(
       context: context,
@@ -494,7 +480,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
           future: _apiClient.getNearbyHubs(),
           builder: (context, snapshot) {
             
-            // 1. Loading State
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const SizedBox(
                 height: 300,
@@ -502,7 +487,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
               );
             }
 
-            // 2. Error State
             if (snapshot.hasError || snapshot.data == null) {
               return const SizedBox(
                 height: 300,
@@ -510,7 +494,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
               );
             }
 
-            // 3. Empty State (No hubs in their radius)
             final hubs = snapshot.data!;
             if (hubs.isEmpty) {
               return SizedBox(
@@ -529,7 +512,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
               );
             }
 
-            // 4. Success State (Show the Hubs!)
             return Container(
               padding: const EdgeInsets.all(24.0),
               child: Column(
@@ -544,7 +526,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
                   Text("Select a co-op to send a join request.", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
                   const SizedBox(height: 15),
                   
-                  // Map through the hubs returned from FastAPI
                   ...hubs.map((hub) => _buildNearbyHubTile(hub)).toList(),
                 ],
               ),
@@ -585,25 +566,20 @@ class _ClusterScreenState extends State<ClusterScreen> {
   }
 
   void _sendJoinRequest(int hubId) async {
-    // 1. Close the bottom sheet immediately so the UI feels snappy
     Navigator.pop(context); 
-    
-    // 2. Show a loading indicator
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Sending request..."), duration: Duration(seconds: 1)));
     
-    // 3. Ping FastAPI
     final error = await _apiClient.joinHub(hubId);
     
     if (!mounted) return;
 
-    // 4. Show the result
     if (error == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Join request sent successfully!"), backgroundColor: Colors.green));
     } else {
-      // If they already sent a request, FastAPI will return that message here
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
     }
   }
+
   Widget _buildCoordinatorBanner() {
     return GestureDetector(
       onTap: _showCoordinatorBottomSheet,
@@ -706,7 +682,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                           final error = await _apiClient.respondToHubRequest(req['request_id'], "reject");
                                           if (error == null) {
                                             setSheetState(() => _pendingRequests.removeAt(index));
-                                            _fetchClusters(); // Refresh data in background
+                                            _fetchClusters(); 
                                           }
                                         },
                                         style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
@@ -720,7 +696,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                           final error = await _apiClient.respondToHubRequest(req['request_id'], "approve");
                                           if (error == null) {
                                             setSheetState(() => _pendingRequests.removeAt(index));
-                                            _fetchClusters(); // Refresh data in background
+                                            _fetchClusters(); 
                                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Farmer added to your Hub!"), backgroundColor: Colors.green));
                                           }
                                         },
@@ -736,6 +712,240 @@ class _ClusterScreenState extends State<ClusterScreen> {
                         },
                       ),
                     ),
+                ],
+              ),
+            );
+          }
+        );
+      }
+    );
+  }
+
+  // ==========================================
+  // 🔥 ELECTIONS & DEMOCRACY UI
+  // ==========================================
+
+  Widget _buildElectionBanner() {
+    bool isEmpty = _candidates.isEmpty;
+    
+    return GestureDetector(
+      onTap: isEmpty ? _showRunForOfficeSheet : _showVotingSheet,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 20),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(colors: [Colors.purple.shade800, Colors.deepPurple.shade600]),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [BoxShadow(color: Colors.purple.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
+              child: Icon(isEmpty ? LucideIcons.megaphone : LucideIcons.vote, color: Colors.white),
+            ),
+            const SizedBox(width: 15),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("🏛️ Hub Democracy", style: GoogleFonts.poppins(fontSize: 12, color: Colors.purple.shade100, fontWeight: FontWeight.bold)),
+                  Text(
+                    isEmpty ? "Step up as Coordinator!" : "Election in Progress", 
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white)
+                  ),
+                ],
+              ),
+            ),
+            if (!isEmpty && !_hasVoted)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(color: Colors.orange, borderRadius: BorderRadius.circular(10)),
+                child: Text("Vote Now", style: GoogleFonts.poppins(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+              )
+            else
+              const Icon(LucideIcons.chevronRight, color: Colors.white)
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showRunForOfficeSheet() {
+    final TextEditingController pitchController = TextEditingController();
+    bool isSubmitting = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+              child: Container(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
+                    const SizedBox(height: 20),
+                    Text("Run for Coordinator", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text("Your Hub currently has no leader. Pitch yourself to the community to trigger an election!", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
+                    const SizedBox(height: 20),
+                    
+                    TextField(
+                      controller: pitchController,
+                      maxLines: 3,
+                      maxLength: 150,
+                      decoration: InputDecoration(
+                        hintText: "E.g., I have a secure storehouse and a pickup truck. Vote for me!",
+                        hintStyle: GoogleFonts.poppins(fontSize: 12, color: Colors.grey),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        filled: true,
+                        fillColor: Colors.grey.shade50,
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+                    
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: isSubmitting ? null : () async {
+                          if (pitchController.text.trim().isEmpty) return;
+                          
+                          setSheetState(() => isSubmitting = true);
+                          final error = await _apiClient.runForCoordinator(pitchController.text.trim());
+                          
+                          if (mounted) {
+                            Navigator.pop(context);
+                            if (error == null) {
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("You are on the ballot!"), backgroundColor: Colors.green));
+                              _fetchClusters(); 
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                            }
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.purple.shade700,
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: isSubmitting 
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : Text("Submit Candidacy", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    )
+                  ],
+                ),
+              ),
+            );
+          }
+        );
+      }
+    );
+  }
+
+  void _showVotingSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.6,
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
+                  const SizedBox(height: 20),
+                  Text("Hub Election", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text("Vote for your Coordinator. First to 50% wins!", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
+                  const SizedBox(height: 15),
+                  
+                  if (_hasVoted)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      margin: const EdgeInsets.only(bottom: 15),
+                      decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.green.shade200)),
+                      child: Row(
+                        children: [
+                          const Icon(LucideIcons.checkCircle, color: Colors.green, size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(child: Text("You have securely cast your vote. Waiting for results...", style: GoogleFonts.poppins(fontSize: 12, color: Colors.green.shade800))),
+                        ],
+                      ),
+                    ),
+
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: _candidates.length,
+                      itemBuilder: (context, index) {
+                        final c = _candidates[index];
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 15),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.purple.shade100),
+                            borderRadius: BorderRadius.circular(16),
+                            color: Colors.purple.shade50.withOpacity(0.3)
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  CircleAvatar(backgroundColor: Colors.purple.shade100, child: const Icon(LucideIcons.user, color: Colors.purple)),
+                                  const SizedBox(width: 15),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(c['farmer_name'], style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16)),
+                                        Text("${c['votes']} Votes Cast", style: GoogleFonts.poppins(color: Colors.purple.shade700, fontSize: 12, fontWeight: FontWeight.w600)),
+                                      ],
+                                    ),
+                                  ),
+                                  if (!_hasVoted)
+                                    ElevatedButton(
+                                      onPressed: () async {
+                                        final error = await _apiClient.castVote(c['candidate_id']);
+                                        if (mounted) {
+                                          if (error == null) {
+                                            Navigator.pop(context);
+                                            _fetchClusters(); 
+                                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vote cast successfully!"), backgroundColor: Colors.green));
+                                          } else {
+                                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                                          }
+                                        }
+                                      },
+                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                                      child: const Text("Vote", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                    )
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
+                                child: Text('"${c['pitch']}"', style: GoogleFonts.poppins(fontStyle: FontStyle.italic, fontSize: 12, color: Colors.black87)),
+                              )
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
                 ],
               ),
             );

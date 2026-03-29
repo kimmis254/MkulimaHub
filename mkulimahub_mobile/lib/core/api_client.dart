@@ -550,4 +550,46 @@ class ApiClient {
       return 'Network error occurred.';
     }
   }
+  Future<Map<String, dynamic>?> getElectionBallot() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/hubs/election/ballot'),
+        headers: {'Authorization': 'Bearer ${await _getToken()}'},
+      );
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<String?> runForCoordinator(String pitch) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/hubs/election/run'),
+        headers: {
+          'Authorization': 'Bearer ${await _getToken()}',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'pitch': pitch}),
+      );
+      if (response.statusCode == 200) return null; // Success
+      return jsonDecode(response.body)['detail'] ?? 'Failed to submit candidacy.';
+    } catch (e) {
+      return 'Network error.';
+    }
+  }
+
+  Future<String?> castVote(int candidateId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/hubs/election/vote/$candidateId'),
+        headers: {'Authorization': 'Bearer ${await _getToken()}'},
+      );
+      if (response.statusCode == 200) return null; // Success
+      return jsonDecode(response.body)['detail'] ?? 'Failed to cast vote.';
+    } catch (e) {
+      return 'Network error.';
+    }
+  }
 }
