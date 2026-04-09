@@ -592,4 +592,51 @@ class ApiClient {
       return 'Network error.';
     }
   }
+
+  Future<List<dynamic>?> getHubDeliveries() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/hubs/deliveries'),
+        headers: {'Authorization': 'Bearer ${await _getToken()}'},
+      );
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<String?> processDelivery(int pledgeId, String action, double? actualWeight, String? notes) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/hubs/deliveries/$pledgeId/process'),
+        headers: {
+          'Authorization': 'Bearer ${await _getToken()}',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          "action": action,
+          "actual_weight_kg": actualWeight,
+          "notes": notes
+        }),
+      );
+      if (response.statusCode == 200) return null; // Success
+      return jsonDecode(response.body)['detail'] ?? 'Failed to process delivery.';
+    } catch (e) {
+      return 'Network error.';
+    }
+  }
+
+  Future<List<dynamic>?> getMyDeliveries() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/my-deliveries'),
+        headers: {'Authorization': 'Bearer ${await _getToken()}'},
+      );
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
 }

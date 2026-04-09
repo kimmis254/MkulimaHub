@@ -1,10 +1,27 @@
-from database import engine
-import models
+import sqlite3
 
-print("🚨 Dropping old database tables...")
-models.Base.metadata.drop_all(bind=engine)
+# Connect to your existing database safely
+conn = sqlite3.connect('mkulimahub.db') 
+cursor = conn.cursor()
 
-print("✨ Recreating brand new tables with Latitude & Longitude...")
-models.Base.metadata.create_all(bind=engine)
+try:
+    # 1. FREE THE FARMERS: Remove them from any existing hubs 
+    # (This updates the column to NULL without deleting the actual user)
+    cursor.execute("UPDATE users SET hub_id = NULL;")
+    print("✅ All farmers are now Independent.")
 
-print("✅ Done! You can now restart your server.")
+    # 2. DESTROY THE OLD CO-OP TABLES
+    cursor.execute("DROP TABLE IF EXISTS hub_votes;")
+    cursor.execute("DROP TABLE IF EXISTS hub_candidates;")
+    cursor.execute("DROP TABLE IF EXISTS hub_requests;")
+    cursor.execute("DROP TABLE IF EXISTS hubs;")
+    print("✅ Old Hubs and Election tables securely deleted.")
+
+    conn.commit()
+    print("🎉 Reset complete! Your crop data and user profiles are 100% safe.")
+
+except Exception as e:
+    print(f"⚠️ Error occurred: {e}")
+
+finally:
+    conn.close()

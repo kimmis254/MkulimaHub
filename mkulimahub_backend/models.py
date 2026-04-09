@@ -33,11 +33,9 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     full_name = Column(String, index=True)
     
-    # 🔥 ADD THESE TWO FOR GOOGLE:
     email = Column(String, unique=True, index=True, nullable=True)
     google_uid = Column(String, unique=True, nullable=True)
     
-    # 🔥 FIX: Add `nullable=True` to these so Google users don't crash the DB!
     phone_number = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String, nullable=True)
     
@@ -55,6 +53,9 @@ class User(Base):
 
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
+    hub_id = Column(Integer, ForeignKey("hubs.id"), nullable=True)
+
+    hub = relationship("Hub", back_populates="members", foreign_keys=[hub_id])
 
     pledges = relationship("Pledge", back_populates="farmer")
 
@@ -82,7 +83,12 @@ class Pledge(Base):
     bulk_request_id = Column(Integer, ForeignKey("bulk_requests.id"))
     farmer_id = Column(Integer, ForeignKey("users.id"))
     pledged_weight_kg = Column(Float)
+    status = Column(String, default="Pending")
+    notes = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String, default="pending_dropoff") # pending_dropoff, received, rejected, in_transit
+    actual_weight_kg = Column(Float, nullable=True) # Because the scale might say 49kg instead of 50kg!
+    notes = Column(String, nullable=True)
     
     bulk_request = relationship("BulkRequest", back_populates="pledges")
     farmer = relationship("User", back_populates="pledges")
@@ -112,3 +118,49 @@ class MarketPrice(Base):
     __table_args__ = (
         UniqueConstraint('county', 'commodity', 'pricetype', 'ds', name='_county_commodity_price_date_uc'),
     )
+
+class Hub(Base):
+    __tablename__ = "hubs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    crop = Column(String, index=True)
+    center_latitude = Column(Float)
+    center_longitude = Column(Float)
+    
+    coordinator_id = Column(Integer, ForeignKey("users.id"), nullable=True) 
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    coordinator = relationship("User", foreign_keys=[coordinator_id])
+    members = relationship("User", back_populates="hub", foreign_keys="[User.hub_id]")
+    requests = relationship("HubRequest", back_populates="hub")
+
+class HubRequest(Base):
+    __tablename__ = "hub_requests"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    hub_id = Column(Integer, ForeignKey("hubs.id"))
+    farmer_id = Column(Integer, ForeignKey("users.id"))
+    status = Column(String, default="pending") # 'pending', 'approved', 'rejected'
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    hub = relationship("Hub", back_populates="requests")
+    farmer = relationship("User")
+
+class HubCandidate(Base):
+    __tablename__ = "hub_candidates"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    hub_id = Column(Integer, ForeignKey("hubs.id"))
+    farmer_id = Column(Integer, ForeignKey("users.id"))
+    pitch = Column(String) # E.g., "Vote for me, I have 3 acres and a pickup truck!"
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class HubVote(Base):
+    __tablename__ = "hub_votes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    hub_id = Column(Integer, ForeignKey("hubs.id"))
+    voter_id = Column(Integer, ForeignKey("users.id"))
+    candidate_id = Column(Integer, ForeignKey("hub_candidates.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)

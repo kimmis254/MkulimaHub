@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
-import 'package:mkulimahub_mobile/features/home/hub_chat_screen.dart'; 
+import 'package:mkulimahub_mobile/features/home/hub_chat_screen.dart';
+import 'package:mkulimahub_mobile/features/home/receiving_dashboard.dart'; 
 
 class ClusterScreen extends StatefulWidget {
   const ClusterScreen({super.key});
@@ -25,12 +26,15 @@ class _ClusterScreenState extends State<ClusterScreen> {
   int _totalFarmersAnalyzed = 0;
   String? _errorMessage;
   
+  // 🔥 Current User & Hub State
+  Map<String, dynamic>? _currentUser;
+  bool _isCoordinator = false;
+  String? _myClusterId; 
+
   // 🔥 Election State
   String? _electionStatus;
   bool _hasVoted = false;
   List<dynamic> _candidates = [];
-  
-  String? _myClusterId; 
 
   @override
   void initState() {
@@ -47,12 +51,11 @@ class _ClusterScreenState extends State<ClusterScreen> {
     try {
       final cropParam = _selectedCrop == 'All' ? null : _selectedCrop;
       
-      // 🔥 1. Fetch everything concurrently for maximum speed
       final results = await Future.wait([
         _apiClient.getClusters(cropParam),
         _apiClient.getProfile(),
         _apiClient.getCoordinatorRequests(), 
-        _apiClient.getElectionBallot(), // 🔥 Fetch ballot
+        _apiClient.getElectionBallot(), 
       ]);
 
       final clusterData = results[0] as Map<String, dynamic>?;
@@ -66,20 +69,34 @@ class _ClusterScreenState extends State<ClusterScreen> {
           _independentFarmers = clusterData['independent_farmers'] ?? [];
           _totalFarmersAnalyzed = clusterData['total_farmers_analyzed'] ?? 0;
           _pendingRequests = pendingReqs ?? [];
+          _currentUser = profileData;
 
-          // 🔥 Update Election State
+          // Update Election State
           if (ballotData != null) {
             _electionStatus = ballotData['status'];
             _hasVoted = ballotData['has_voted'] ?? false;
             _candidates = ballotData['candidates'] ?? [];
           }
 
+          // Check Hub & Coordinator Status
           final myHubId = profileData?['hub_id'];
           if (myHubId != null) {
             final myHub = _hubs.firstWhere((h) => h['hub_id'] == myHubId, orElse: () => <String, dynamic>{});
             _myClusterId = myHub.isNotEmpty ? myHub['hub_name'] : "My Co-op Hub";
+            
+            // 🔥 THE FIX: Force both to be Strings so Dart doesn't get confused!
+            _isCoordinator = myHub.isNotEmpty && 
+                myHub['coordinator_id'].toString() == _currentUser?['id'].toString();
+            
+            // 🔥 THE X-RAY: Print exactly what is happening to your debug console
+            print("🛑 DEBUG: My ID is ${_currentUser?['id']}");
+            print("🛑 DEBUG: Coordinator ID is ${myHub['coordinator_id']}");
+            print("🛑 DEBUG: Am I Coordinator? $_isCoordinator");
+            print("🛑 RAW PROFILE DATA: $profileData");
+
           } else {
             _myClusterId = null; 
+            _isCoordinator = false;
           }
           
           _isLoading = false;
@@ -167,10 +184,10 @@ class _ClusterScreenState extends State<ClusterScreen> {
                         child: ListView(
                           padding: const EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 80),
                           children: [
-                            if (_pendingRequests.isNotEmpty)
+                            // 🔥 Show banner only if they are the actual coordinator
+                            if (_isCoordinator)
                               FadeInDown(child: _buildCoordinatorBanner()),
 
-                            // 🔥 2. Show Election/Democracy Banner (if applicable)
                             if (_electionStatus == 'voting_active')
                               FadeInDown(child: _buildElectionBanner()),
 
@@ -582,7 +599,56 @@ class _ClusterScreenState extends State<ClusterScreen> {
 
   Widget _buildCoordinatorBanner() {
     return GestureDetector(
-      onTap: _showCoordinatorBottomSheet,
+      onTap: () {
+        showModalBottomSheet(
+          context: context,
+          backgroundColor: Colors.white,
+          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
+          builder: (context) {
+            return Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
+                  const SizedBox(height: 20),
+                  Text("Coordinator Actions", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 15),
+                  
+                  // Option 1: Manage Join Requests
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: CircleAvatar(backgroundColor: Colors.blue.shade50, child: const Icon(LucideIcons.users, color: Colors.blue)),
+                    title: Text("Manage Join Requests", style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                    subtitle: Text("${_pendingRequests.length} pending approvals", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
+                    trailing: const Icon(LucideIcons.chevronRight, size: 16),
+                    onTap: () {
+                      Navigator.pop(context); 
+                      _showCoordinatorBottomSheet(); 
+                    },
+                  ),
+                  
+                  Divider(color: Colors.grey.shade200),
+                  
+                  // Option 2: Process Crop Deliveries
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: CircleAvatar(backgroundColor: Colors.green.shade50, child: const Icon(LucideIcons.scale, color: Colors.green)),
+                    title: Text("Process Deliveries", style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                    subtitle: Text("Weigh and receive pledged crops", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
+                    trailing: const Icon(LucideIcons.chevronRight, size: 16),
+                    onTap: () {
+                      Navigator.pop(context); 
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => ReceivingDashboard())); 
+                    },
+                  ),
+                ],
+              ),
+            );
+          }
+        );
+      },
       child: Container(
         margin: const EdgeInsets.only(bottom: 20),
         padding: const EdgeInsets.all(16),
@@ -605,7 +671,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                 children: [
                   Text("👑 Co-op Coordinator", style: GoogleFonts.poppins(fontSize: 12, color: Colors.blue.shade100, fontWeight: FontWeight.bold)),
                   Text(
-                    "${_pendingRequests.length} Pending Join Requests", 
+                    "Manage Hub Operations", 
                     style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white)
                   ),
                 ],
@@ -722,14 +788,15 @@ class _ClusterScreenState extends State<ClusterScreen> {
   }
 
   // ==========================================
-  // 🔥 ELECTIONS & DEMOCRACY UI
+  // 🔥 ELECTIONS & DEMOCRACY UI (Merged & Upgraded)
   // ==========================================
 
   Widget _buildElectionBanner() {
     bool isEmpty = _candidates.isEmpty;
     
     return GestureDetector(
-      onTap: isEmpty ? _showRunForOfficeSheet : _showVotingSheet,
+      // 🔥 Both states now open the merged _showElectionSheet
+      onTap: _showElectionSheet,
       child: Container(
         margin: const EdgeInsets.only(bottom: 20),
         padding: const EdgeInsets.all(16),
@@ -772,7 +839,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
     );
   }
 
-  void _showRunForOfficeSheet() {
+  void _showElectionSheet() {
     final TextEditingController pitchController = TextEditingController();
     bool isSubmitting = false;
 
@@ -784,114 +851,46 @@ class _ClusterScreenState extends State<ClusterScreen> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
+            
+            // Check if current user is already in the list of candidates
+            bool hasPitched = _currentUser != null && _candidates.any((c) => c['farmer_id'] == _currentUser!['id']);
+
             return Padding(
               padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
               child: Container(
+                constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
                 padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
-                    const SizedBox(height: 20),
-                    Text("Run for Coordinator", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
-                    Text("Your Hub currently has no leader. Pitch yourself to the community to trigger an election!", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
-                    const SizedBox(height: 20),
-                    
-                    TextField(
-                      controller: pitchController,
-                      maxLines: 3,
-                      maxLength: 150,
-                      decoration: InputDecoration(
-                        hintText: "E.g., I have a secure storehouse and a pickup truck. Vote for me!",
-                        hintStyle: GoogleFonts.poppins(fontSize: 12, color: Colors.grey),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        filled: true,
-                        fillColor: Colors.grey.shade50,
-                      ),
-                    ),
-                    const SizedBox(height: 15),
-                    
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: isSubmitting ? null : () async {
-                          if (pitchController.text.trim().isEmpty) return;
-                          
-                          setSheetState(() => isSubmitting = true);
-                          final error = await _apiClient.runForCoordinator(pitchController.text.trim());
-                          
-                          if (mounted) {
-                            Navigator.pop(context);
-                            if (error == null) {
-                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("You are on the ballot!"), backgroundColor: Colors.green));
-                              _fetchClusters(); 
-                            } else {
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
-                            }
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.purple.shade700,
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
+                      const SizedBox(height: 20),
+                      Text("Hub Election", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                      Text("Vote for your Coordinator. First to >50% wins!", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
+                      const SizedBox(height: 15),
+                      
+                      // Show confirmation if voted
+                      if (_hasVoted)
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          margin: const EdgeInsets.only(bottom: 15),
+                          decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.green.shade200)),
+                          child: Row(
+                            children: [
+                              const Icon(LucideIcons.checkCircle, color: Colors.green, size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(child: Text("You have securely cast your vote. Waiting for results...", style: GoogleFonts.poppins(fontSize: 12, color: Colors.green.shade800))),
+                            ],
+                          ),
                         ),
-                        child: isSubmitting 
-                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                          : Text("Submit Candidacy", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
-                      ),
-                    )
-                  ],
-                ),
-              ),
-            );
-          }
-        );
-      }
-    );
-  }
 
-  void _showVotingSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            return Container(
-              height: MediaQuery.of(context).size.height * 0.6,
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
-                  const SizedBox(height: 20),
-                  Text("Hub Election", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
-                  Text("Vote for your Coordinator. First to 50% wins!", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
-                  const SizedBox(height: 15),
-                  
-                  if (_hasVoted)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      margin: const EdgeInsets.only(bottom: 15),
-                      decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.green.shade200)),
-                      child: Row(
-                        children: [
-                          const Icon(LucideIcons.checkCircle, color: Colors.green, size: 20),
-                          const SizedBox(width: 10),
-                          Expanded(child: Text("You have securely cast your vote. Waiting for results...", style: GoogleFonts.poppins(fontSize: 12, color: Colors.green.shade800))),
-                        ],
-                      ),
-                    ),
-
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: _candidates.length,
-                      itemBuilder: (context, index) {
-                        final c = _candidates[index];
-                        return Container(
+                      // List current candidates
+                      if (_candidates.isNotEmpty) ...[
+                        Text("Current Candidates:", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.grey.shade700)),
+                        const SizedBox(height: 10),
+                        ..._candidates.map((c) => Container(
                           margin: const EdgeInsets.only(bottom: 15),
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
@@ -925,7 +924,27 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                             _fetchClusters(); 
                                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vote cast successfully!"), backgroundColor: Colors.green));
                                           } else {
-                                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                                            // 🔥 The beautiful alert dialog for when they try to vote for themselves!
+                                            showDialog(
+                                              context: context,
+                                              builder: (ctx) => AlertDialog(
+                                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                                                title: Row(
+                                                  children: [
+                                                    const Icon(LucideIcons.alertOctagon, color: Colors.red),
+                                                    const SizedBox(width: 10),
+                                                    Text("Wait a minute!", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16)),
+                                                  ],
+                                                ),
+                                                content: Text(error, style: GoogleFonts.poppins()),
+                                                actions: [
+                                                  TextButton(
+                                                    onPressed: () => Navigator.pop(ctx),
+                                                    child: Text("Got it", style: GoogleFonts.poppins(color: Colors.blue, fontWeight: FontWeight.bold)),
+                                                  )
+                                                ],
+                                              )
+                                            );
                                           }
                                         }
                                       },
@@ -937,16 +956,76 @@ class _ClusterScreenState extends State<ClusterScreen> {
                               const SizedBox(height: 12),
                               Container(
                                 padding: const EdgeInsets.all(12),
+                                width: double.infinity,
                                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
                                 child: Text('"${c['pitch']}"', style: GoogleFonts.poppins(fontStyle: FontStyle.italic, fontSize: 12, color: Colors.black87)),
                               )
                             ],
                           ),
-                        );
-                      },
-                    ),
+                        )).toList(),
+                      ],
+
+                      const SizedBox(height: 10),
+
+                      // The Pitch form - Show if they haven't pitched yet!
+                      if (!hasPitched) ...[
+                        const Divider(),
+                        const SizedBox(height: 10),
+                        Text("Want to lead? Pitch yourself!", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.blue.shade800, fontSize: 16)),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: pitchController,
+                          maxLines: 2,
+                          maxLength: 150,
+                          decoration: InputDecoration(
+                            hintText: "E.g., I have a secure storehouse and a pickup truck. Vote for me!",
+                            hintStyle: GoogleFonts.poppins(fontSize: 12, color: Colors.grey),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            filled: true,
+                            fillColor: Colors.grey.shade50,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: isSubmitting ? null : () async {
+                              if (pitchController.text.trim().isEmpty) return;
+                              
+                              setSheetState(() => isSubmitting = true);
+                              final error = await _apiClient.runForCoordinator(pitchController.text.trim());
+                              
+                              if (mounted) {
+                                Navigator.pop(context);
+                                if (error == null) {
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("You are on the ballot!"), backgroundColor: Colors.green));
+                                  _fetchClusters(); 
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                                }
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.purple.shade700,
+                              padding: const EdgeInsets.symmetric(vertical: 15),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: isSubmitting 
+                              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                              : Text("Submit Candidacy", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
+                          ),
+                        )
+                      ] else if (_candidates.isNotEmpty) ...[
+                        Center(
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: Text("You are running in this election! Good luck.", style: GoogleFonts.poppins(color: Colors.green.shade700, fontWeight: FontWeight.bold)),
+                          ),
+                        )
+                      ]
+                    ],
                   ),
-                ],
+                ),
               ),
             );
           }

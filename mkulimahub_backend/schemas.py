@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
 from typing import List
+from typing import Optional, Dict
 
 class UserCreate(BaseModel):
     full_name: str
@@ -69,7 +70,7 @@ class PledgeCreate(PledgeBase):
 
 class PledgeRead(PledgeBase):
     id: int
-    farmer_id: int
+    farmer_id: Optional[int] = None
     bulk_request_id: int
     created_at: datetime
     
