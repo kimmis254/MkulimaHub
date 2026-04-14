@@ -20,26 +20,21 @@ class ApiClient {
   Future<String?> login(String phone, String password) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/login'), 
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded" 
-        },
-        body: {
-          "username": phone, 
-          "password": password
-        },
+        Uri.parse('$baseUrl/auth/login'), // Or whatever your login endpoint is
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: {'username': phone, 'password': password},
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final token = data['access_token'];
-        await _saveToken(token); 
-        return null; 
+        // 🔥 CRITICAL: Save the token immediately!
+        await _saveToken(data['access_token']); 
+        return null; // Null means no error
       } else {
-        return "Login failed: ${response.body}";
+        return "Invalid phone or password.";
       }
     } catch (e) {
-      return "Connection error. Check your network or server.";
+      return "Network error. Please check your connection.";
     }
   }
 
@@ -306,6 +301,15 @@ class ApiClient {
   Future<String?> getToken() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('auth_token');
+  }
+  Future<void> saveUserRole(String role) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_role', role);
+  }
+
+  Future<String?> getUserRole() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('user_role');
   }
 
   Future<List<dynamic>> getMyPledges() async {
@@ -637,6 +641,95 @@ class ApiClient {
       return null;
     } catch (e) {
       return null;
+    }
+  }
+
+  // ==========================================
+  // 🔥 ENTERPRISE BUYER OPERATIONS
+  // ==========================================
+  Future<Map<String, dynamic>?> getBuyerDashboard() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/buyer/dashboard'),
+        headers: {'Authorization': 'Bearer ${await _getToken()}'},
+      );
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<String?> createBulkContract(Map<String, dynamic> contractData) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/buyer/contracts'),
+        headers: {
+          'Authorization': 'Bearer ${await _getToken()}',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(contractData),
+      );
+      if (response.statusCode == 200) return null; // Success!
+      return jsonDecode(response.body)['detail'] ?? 'Failed to create contract.';
+    } catch (e) {
+      return 'Network error.';
+    }
+  }
+  Future<String?> registerBuyer(String companyName, String phone, String password) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/register'), // ⚠️ Check if this is /auth/register or /api/auth/register in your main.py!
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'full_name': companyName, 
+          'phone_number': phone,
+          'password': password,
+          'role': 'buyer' // 🔥 Tells FastAPI to set the UserRole.BUYER Enum!
+        }),
+      );
+      
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return null; // Success!
+      }
+      return jsonDecode(response.body)['detail'] ?? 'Registration failed.';
+    } catch (e) {
+      return 'Network error. Check your connection.';
+    }
+  }
+
+  Future<String> askAdvancedAI({
+    required String message,
+    required String role,
+    required String userName,
+    required String location,
+    required String businessDetails,
+  }) async {
+    try {
+      final token = await getToken();
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/ai-chat'),
+        headers: {
+          'Content-Type': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          "message": message,
+          "role": role,
+          "user_name": userName,
+          "location": location,
+          "business_details": businessDetails
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['reply'] ?? "I couldn't process that.";
+      } else {
+        return "Sorry, I am having trouble connecting to the network right now.";
+      }
+    } catch (e) {
+      return "Network error: Make sure your server is running.";
     }
   }
 }

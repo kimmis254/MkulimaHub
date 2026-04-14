@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
+import 'package:intl/intl.dart';
 
 class AddHarvestScreen extends StatefulWidget {
   const AddHarvestScreen({super.key});
@@ -18,10 +19,33 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
   final _apiClient = ApiClient();
   
   bool _isLoading = false;
+  double _estimatedValue = 0.0;
 
-  // Added Emojis for better visual cues
   final List<String> _crops = ['Maize 🌽', 'Beans 🫘', 'Mangoes 🥭', 'Green Grams 🌿', 'Avocado 🥑', 'Potatoes 🥔', 'Bananas 🍌'];
   String? _selectedCrop;
+
+  @override
+  void initState() {
+    super.initState();
+    // Add listeners to calculate revenue in real-time!
+    _weightController.addListener(_calculateValue);
+    _priceController.addListener(_calculateValue);
+  }
+
+  @override
+  void dispose() {
+    _weightController.dispose();
+    _priceController.dispose();
+    super.dispose();
+  }
+
+  void _calculateValue() {
+    final weight = double.tryParse(_weightController.text) ?? 0.0;
+    final price = double.tryParse(_priceController.text) ?? 0.0;
+    setState(() {
+      _estimatedValue = weight * price;
+    });
+  }
 
   void _submitHarvest() async {
     if (!_formKey.currentState!.validate()) return;
@@ -34,8 +58,7 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
 
     setState(() => _isLoading = true);
 
-    // Clean up the emoji from the string before sending to backend
-    // e.g., "Maize 🌽" -> "Maize"
+    // Clean up the emoji from the string
     final cleanCropName = _selectedCrop!.split(' ')[0];
 
     final harvestData = {
@@ -66,155 +89,244 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final currencyFormat = NumberFormat('#,##0', 'en_US');
+
     return Scaffold(
-      backgroundColor: Colors.grey[50], // Consistent light background
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(LucideIcons.arrowLeft, color: Colors.black),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          "New Listing",
-          style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold),
-        ),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 1. Header Animation
-              FadeInDown(
-                duration: const Duration(milliseconds: 600),
-                child: Center(
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.green[50],
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(LucideIcons.sprout, size: 40, color: Colors.green[700]),
-                  ),
-                ),
+      backgroundColor: Colors.grey.shade50, 
+      body: Stack(
+        children: [
+          // 🔥 1. THE PREMIUM BACKGROUND HEADER
+          Container(
+            height: 240,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Colors.green.shade900, Colors.green.shade700]
               ),
-              const SizedBox(height: 20),
-              
-              FadeInDown(
-                delay: const Duration(milliseconds: 100),
-                child: Text(
-                  "What are you selling?",
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black87),
-                ),
-              ),
-              const SizedBox(height: 5),
-              FadeInDown(
-                delay: const Duration(milliseconds: 150),
-                child: Text(
-                  "Fill in the details below to reach buyers.",
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[500]),
-                ),
-              ),
-              const SizedBox(height: 30),
-
-              // 2. Form Fields (Staggered Animation)
-              FadeInUp(
-                delay: const Duration(milliseconds: 200),
+            ),
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 10),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Crop Dropdown
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(15),
-                        boxShadow: [
-                          BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
-                        ],
-                      ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButtonFormField<String>(
-                          value: _selectedCrop,
-                          decoration: InputDecoration(
-                            border: InputBorder.none,
-                            icon: Icon(LucideIcons.carrot, color: Colors.green[700], size: 20),
-                          ),
-                          hint: Text("Select Crop", style: GoogleFonts.poppins(color: Colors.grey[400])),
-                          items: _crops.map((crop) {
-                            return DropdownMenuItem(value: crop, child: Text(crop, style: GoogleFonts.poppins()));
-                          }).toList(),
-                          onChanged: (val) => setState(() => _selectedCrop = val),
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(LucideIcons.arrowLeft, color: Colors.white),
+                          onPressed: () => Navigator.pop(context),
                         ),
-                      ),
+                        const SizedBox(width: 5),
+                        Text("New Listing", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20)),
+                      ],
                     ),
-                    const SizedBox(height: 20),
-
-                    // Weight Input
-                    _buildModernField(
-                      controller: _weightController,
-                      label: "Total Weight",
-                      icon: LucideIcons.scale,
-                      suffix: "kg",
-                      isNumber: true,
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Price Input
-                    _buildModernField(
-                      controller: _priceController,
-                      label: "Price per Kg",
-                      icon: LucideIcons.banknote,
-                      prefix: "KES ",
-                      isNumber: true,
+                    const SizedBox(height: 10),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                      child: Text("Reach thousands of verified buyers on the MkulimaHub network.", style: GoogleFonts.poppins(color: Colors.green.shade100, fontSize: 14)),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 40),
+            ),
+          ),
 
-              // 3. Submit Button
-              FadeInUp(
-                delay: const Duration(milliseconds: 400),
-                child: SizedBox(
-                  height: 55,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _submitHarvest,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green[800],
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                      elevation: 5,
-                      shadowColor: Colors.green.withOpacity(0.4),
+          // 🔥 2. THE FLOATING FORM CARD
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 120.0),
+              child: FadeInUp(
+                duration: const Duration(milliseconds: 400),
+                child: Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: const BorderRadius.only(topLeft: Radius.circular(35), topRight: Radius.circular(35)),
+                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, -5))],
+                  ),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(24),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          
+                          // Icon Header inside the card
+                          Center(
+                            child: Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(color: Colors.green.shade50, shape: BoxShape.circle),
+                              child: Icon(LucideIcons.sprout, size: 35, color: Colors.green.shade700),
+                            ),
+                          ),
+                          const SizedBox(height: 15),
+                          Text(
+                            "What are you selling?",
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
+                          ),
+                          const SizedBox(height: 30),
+
+                          // Crop Dropdown
+                          _buildLabel("Crop Type"),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade50,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.grey.shade200)
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButtonFormField<String>(
+                                value: _selectedCrop,
+                                decoration: InputDecoration(
+                                  border: InputBorder.none,
+                                  prefixIcon: Icon(LucideIcons.leaf, color: Colors.green.shade600, size: 20),
+                                  prefixIconConstraints: const BoxConstraints(minWidth: 40),
+                                ),
+                                icon: Icon(LucideIcons.chevronDown, color: Colors.green.shade700, size: 20),
+                                hint: Text("Select Crop", style: GoogleFonts.poppins(color: Colors.grey.shade400, fontSize: 14)),
+                                items: _crops.map((crop) {
+                                  return DropdownMenuItem(value: crop, child: Text(crop, style: GoogleFonts.poppins(fontWeight: FontWeight.w500, color: Colors.black87)));
+                                }).toList(),
+                                onChanged: (val) => setState(() => _selectedCrop = val),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+
+                          // Weight and Price in a Row for better use of space
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildLabel("Total Weight"),
+                                    _buildPremiumField(
+                                      controller: _weightController,
+                                      hint: "0.0",
+                                      icon: LucideIcons.scale,
+                                      suffix: "KG",
+                                      isNumber: true,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 15),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildLabel("Price per KG"),
+                                    _buildPremiumField(
+                                      controller: _priceController,
+                                      hint: "0.0",
+                                      icon: LucideIcons.banknote,
+                                      prefix: "KES ",
+                                      isNumber: true,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 30),
+
+                          // 🔥 Real-Time Revenue Calculator Card
+                          Container(
+                            padding: const EdgeInsets.all(20),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(colors: [Colors.blue.shade50, Colors.green.shade50]),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: Colors.green.shade100)
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(LucideIcons.calculator, size: 14, color: Colors.green.shade700),
+                                        const SizedBox(width: 6),
+                                        Text("Estimated Value", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade800)),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text("Weight × Price", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade600)),
+                                  ],
+                                ),
+                                Text(
+                                  "KES ${currencyFormat.format(_estimatedValue)}", 
+                                  style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.green.shade800)
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          const SizedBox(height: 40),
+
+                          // 3. Submit Button
+                          SizedBox(
+                            height: 60,
+                            child: ElevatedButton(
+                              onPressed: _isLoading ? null : _submitHarvest,
+                              style: ElevatedButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                elevation: 0,
+                              ),
+                              child: Ink(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(colors: [Colors.green.shade500, Colors.green.shade700]),
+                                  borderRadius: BorderRadius.circular(16),
+                                  boxShadow: [BoxShadow(color: Colors.green.withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 8))]
+                                ),
+                                child: Container(
+                                  alignment: Alignment.center,
+                                  child: _isLoading 
+                                    ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                                    : Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          const Icon(LucideIcons.uploadCloud, color: Colors.white, size: 22),
+                                          const SizedBox(width: 10),
+                                          Text("Publish to Market", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                                        ],
+                                      ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20), // Bottom padding
+                        ],
+                      ),
                     ),
-                    child: _isLoading 
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(LucideIcons.uploadCloud, color: Colors.white),
-                            const SizedBox(width: 10),
-                            Text("Post Harvest", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                          ],
-                        ),
                   ),
                 ),
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
 
-  // Helper Widget for Clean Fields
-  Widget _buildModernField({
+  Widget _buildLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0, left: 4.0),
+      child: Text(text, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
+    );
+  }
+
+  Widget _buildPremiumField({
     required TextEditingController controller,
-    required String label,
+    required String hint,
     required IconData icon,
     String? suffix,
     String? prefix,
@@ -222,25 +334,24 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(15),
-        boxShadow: [
-          BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
-        ],
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
       ),
       child: TextFormField(
         controller: controller,
-        keyboardType: isNumber ? TextInputType.number : TextInputType.text,
-        style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w500),
+        keyboardType: isNumber ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
+        style: GoogleFonts.poppins(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87),
         decoration: InputDecoration(
-          labelText: label,
-          labelStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 12),
-          prefixIcon: Icon(icon, color: Colors.green[700], size: 20),
+          hintText: hint,
+          hintStyle: GoogleFonts.poppins(color: Colors.grey.shade400, fontWeight: FontWeight.normal),
+          prefixIcon: Icon(icon, color: Colors.green.shade600, size: 20),
           prefixText: prefix,
           suffixText: suffix,
-          prefixStyle: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.black87),
+          prefixStyle: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.black87, fontSize: 15),
+          suffixStyle: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.grey.shade500, fontSize: 12),
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         ),
         validator: (v) {
           if (v == null || v.isEmpty) return "Required";

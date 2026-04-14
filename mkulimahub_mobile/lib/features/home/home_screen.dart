@@ -12,7 +12,7 @@ import 'package:mkulimahub_mobile/features/home/cluster_screen.dart';
 import 'package:mkulimahub_mobile/features/home/contracts_screen.dart';
 import 'package:mkulimahub_mobile/features/home/ai_chat_screen.dart';
 
-final GlobalKey<MarketplaceViewState> marketplaceKey = GlobalKey<MarketplaceViewState>();
+final GlobalKey<FarmerDashboardViewState> dashboardKey = GlobalKey<FarmerDashboardViewState>();
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -29,7 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _screens = [
-      MarketplaceView(key: marketplaceKey), 
+      FarmerDashboardView(key: dashboardKey), // 🔥 Renamed and Revamped!
       const ClusterScreen(),                      
       const PredictionScreen(),                   
       const ContractsScreen(),                    
@@ -39,52 +39,57 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      extendBody: true, // This allows the marketplace to scroll UNDER the floating nav
+      extendBody: true, 
+      backgroundColor: Colors.grey.shade50,
       body: IndexedStack(index: _selectedIndex, children: _screens),
       
-      // THE NEW SLEEK FLOATING GLASS NAV
+      // 🔥 THE UPGRADED PREMIUM GLASS NAV
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       floatingActionButton: Container(
         margin: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-        height: 70,
+        height: 75,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(25),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 20, offset: const Offset(0, 10))],
+          borderRadius: BorderRadius.circular(30),
+          boxShadow: [BoxShadow(color: Colors.green.shade900.withOpacity(0.15), blurRadius: 30, offset: const Offset(0, 10))],
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(25),
+          borderRadius: BorderRadius.circular(30),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10), // The magic blur effect
+            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.5), // Dark transparent tint
-                border: Border.all(color: Colors.white.withOpacity(0.1), width: 1), // Subtle glassy edge
+                color: Colors.white.withOpacity(0.85),
+                border: Border.all(color: Colors.white, width: 1.5),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  _buildNavItem(0, LucideIcons.home, "Home"),
-                  _buildNavItem(1, LucideIcons.mapPin, "Hubs"),
+                  _buildNavItem(0, LucideIcons.layoutDashboard, "Home"),
+                  _buildNavItem(1, LucideIcons.network, "Hubs"),
+                  
+                  // Center Action Button
                   GestureDetector(
                     onTap: () async {
                       final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddHarvestScreen()));
                       if (result == true) {
-                        marketplaceKey.currentState?.loadHarvests(); 
+                        dashboardKey.currentState?.loadHarvests(); 
                         if (_selectedIndex != 0) setState(() => _selectedIndex = 0);
                       }
                     },
                     child: Container(
-                      width: 50, height: 50,
+                      width: 55, height: 55,
+                      margin: const EdgeInsets.only(bottom: 5),
                       decoration: BoxDecoration(
-                        color: Colors.green, 
+                        gradient: LinearGradient(colors: [Colors.green.shade400, Colors.green.shade700], begin: Alignment.topLeft, end: Alignment.bottomRight), 
                         shape: BoxShape.circle, 
-                        boxShadow: [BoxShadow(color: Colors.greenAccent.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))]
+                        boxShadow: [BoxShadow(color: Colors.green.withOpacity(0.4), blurRadius: 15, offset: const Offset(0, 8))]
                       ),
-                      child: const Icon(LucideIcons.plus, color: Colors.black, size: 28),
+                      child: const Icon(LucideIcons.plus, color: Colors.white, size: 28),
                     ),
                   ),
-                  _buildNavItem(2, LucideIcons.trendingUp, "Trends"),
-                  _buildNavItem(3, LucideIcons.fileText, "Contracts"),
+                  
+                  _buildNavItem(2, LucideIcons.lineChart, "Trends"),
+                  _buildNavItem(3, LucideIcons.fileSignature, "Contracts"),
                 ],
               ),
             ),
@@ -99,19 +104,28 @@ class _HomeScreenState extends State<HomeScreen> {
     bool isSelected = _selectedIndex == index;
     return GestureDetector(
       onTap: () => setState(() => _selectedIndex = index),
+      behavior: HitTestBehavior.opaque,
       child: Container(
-        color: Colors.transparent, 
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        width: 60,
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             AnimatedContainer(
               duration: const Duration(milliseconds: 200),
-              transform: Matrix4.translationValues(0, isSelected ? -3 : 0, 0),
-              // White icons when unselected, Neon Green when selected
-              child: Icon(icon, color: isSelected ? Colors.green : Colors.black, size: 24),
+              transform: Matrix4.translationValues(0, isSelected ? -2 : 0, 0),
+              child: Icon(icon, color: isSelected ? Colors.green.shade700 : Colors.grey.shade400, size: isSelected ? 26 : 24),
             ),
-            if (isSelected) FadeInUp(duration: const Duration(milliseconds: 200), child: Text(label, style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green)))
+            const SizedBox(height: 4),
+            Text(
+              label, 
+              style: GoogleFonts.poppins(
+                fontSize: 10, 
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, 
+                color: isSelected ? Colors.green.shade800 : Colors.grey.shade500
+              )
+            )
           ],
         ),
       ),
@@ -119,67 +133,57 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class MarketplaceView extends StatefulWidget {
-  const MarketplaceView({super.key});
+// ==========================================
+// 🔥 THE NEW FARMER COMMAND CENTER
+// ==========================================
+class FarmerDashboardView extends StatefulWidget {
+  const FarmerDashboardView({super.key});
   @override
-  State<MarketplaceView> createState() => MarketplaceViewState();
+  State<FarmerDashboardView> createState() => FarmerDashboardViewState();
 }
 
-class MarketplaceViewState extends State<MarketplaceView> {
+class FarmerDashboardViewState extends State<FarmerDashboardView> {
   final ApiClient _apiClient = ApiClient();
   
-  List<Harvest> _allHarvests = [];
+  List<Harvest> _myHarvests = [];
   bool _isLoading = true;
-  String _searchQuery = "";
-  int _selectedCategoryIndex = 0;
+  String _userName = "Farmer";
 
-  final List<Map<String, dynamic>> _categories = [
-    {"name": "All", "icon": LucideIcons.layoutGrid, "color": Colors.green},
-    {"name": "Veg", "icon": LucideIcons.carrot, "color": Colors.orange},
-    {"name": "Fruits", "icon": LucideIcons.apple, "color": Colors.red},
-    {"name": "Grains", "icon": LucideIcons.wheat, "color": Colors.amber},
-    {"name": "Dairy", "icon": LucideIcons.egg, "color": Colors.blue},
-    {"name": "Meat", "icon": LucideIcons.beef, "color": Colors.brown},
+  // Mock data for Bulk Requests (Opportunities)
+  final List<Map<String, dynamic>> _hotRequests = [
+    {"buyer": "Unga Group Ltd", "crop": "Maize", "weight": "5,000 kg", "price": "KES 4,500/bag", "urgency": "High"},
+    {"buyer": "City Restaurants", "crop": "Tomatoes", "weight": "200 kg", "price": "KES 80/kg", "urgency": "Medium"},
+    {"buyer": "Export Co.", "crop": "Avocados", "weight": "1,000 kg", "price": "KES 150/kg", "urgency": "High"},
   ];
 
   @override
   void initState() {
     super.initState();
-    loadHarvests();
+    _loadDashboardData();
+  }
+
+  Future<void> _loadDashboardData() async {
+    setState(() => _isLoading = true);
+    
+    // Fetch Profile for the greeting
+    final profile = await _apiClient.getProfile();
+    if (profile != null && mounted) {
+      setState(() => _userName = profile['full_name']?.split(' ')[0] ?? "Farmer");
+    }
+
+    await loadHarvests();
   }
 
   Future<void> loadHarvests() async {
-    setState(() => _isLoading = true);
+    // In a real app, this should call an endpoint like /harvests/me
+    // For now, we fetch all and pretend they belong to the farmer to show the UI
     final data = await _apiClient.getHarvests();
     if (mounted) {
       setState(() {
-        _allHarvests = data;
+        _myHarvests = data;
         _isLoading = false;
       });
     }
-  }
-
-  String _getCategoryForCrop(String cropName) {
-    final name = cropName.toLowerCase();
-    if (name.contains('maize') || name.contains('wheat') || name.contains('rice') || name.contains('grain')) return 'Grains';
-    if (name.contains('mango') || name.contains('avocado') || name.contains('apple') || name.contains('banana') || name.contains('fruit')) return 'Fruits';
-    if (name.contains('bean') || name.contains('carrot') || name.contains('cabbage') || name.contains('tomato') || name.contains('potato') || name.contains('veg')) return 'Veg';
-    if (name.contains('milk') || name.contains('egg') || name.contains('cheese') || name.contains('dairy')) return 'Dairy';
-    if (name.contains('beef') || name.contains('chicken') || name.contains('meat') || name.contains('pork')) return 'Meat';
-    return 'Other'; 
-  }
-
-  List<Harvest> get _filteredHarvests {
-    return _allHarvests.where((harvest) {
-      final matchesSearch = harvest.cropName.toLowerCase().contains(_searchQuery.toLowerCase());
-      bool matchesCategory = true;
-      if (_selectedCategoryIndex != 0) { 
-        final targetCategory = _categories[_selectedCategoryIndex]['name'];
-        final detectedCategory = _getCategoryForCrop(harvest.cropName);
-        matchesCategory = detectedCategory == targetCategory;
-      }
-      return matchesSearch && matchesCategory;
-    }).toList();
   }
 
   String _formatCropName(String rawName) {
@@ -201,189 +205,232 @@ class MarketplaceViewState extends State<MarketplaceView> {
 
   @override
   Widget build(BuildContext context) {
-    final displayHarvests = _filteredHarvests;
-
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        centerTitle: true,
-        leading: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: BouncyButton(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen())),
-            child: CircleAvatar(backgroundColor: Colors.green[50], child: const Icon(LucideIcons.user, color: Colors.green, size: 20)),
-          ),
-        ),
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(LucideIcons.sprout, color: Colors.green, size: 24),
-            const SizedBox(width: 8),
-            Text("MkulimaHub", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.w900, fontSize: 22)),
-          ],
-        ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 8.0),
-            child: BouncyButton(
-              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Shopping Cart coming soon!"))),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.grey[100], shape: BoxShape.circle),
-                child: const Icon(LucideIcons.shoppingBag, color: Colors.black87, size: 20),
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12.0),
-            child: BouncyButton(
-              onPressed: () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const AiChatScreen()));
-              },
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.green[100], shape: BoxShape.circle),
-                child: Icon(LucideIcons.bot, color: Colors.green[800], size: 22),
-              ),
-            ),
-          ),
-        ],
-      ),
+      backgroundColor: Colors.grey.shade50,
       body: CustomScrollView(
         slivers: [
+          // 🔥 PREMIUM HEADER
           SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
+            child: Container(
+              padding: const EdgeInsets.only(top: 50, left: 20, right: 20, bottom: 35),
+              decoration: BoxDecoration(
+                color: Colors.green.shade800,
+                borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(35), bottomRight: Radius.circular(35)),
+                boxShadow: [BoxShadow(color: Colors.green.shade900.withOpacity(0.2), blurRadius: 20, offset: const Offset(0, 10))],
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.15), blurRadius: 15, offset: const Offset(0, 5))]),
-                    child: TextField(
-                      onChanged: (val) => setState(() => _searchQuery = val),
-                      decoration: InputDecoration(
-                        hintText: "Search for crops, hubs...", 
-                        hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 14), 
-                        prefixIcon: const Icon(LucideIcons.search, color: Colors.green), 
-                        border: InputBorder.none, 
-                        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20)
-                      )
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    height: 90,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal, itemCount: _categories.length, physics: const BouncingScrollPhysics(),
-                      itemBuilder: (context, index) {
-                        final cat = _categories[index];
-                        final isSelected = _selectedCategoryIndex == index;
-                        return FadeInRight(
-                          delay: Duration(milliseconds: index * 100),
-                          child: GestureDetector(
-                            onTap: () => setState(() => _selectedCategoryIndex = index),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 300), margin: const EdgeInsets.only(right: 16, bottom: 10), padding: EdgeInsets.symmetric(horizontal: isSelected ? 20 : 12, vertical: 12),
-                              decoration: BoxDecoration(color: isSelected ? cat['color'] : Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: isSelected ? Colors.transparent : Colors.grey[200]!, width: 1.5), boxShadow: isSelected ? [BoxShadow(color: (cat['color'] as Color).withOpacity(0.4), blurRadius: 10, offset: const Offset(0, 5))] : []),
-                              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(cat['icon'], color: isSelected ? Colors.white : Colors.grey[600], size: isSelected ? 24 : 22), const SizedBox(height: 5), Text(cat['name'], style: GoogleFonts.poppins(color: isSelected ? Colors.white : Colors.grey[600], fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, fontSize: 12))]),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          BouncyButton(
+                            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen())),
+                            child: CircleAvatar(
+                              radius: 22,
+                              backgroundColor: Colors.white.withOpacity(0.2), 
+                              child: const Icon(LucideIcons.user, color: Colors.white, size: 22)
                             ),
                           ),
-                        );
-                      },
-                    ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text("Good Morning,", style: GoogleFonts.poppins(color: Colors.green.shade200, fontSize: 12)),
+                              Text(_userName, style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20)),
+                            ],
+                          ),
+                        ],
+                      ),
+                      BouncyButton(
+                        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AiChatScreen())),
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
+                          child: const Icon(LucideIcons.bot, color: Colors.white, size: 22),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 20),
-                  Text(
-                    _searchQuery.isNotEmpty ? 'Search Results' : (_selectedCategoryIndex == 0 ? "Fresh Arrivals" : "${_categories[_selectedCategoryIndex]['name']} Available"), 
-                    style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)
-                  ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 25),
+                  
+                  // 🔥 QUICK STATS CARDS
+                  Row(
+                    children: [
+                      _buildStatCard("Active Listings", "12", LucideIcons.layoutList),
+                      const SizedBox(width: 15),
+                      _buildStatCard("Pending Pledges", "3", LucideIcons.truck),
+                    ],
+                  )
                 ],
               ),
             ),
           ),
           
+          // 🔥 HOT BULK REQUESTS (Opportunities)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 25, bottom: 15),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text("Hot Bulk Requests", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+                        Text("View All", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade700)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  SizedBox(
+                    height: 140,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: _hotRequests.length,
+                      physics: const BouncingScrollPhysics(),
+                      itemBuilder: (context, index) {
+                        final req = _hotRequests[index];
+                        return FadeInRight(
+                          delay: Duration(milliseconds: index * 100),
+                          child: Container(
+                            width: 260,
+                            margin: const EdgeInsets.only(right: 15),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: Colors.orange.shade100, width: 1.5),
+                              boxShadow: [BoxShadow(color: Colors.orange.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 5))]
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(8)),
+                                      child: Text(req['urgency'] + " Priority", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontSize: 10, fontWeight: FontWeight.bold)),
+                                    ),
+                                    Icon(LucideIcons.flame, color: Colors.orange.shade400, size: 18),
+                                  ],
+                                ),
+                                Text("${req['weight']} of ${req['crop']}", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(req['buyer'], style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
+                                    Text(req['price'], style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade700)),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+                    ),
+                  )
+                ],
+              ),
+            ),
+          ),
+
+          // 🔥 MY ACTIVE LISTINGS HEADER
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(left: 20, right: 20, top: 15, bottom: 15),
+              child: Text("My Active Listings", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+            ),
+          ),
+          
+          // 🔥 MY HARVEST GRID
           if (_isLoading)
             const SliverFillRemaining(child: Center(child: CircularProgressIndicator(color: Colors.green)))
-          else if (displayHarvests.isEmpty)
-            SliverFillRemaining(
+          else if (_myHarvests.isEmpty)
+            SliverToBoxAdapter(
               child: Center(
-                child: Text(
-                  "No crops found matching your filters.", 
-                  style: GoogleFonts.poppins(color: Colors.grey)
+                child: Padding(
+                  padding: const EdgeInsets.all(40.0),
+                  child: Column(
+                    children: [
+                      Icon(LucideIcons.store, size: 50, color: Colors.grey.shade300),
+                      const SizedBox(height: 10),
+                      Text("You have no active listings.", style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 14)),
+                    ],
+                  ),
                 )
               )
             )
           else
             SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 20),
               sliver: SliverGrid(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, childAspectRatio: 0.72, crossAxisSpacing: 16, mainAxisSpacing: 16),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2, 
+                  childAspectRatio: 0.72,
+                  crossAxisSpacing: 15, 
+                  mainAxisSpacing: 15
+                ),
                 delegate: SliverChildBuilderDelegate((context, index) {
-                  final harvest = displayHarvests[index];
-                  
-                  bool isBulk = harvest.cropName.contains('Pool)');
-                  String rawTitle = harvest.cropName;
-                  
-                  if (isBulk) {
-                    int start = harvest.cropName.indexOf('(');
-                    if (start != -1) {
-                      rawTitle = harvest.cropName.substring(0, start).trim();
-                    }
-                  }
-
-                  String cleanDisplayTitle = _formatCropName(rawTitle);
+                  final harvest = _myHarvests[index];
+                  String cleanDisplayTitle = _formatCropName(harvest.cropName);
 
                   return FadeInUp(
                     delay: Duration(milliseconds: index * 50), 
                     child: Container(
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 15, offset: const Offset(0, 8))]),
+                      decoration: BoxDecoration(
+                        color: Colors.white, 
+                        borderRadius: BorderRadius.circular(20), 
+                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 15, offset: const Offset(0, 8))],
+                        border: Border.all(color: Colors.grey.shade100)
+                      ),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(20),
                         child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Expanded(
                               flex: 5,
                               child: Stack(
                                 children: [
-                                  Image.network(_getImageForCrop(cleanDisplayTitle), width: double.infinity, height: double.infinity, fit: BoxFit.cover, errorBuilder: (c, e, s) => Container(color: Colors.green[50], child: const Center(child: Icon(LucideIcons.imageOff, color: Colors.green)))),
-                                  
-                                  if (isBulk)
-                                    Positioned(
-                                      top: 8, left: 8,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                        decoration: BoxDecoration(color: Colors.orange[700], borderRadius: BorderRadius.circular(8)),
-                                        child: Row(
-                                          children: [
-                                            const Icon(LucideIcons.users, size: 12, color: Colors.white),
-                                            const SizedBox(width: 4),
-                                            Text("BULK HUB", style: GoogleFonts.poppins(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                                          ],
-                                        ),
-                                      ),
+                                  Image.network(
+                                    _getImageForCrop(cleanDisplayTitle), 
+                                    width: double.infinity, height: double.infinity, fit: BoxFit.cover, 
+                                    errorBuilder: (c, e, s) => Container(color: Colors.green.shade50, child: const Center(child: Icon(LucideIcons.imageOff, color: Colors.green)))
+                                  ),
+                                  Container(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black.withOpacity(0.3), Colors.transparent]))),
+                                  Positioned(
+                                    top: 8, right: 8,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 5)]),
+                                      child: Icon(LucideIcons.edit2, size: 14, color: Colors.grey.shade600),
                                     ),
+                                  )
                                 ],
                               ),
                             ),
                             Expanded(
                               flex: 4,
                               child: Padding(
-                                padding: const EdgeInsets.all(12.0),
+                                padding: const EdgeInsets.all(10.0),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                      Text(cleanDisplayTitle, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16), maxLines: 1),
-                                      Text("${harvest.weightKg}kg Available", style: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 12)),
-                                    ]),
-                                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                                      Text("KES ${harvest.pricePerKg}", style: GoogleFonts.poppins(color: Colors.green[800], fontWeight: FontWeight.w700, fontSize: 16)),
-                                      Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(10)), child: const Icon(LucideIcons.plus, color: Colors.white, size: 16))
-                                    ])
+                                    Text(cleanDisplayTitle, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                    const SizedBox(height: 4),
+                                    Text("${harvest.weightKg} kg available", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 11)),
+                                    const Spacer(),
+                                    Text("KES ${harvest.pricePerKg}/kg", style: GoogleFonts.poppins(color: Colors.green.shade700, fontWeight: FontWeight.w800, fontSize: 13)),
                                   ],
                                 ),
                               ),
@@ -393,13 +440,34 @@ class MarketplaceViewState extends State<MarketplaceView> {
                       ),
                     ),
                   );
-                }, childCount: displayHarvests.length),
+                }, childCount: _myHarvests.length),
               ),
             ),
           
-          // Extra padding so items don't hide under the floating nav!
           const SliverToBoxAdapter(child: SizedBox(height: 120)),
         ],
+      ),
+    );
+  }
+
+  Widget _buildStatCard(String title, String value, IconData icon) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white.withOpacity(0.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: Colors.green.shade100, size: 24),
+            const SizedBox(height: 12),
+            Text(value, style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
+            Text(title, style: GoogleFonts.poppins(fontSize: 12, color: Colors.green.shade100)),
+          ],
+        ),
       ),
     );
   }

@@ -7,10 +7,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:geolocator/geolocator.dart'; 
-import 'package:firebase_auth/firebase_auth.dart'; // 🔥 Required for Firebase deletion
+
 import 'package:mkulimahub_mobile/core/api_client.dart';
-import 'package:mkulimahub_mobile/features/auth/login_screen.dart';
-import 'package:mkulimahub_mobile/features/home/home_screen.dart'; 
+import 'package:mkulimahub_mobile/features/home/home_screen.dart';
+import 'package:mkulimahub_mobile/features/home/settings_screen.dart'; 
 
 class ProfileScreen extends StatefulWidget {
   final bool isNewUser;
@@ -46,7 +46,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   File? _profileImage;
   bool _isLoading = false;
-  bool _isDeleting = false; // Track deletion state
   Map<String, dynamic>? _profileData;
   
   bool _isLoadingPledges = true;
@@ -55,6 +54,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
+    // Default to editing ONLY if they are a brand new user onboarding
     _isEditing = widget.isNewUser;
     _initializeData();
   }
@@ -191,50 +191,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // 🔥 The Corrected Deletion Logic
-  Future<void> _handleDeleteAccount() async {
-    // 1. Confirm Deletion
-    final bool? confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text("Delete Account", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-        content: Text("Are you sure you want to permanently delete your MkulimaHub account? This cannot be undone.", style: GoogleFonts.poppins()),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text("Cancel", style: GoogleFonts.poppins(color: Colors.grey))),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true), 
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: Text("Delete", style: GoogleFonts.poppins(color: Colors.white))
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    setState(() => _isDeleting = true);
-
-    // 2. Delete from FastAPI Database first
-    final dbError = await _apiClient.deleteAccount();
-
-    if (dbError == null) {
-      // 3. Delete from Firebase 
-      try {
-        await FirebaseAuth.instance.currentUser?.delete();
-      } catch (e) {
-        print("Firebase deletion error (user might need to re-login to delete): $e");
-      }
-      
-      // 4. Send them to the Login Screen
-      if (mounted) {
-        Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginScreen()), (route) => false);
-      }
-    } else {
-      setState(() => _isDeleting = false);
-      if (mounted) _showSnackBar(dbError, Colors.redAccent);
-    }
-  }
-
   void _showSnackBar(String message, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -290,7 +246,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             if (!_isEditing)
                               IconButton(
                                 icon: const Icon(LucideIcons.settings, color: Colors.white),
-                                onPressed: () => _showSnackBar("Settings Coming Soon!", Colors.blueGrey),
+                                onPressed: () {
+                                  Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+                                },
                               )
                             else if (_isEditing && !widget.isNewUser)
                               IconButton(
@@ -439,66 +397,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ],
                               ),
                             ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                              decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(20)),
-                              child: Text(pledge['status'], style: GoogleFonts.poppins(color: Colors.blue[800], fontSize: 10, fontWeight: FontWeight.bold)),
+                            Builder(
+                              builder: (context) {
+                                String statusText = "Pending";
+                                Color bgColor = Colors.grey.shade100;
+                                Color textColor = Colors.grey.shade800;
+
+                                // Translate backend status to human-readable UI
+                                if (pledge['status'] == 'pending_dropoff') {
+                                  statusText = "Deliver to Hub";
+                                  bgColor = Colors.orange.shade50;
+                                  textColor = Colors.orange.shade800;
+                                } else if (pledge['status'] == 'received_at_hub') {
+                                  statusText = "Awaiting Buyer"; // 🔥 Your requested change!
+                                  bgColor = Colors.blue.shade50;
+                                  textColor = Colors.blue.shade800;
+                                } else if (pledge['status'] == 'completed') {
+                                  statusText = "Escrow Paid";
+                                  bgColor = Colors.green.shade50;
+                                  textColor = Colors.green.shade800;
+                                }
+
+                                return Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(20)),
+                                  child: Text(
+                                    statusText, 
+                                    style: GoogleFonts.poppins(color: textColor, fontSize: 10, fontWeight: FontWeight.bold)
+                                  ),
+                                );
+                              }
                             )
                           ],
                         ),
                       );
                     },
                   ),
-
-        const SizedBox(height: 30),
-        
-        SizedBox(
-          width: double.infinity,
-          height: 55,
-          child: ElevatedButton.icon(
-            icon: const Icon(LucideIcons.edit3, color: Colors.white, size: 18),
-            label: Text("Edit Profile", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 16)),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green[700], shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
-            onPressed: () => setState(() => _isEditing = true),
-          ),
-        ),
-        
-        const SizedBox(height: 20),
-        
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                 icon: const Icon(LucideIcons.logOut, color: Colors.grey),
-                 label: Text("Log Out", style: GoogleFonts.poppins(color: Colors.grey, fontWeight: FontWeight.w600)),
-                 style: OutlinedButton.styleFrom(
-                   padding: const EdgeInsets.symmetric(vertical: 16),
-                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))
-                 ),
-                 onPressed: () async {
-                   await _apiClient.logout();
-                   if (mounted) Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginScreen()), (r) => false);
-                 },
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: ElevatedButton.icon(
-                 icon: _isDeleting 
-                    ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(color: Colors.red, strokeWidth: 2)) 
-                    : const Icon(LucideIcons.trash2, color: Colors.red),
-                 label: Text("Delete", style: GoogleFonts.poppins(color: Colors.red, fontWeight: FontWeight.w600)),
-                 style: ElevatedButton.styleFrom(
-                   padding: const EdgeInsets.symmetric(vertical: 16),
-                   backgroundColor: Colors.red.shade50,
-                   elevation: 0,
-                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))
-                 ),
-                 onPressed: _isDeleting ? null : _handleDeleteAccount,
-              ),
-            ),
-          ],
-        ),
       ],
     );
   }

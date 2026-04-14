@@ -33,10 +33,45 @@ class _ReceivingDashboardState extends State<ReceivingDashboard> {
     }
   }
 
+  // 🔥 THE PREMIUM TOAST FUNCTION
+  void _showPremiumToast(BuildContext context, String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Container(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              Icon(isError ? LucideIcons.alertCircle : LucideIcons.checkCircle, color: Colors.white, size: 24),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message, 
+                  style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)
+                )
+              ),
+            ],
+          ),
+        ),
+        backgroundColor: isError ? Colors.red.shade800 : Colors.teal.shade800,
+        behavior: SnackBarBehavior.floating,
+        // 🔥 THIS MARGIN PUSHES IT TO THE MIDDLE OF THE SCREEN
+        margin: EdgeInsets.only(
+          bottom: MediaQuery.of(context).size.height * 0.45, // 45% up the screen!
+          left: 24,
+          right: 24,
+        ),
+        elevation: 15,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
   void _showProcessingSheet(Map<String, dynamic> delivery) {
     final TextEditingController weightController = TextEditingController(text: delivery['pledged_weight'].toString());
     final TextEditingController notesController = TextEditingController();
     bool isSubmitting = false;
+    String? errorMessage; // 🔥 NEW: Holds in-form validation errors
 
     showModalBottomSheet(
       context: context,
@@ -89,7 +124,24 @@ class _ReceivingDashboardState extends State<ReceivingDashboard> {
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                       ),
                     ),
-                    const SizedBox(height: 30),
+                    const SizedBox(height: 20),
+
+                    // 🔥 NEW: IN-FORM ERROR MESSAGE
+                    if (errorMessage != null)
+                      FadeIn(
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 20),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.red.shade100)),
+                          child: Row(
+                            children: [
+                              Icon(LucideIcons.alertTriangle, color: Colors.red.shade600, size: 18),
+                              const SizedBox(width: 10),
+                              Expanded(child: Text(errorMessage!, style: GoogleFonts.poppins(color: Colors.red.shade800, fontSize: 12, fontWeight: FontWeight.w600))),
+                            ],
+                          ),
+                        ),
+                      ),
                     
                     Row(
                       children: [
@@ -97,15 +149,26 @@ class _ReceivingDashboardState extends State<ReceivingDashboard> {
                           child: OutlinedButton.icon(
                             onPressed: isSubmitting ? null : () async {
                               if (notesController.text.isEmpty) {
-                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please add a reason for rejection.")));
+                                // Show error inside the sheet instead of a hidden toast!
+                                setSheetState(() => errorMessage = "Please add a reason for rejection.");
                                 return;
                               }
-                              setSheetState(() => isSubmitting = true);
+                              setSheetState(() {
+                                errorMessage = null; // Clear previous errors
+                                isSubmitting = true;
+                              });
                               final error = await _apiClient.processDelivery(delivery['pledge_id'], "reject", null, notesController.text);
                               
                               if (mounted) {
-                                Navigator.pop(context);
-                                if (error == null) _fetchDeliveries();
+                                Navigator.pop(context); // 1. Start closing the sheet
+                                await Future.delayed(const Duration(milliseconds: 300)); // 2. Wait for it to slide off-screen
+                                
+                                if (error == null) {
+                                  _showPremiumToast(context, "Delivery Rejected.", isError: true); // 3. Fire the toast!
+                                  _fetchDeliveries();
+                                } else {
+                                  _showPremiumToast(context, error, isError: true);
+                                }
                               }
                             },
                             icon: const Icon(LucideIcons.xCircle, color: Colors.red),
@@ -118,16 +181,26 @@ class _ReceivingDashboardState extends State<ReceivingDashboard> {
                           child: ElevatedButton.icon(
                             onPressed: isSubmitting ? null : () async {
                               double? finalWeight = double.tryParse(weightController.text);
-                              if (finalWeight == null) return;
+                              if (finalWeight == null) {
+                                setSheetState(() => errorMessage = "Please enter a valid weight.");
+                                return;
+                              }
 
-                              setSheetState(() => isSubmitting = true);
+                              setSheetState(() {
+                                errorMessage = null;
+                                isSubmitting = true;
+                              });
                               final error = await _apiClient.processDelivery(delivery['pledge_id'], "receive", finalWeight, notesController.text);
                               
                               if (mounted) {
-                                Navigator.pop(context);
+                                Navigator.pop(context); // 1. Start closing the sheet
+                                await Future.delayed(const Duration(milliseconds: 300)); // 2. Wait for it to slide off-screen
+                                
                                 if (error == null) {
-                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Crop Received & Stored!"), backgroundColor: Colors.green));
+                                  _showPremiumToast(context, "Crop Received & Stored!"); // 3. Fire the toast!
                                   _fetchDeliveries();
+                                } else {
+                                  _showPremiumToast(context, error, isError: true);
                                 }
                               }
                             },

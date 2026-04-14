@@ -4,7 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/home/home_screen.dart'; 
-import 'package:intl/intl.dart'; // 🔥 Ensure you add 'intl: ^0.19.0' to pubspec.yaml
+import 'package:intl/intl.dart'; 
 
 class HubChatScreen extends StatefulWidget {
   final String hubName;
@@ -24,14 +24,14 @@ class _HubChatScreenState extends State<HubChatScreen> {
   bool _isLoading = true;
   bool _isSending = false;
   
-  Timer? _refreshTimer; // 🔥 For real-time updates
+  Timer? _refreshTimer; 
 
   @override
   void initState() {
     super.initState();
     _fetchInitialData();
     
-    // 🔥 Start polling for new messages every 5 seconds
+    // Poll for new messages silently every 5 seconds
     _refreshTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
       if (mounted) _fetchMessages(silent: true);
     });
@@ -58,11 +58,10 @@ class _HubChatScreenState extends State<HubChatScreen> {
     
     if (mounted) {
       setState(() {
-        _messages = data ?? []; // Ensure we don't pass null
+        _messages = data ?? []; 
         if (!silent) _isLoading = false;
       });
       
-      // Only scroll to bottom on initial load or if we are already near the bottom
       if (!silent) _scrollToBottom();
     }
   }
@@ -87,11 +86,11 @@ class _HubChatScreenState extends State<HubChatScreen> {
 
     setState(() => _isSending = true);
     
-    // Optimistic UI update: Add message locally immediately for snappy feel
+    // Optimistic UI update
     final optimisticMsg = {
       'sender_name': _myFullName,
       'message': text,
-      'timestamp': DateTime.now().toIso8601String() // Assuming backend uses standard ISO strings
+      'timestamp': DateTime.now().toIso8601String() 
     };
     
     setState(() {
@@ -100,14 +99,10 @@ class _HubChatScreenState extends State<HubChatScreen> {
     });
     _scrollToBottom();
     
-    // Actually send to backend
     final error = await _apiClient.postHubMessage(widget.hubName, text);
     
     if (error != null) {
-      // Revert optimistic update if it failed
-      setState(() {
-         _messages.removeLast();
-      });
+      setState(() => _messages.removeLast());
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
     }
     
@@ -125,80 +120,98 @@ class _HubChatScreenState extends State<HubChatScreen> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              title: Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: Colors.blue[50], shape: BoxShape.circle),
-                    child: const Icon(LucideIcons.store, color: Colors.blue, size: 30),
-                  ),
-                  const SizedBox(height: 10),
-                  Text("Create Joint Listing", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 18)),
-                  Text("Push your pooled crops to buyers", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]), textAlign: TextAlign.center),
-                ],
-              ),
-              content: SingleChildScrollView(
+            return Dialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _buildDialogField(controller: cropController, label: "Crop Name (e.g., Mangoes)", icon: LucideIcons.sprout),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(color: Colors.blue.shade50, shape: BoxShape.circle),
+                      child: Icon(LucideIcons.store, color: Colors.blue.shade700, size: 32),
+                    ),
                     const SizedBox(height: 15),
-                    _buildDialogField(controller: weightController, label: "Total Pooled Weight (KG)", icon: LucideIcons.scale, isNumber: true),
+                    Text("Create Joint Listing", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 20)),
+                    Text("Push your pooled crops to buyers", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]), textAlign: TextAlign.center),
+                    const SizedBox(height: 25),
+                    
+                    _buildPremiumDialogField(controller: cropController, label: "Crop Name (e.g., Mangoes)", icon: LucideIcons.sprout),
                     const SizedBox(height: 15),
-                    _buildDialogField(controller: priceController, label: "Asking Price per KG (KES)", icon: LucideIcons.banknote, isNumber: true),
+                    _buildPremiumDialogField(controller: weightController, label: "Total Weight (KG)", icon: LucideIcons.scale, isNumber: true),
+                    const SizedBox(height: 15),
+                    _buildPremiumDialogField(controller: priceController, label: "Price per KG (KES)", icon: LucideIcons.banknote, isNumber: true),
+                    
+                    const SizedBox(height: 30),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              side: BorderSide(color: Colors.grey.shade300),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
+                            ),
+                            child: Text("Cancel", style: GoogleFonts.poppins(color: Colors.grey.shade700, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: isSubmitting ? null : () async {
+                              if (cropController.text.isEmpty || weightController.text.isEmpty || priceController.text.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
+                                return;
+                              }
+
+                              setDialogState(() => isSubmitting = true);
+                              
+                              final specialCropName = "${cropController.text.trim()} (${widget.hubName} Pool)";
+                              final data = {
+                                "crop_name": specialCropName,
+                                "weight_kg": double.tryParse(weightController.text) ?? 0,
+                                "price_per_kg": double.tryParse(priceController.text) ?? 0,
+                              };
+
+                              final error = await _apiClient.addHarvest(data);
+                              
+                              if (error == null && context.mounted) {
+                                Navigator.pop(context); 
+                                
+                                dashboardKey.currentState?.loadHarvests();
+                                
+                                await _apiClient.postHubMessage(
+                                  widget.hubName, 
+                                  "🎉 NEW JOINT LISTING\n\nWe just pooled ${weightController.text}kg of ${cropController.text} at KES ${priceController.text}/kg! It is now live on the marketplace."
+                                );
+                                await _fetchMessages(silent: true);
+                                _scrollToBottom();
+                                
+                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Joint Listing Published!"), backgroundColor: Colors.green));
+                              } else if (context.mounted) {
+                                setDialogState(() => isSubmitting = false);
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? "Error"), backgroundColor: Colors.red));
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              backgroundColor: Colors.blue.shade700, 
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              elevation: 0
+                            ),
+                            child: isSubmitting 
+                                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                : Text("Publish", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      ],
+                    )
                   ],
                 ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text("Cancel", style: GoogleFonts.poppins(color: Colors.grey)),
-                ),
-                ElevatedButton(
-                  onPressed: isSubmitting ? null : () async {
-                    if (cropController.text.isEmpty || weightController.text.isEmpty || priceController.text.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
-                      return;
-                    }
-
-                    setDialogState(() => isSubmitting = true);
-                    
-                    final specialCropName = "${cropController.text.trim()} (${widget.hubName} Pool)";
-                    final data = {
-                      "crop_name": specialCropName,
-                      "weight_kg": double.tryParse(weightController.text) ?? 0,
-                      "price_per_kg": double.tryParse(priceController.text) ?? 0,
-                    };
-
-                    final error = await _apiClient.addHarvest(data);
-                    
-                    if (error == null && context.mounted) {
-                      Navigator.pop(context); 
-                      
-                      // NOTE: Ensure marketplaceKey is correctly defined globally if you use this
-                      marketplaceKey.currentState?.loadHarvests();
-                      
-                      await _apiClient.postHubMessage(
-                        widget.hubName, 
-                        "🎉 NEW JOINT LISTING\n\nWe just pooled ${weightController.text}kg of ${cropController.text} at KES ${priceController.text}/kg! It is now live on the marketplace."
-                      );
-                      await _fetchMessages(silent: true);
-                      _scrollToBottom();
-                      
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Joint Listing Published!"), backgroundColor: Colors.green));
-                    } else if (context.mounted) {
-                      setDialogState(() => isSubmitting = false);
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? "Error"), backgroundColor: Colors.red));
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[700], shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                  child: isSubmitting 
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                      : Text("List on Market", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
-                )
-              ],
             );
           }
         );
@@ -206,21 +219,23 @@ class _HubChatScreenState extends State<HubChatScreen> {
     );
   }
 
-  Widget _buildDialogField({required TextEditingController controller, required String label, required IconData icon, bool isNumber = false}) {
+  Widget _buildPremiumDialogField({required TextEditingController controller, required String label, required IconData icon, bool isNumber = false}) {
     return TextField(
       controller: controller,
       keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+      style: GoogleFonts.poppins(fontSize: 14),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: GoogleFonts.poppins(fontSize: 13),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-        prefixIcon: Icon(icon, color: Colors.green),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
+        labelStyle: GoogleFonts.poppins(fontSize: 13, color: Colors.grey.shade500),
+        filled: true,
+        fillColor: Colors.grey.shade50,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+        prefixIcon: Icon(icon, color: Colors.blue.shade600, size: 20),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       ),
     );
   }
 
-  // Formats the timestamp nicely (e.g., "10:45 AM")
   String _formatTime(String? isoTimestamp) {
     if (isoTimestamp == null) return "";
     try {
@@ -234,28 +249,60 @@ class _HubChatScreenState extends State<HubChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[100], // Slightly darker background for chat contrast
-      appBar: AppBar(
-        backgroundColor: Colors.green[800],
-        elevation: 2,
-        centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(LucideIcons.arrowLeft, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Column(
-          children: [
-            Text(widget.hubName, style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
-            Text("Digital Cooperative", style: GoogleFonts.poppins(color: Colors.white70, fontSize: 12)),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(LucideIcons.store, color: Colors.white, size: 22),
-            tooltip: "Create Joint Listing",
-            onPressed: _showJointListingDialog,
+      backgroundColor: Colors.grey.shade50, 
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(70),
+        child: AppBar(
+          backgroundColor: Colors.green.shade800,
+          elevation: 0,
+          leading: Padding(
+            padding: const EdgeInsets.only(top: 10.0),
+            child: IconButton(icon: const Icon(LucideIcons.arrowLeft, color: Colors.white), onPressed: () => Navigator.pop(context)),
           ),
-        ],
+          title: Padding(
+            padding: const EdgeInsets.only(top: 10.0),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8), 
+                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle), 
+                  child: const Icon(LucideIcons.users, color: Colors.white, size: 20)
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(widget.hubName, style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Row(
+                        children: [
+                          Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.lightGreenAccent, shape: BoxShape.circle)),
+                          const SizedBox(width: 5),
+                          Text("Digital Co-op • Live", style: GoogleFonts.poppins(color: Colors.green.shade200, fontSize: 11, fontWeight: FontWeight.w500)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(top: 10.0, right: 8.0),
+              child: IconButton(
+                icon: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
+                  child: Icon(LucideIcons.store, color: Colors.green.shade800, size: 20)
+                ),
+                tooltip: "Create Joint Listing",
+                onPressed: _showJointListingDialog,
+              ),
+            ),
+          ],
+          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.only(bottomLeft: Radius.circular(20), bottomRight: Radius.circular(20))),
+        ),
       ),
       body: Column(
         children: [
@@ -263,17 +310,26 @@ class _HubChatScreenState extends State<HubChatScreen> {
             child: _isLoading 
                 ? const Center(child: CircularProgressIndicator(color: Colors.green))
                 : _messages.isEmpty
-                    ? Center(child: Text("Start the conversation!\nCoordinate your harvests here.", textAlign: TextAlign.center, style: GoogleFonts.poppins(color: Colors.grey)))
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(LucideIcons.messagesSquare, size: 50, color: Colors.grey.shade300),
+                            const SizedBox(height: 15),
+                            Text("Start the conversation!", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.grey.shade600, fontSize: 16)),
+                            Text("Coordinate your harvests here.", style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 12)),
+                          ],
+                        )
+                      )
                     : ListView.builder(
                         controller: _scrollController,
-                        padding: const EdgeInsets.all(15),
+                        padding: const EdgeInsets.only(left: 16, right: 16, top: 20, bottom: 10),
                         itemCount: _messages.length,
                         itemBuilder: (context, index) {
                           final msg = _messages[index];
                           final senderName = msg['sender_name'] ?? 'Unknown';
                           final isMe = senderName == _myFullName;
                           
-                          // Check if previous message is from same sender to group bubbles
                           bool showAvatar = true;
                           if (index > 0) {
                             final prevSender = _messages[index - 1]['sender_name'];
@@ -295,25 +351,23 @@ class _HubChatScreenState extends State<HubChatScreen> {
     bool isSystemMessage = message.startsWith("🎉 NEW JOINT LISTING");
     final timeString = _formatTime(timestamp);
 
-    if (isSystemMessage) {
-      return _buildSystemMessage(message, timeString);
-    }
+    if (isSystemMessage) return _buildSystemMessage(message, timeString);
 
     return Padding(
-      padding: EdgeInsets.only(bottom: showAvatar ? 15 : 4),
+      padding: EdgeInsets.only(bottom: showAvatar ? 20 : 6),
       child: Row(
         mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isMe) 
             SizedBox(
-              width: 30, 
+              width: 32, 
               child: showAvatar 
-                ? CircleAvatar(radius: 14, backgroundColor: Colors.green[200], child: Text(senderName[0].toUpperCase(), style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold)))
+                ? CircleAvatar(radius: 16, backgroundColor: Colors.green.shade100, child: Text(senderName[0].toUpperCase(), style: TextStyle(fontSize: 14, color: Colors.green.shade800, fontWeight: FontWeight.bold)))
                 : null
             ),
           
-          if (!isMe) const SizedBox(width: 8),
+          if (!isMe) const SizedBox(width: 10),
 
           Column(
             crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
@@ -321,36 +375,33 @@ class _HubChatScreenState extends State<HubChatScreen> {
               if (!isMe && showAvatar)
                 Padding(
                   padding: const EdgeInsets.only(left: 4, bottom: 4),
-                  child: Text(senderName, style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey[700])),
+                  child: Text(senderName, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
                 ),
               
               Container(
-                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.70),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                 decoration: BoxDecoration(
-                  color: isMe ? Colors.green[100] : Colors.white,
+                  color: isMe ? Colors.green.shade800 : Colors.white,
                   borderRadius: BorderRadius.only(
                     topLeft: const Radius.circular(20),
                     topRight: const Radius.circular(20),
                     bottomLeft: isMe ? const Radius.circular(20) : (showAvatar ? Radius.zero : const Radius.circular(20)),
                     bottomRight: isMe ? (showAvatar ? Radius.zero : const Radius.circular(20)) : const Radius.circular(20),
                   ),
-                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 5, offset: const Offset(0, 2))],
-                  border: Border.all(color: isMe ? Colors.green[200]! : Colors.grey[200]!),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
+                  border: isMe ? null : Border.all(color: Colors.grey.shade200),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(message, style: GoogleFonts.poppins(fontSize: 14, color: Colors.black87)),
-                  ],
+                child: Text(
+                  message, 
+                  style: GoogleFonts.poppins(fontSize: 14, color: isMe ? Colors.white : Colors.black87, height: 1.4)
                 ),
               ),
               
-              // Timestamp below the bubble
               if (timeString.isNotEmpty && showAvatar)
                 Padding(
-                  padding: const EdgeInsets.only(top: 4, left: 4, right: 4),
-                  child: Text(timeString, style: GoogleFonts.poppins(fontSize: 9, color: Colors.grey[500])),
+                  padding: const EdgeInsets.only(top: 6, left: 4, right: 4),
+                  child: Text(timeString, style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade400, fontWeight: FontWeight.w500)),
                 ),
             ],
           ),
@@ -359,30 +410,29 @@ class _HubChatScreenState extends State<HubChatScreen> {
     );
   }
 
-  // Special UI for Announcements
   Widget _buildSystemMessage(String message, String timeString) {
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 20, horizontal: 10),
-      padding: const EdgeInsets.all(15),
+      margin: const EdgeInsets.symmetric(vertical: 25, horizontal: 10),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.blue[50],
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.blue[200]!),
+        gradient: LinearGradient(colors: [Colors.blue.shade600, Colors.blue.shade800], begin: Alignment.topLeft, end: Alignment.bottomRight),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 8))],
       ),
       child: Column(
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(LucideIcons.megaphone, size: 16, color: Colors.blue),
-              const SizedBox(width: 8),
-              Text("HUB ANNOUNCEMENT", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blue[800])),
+              Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle), child: const Icon(LucideIcons.megaphone, size: 16, color: Colors.white)),
+              const SizedBox(width: 10),
+              Text("HUB ANNOUNCEMENT", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1.2)),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(message, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87)),
-          const SizedBox(height: 6),
-          Text(timeString, style: GoogleFonts.poppins(fontSize: 9, color: Colors.blue[300])),
+          const SizedBox(height: 12),
+          Text(message, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 14, color: Colors.white, height: 1.5)),
+          const SizedBox(height: 12),
+          Text(timeString, style: GoogleFonts.poppins(fontSize: 10, color: Colors.blue.shade100)),
         ],
       ),
     );
@@ -390,41 +440,56 @@ class _HubChatScreenState extends State<HubChatScreen> {
 
   Widget _buildMessageInput() {
     return Container(
-      padding: const EdgeInsets.only(left: 16, right: 16, top: 12, bottom: 24), // Extra bottom padding for safe area
+      padding: const EdgeInsets.only(left: 20, right: 20, bottom: 30, top: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, -5))]
+        gradient: LinearGradient(
+          begin: Alignment.topCenter, end: Alignment.bottomCenter,
+          colors: [Colors.grey.shade50.withOpacity(0.0), Colors.grey.shade50, Colors.grey.shade50]
+        )
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _messageController,
-              textCapitalization: TextCapitalization.sentences,
-              maxLines: null, // Allow expanding for multi-line messages
-              keyboardType: TextInputType.multiline,
-              decoration: InputDecoration(
-                hintText: "Message the Co-op...",
-                hintStyle: GoogleFonts.poppins(color: Colors.grey[400]),
-                filled: true,
-                fillColor: Colors.grey[100],
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(25), borderSide: BorderSide.none),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white, 
+          borderRadius: BorderRadius.circular(30),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, 10))],
+          border: Border.all(color: Colors.grey.shade200)
+        ),
+        child: Row(
+          children: [
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextField(
+                controller: _messageController,
+                textCapitalization: TextCapitalization.sentences,
+                maxLines: null, 
+                keyboardType: TextInputType.multiline,
+                style: GoogleFonts.poppins(fontSize: 14),
+                decoration: InputDecoration(
+                  hintText: "Message the Co-op...",
+                  hintStyle: GoogleFonts.poppins(color: Colors.grey.shade400, fontSize: 14),
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 10),
-          GestureDetector(
-            onTap: _isSending ? null : _sendMessage,
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(color: Colors.green[800], shape: BoxShape.circle),
-              child: _isSending 
-                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : const Icon(LucideIcons.send, color: Colors.white, size: 20),
-            ),
-          )
-        ],
+            const SizedBox(width: 10),
+            GestureDetector(
+              onTap: _isSending ? null : _sendMessage,
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [Colors.green.shade500, Colors.green.shade700]),
+                  shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(color: Colors.green.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))]
+                ),
+                child: _isSending 
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : const Icon(LucideIcons.send, color: Colors.white, size: 18),
+              ),
+            )
+          ],
+        ),
       ),
     );
   }

@@ -1,19 +1,21 @@
+import 'dart:async';
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'dart:async';
+
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/auth/auth_service.dart';
+import 'package:mkulimahub_mobile/features/auth/create_new_password_screen.dart';
 import 'package:mkulimahub_mobile/features/home/home_screen.dart';
 import 'package:mkulimahub_mobile/features/home/profile_screen.dart';
-import 'package:mkulimahub_mobile/features/auth/create_new_password_screen.dart';
+import 'package:mkulimahub_mobile/features/buyer/buyer_dashboard.dart';
+import 'package:mkulimahub_mobile/features/buyer/customer_profile_screen.dart';
 
 class OtpVerificationScreen extends StatefulWidget {
   final String verificationId;
   final String phoneNumber;
   
-  // Scenarios
   final Map<String, dynamic>? pendingRegistrationData; 
   final Map<String, dynamic>? pendingLoginData; 
   final bool is2FALogin; 
@@ -41,22 +43,31 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   final _apiClient = ApiClient();
   
   bool _isLoading = false;
-
   Timer? _timer;
-  int _start = 60; // 60 seconds countdown
+  int _start = 60; 
   bool _canResend = false;
 
   @override
   void initState() {
     super.initState();
-    _startTimer(); // Start the countdown as soon as the screen loads
+    _startTimer();
   }
 
   @override
   void dispose() {
-    _timer?.cancel(); // Always cancel timers when leaving the screen to prevent memory leaks!
+    _timer?.cancel(); 
     _otpController.dispose();
     super.dispose();
+  }
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w500)), 
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   void _startTimer() {
@@ -89,10 +100,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       onCodeSent: (newVerificationId) {
         setState(() => _isLoading = false);
         _showSnackBar("New code sent!", Colors.green.shade700);
-        _startTimer(); // Restart the clock!
-        
-        // Note: You might need to update the verificationId in state if Firebase generates a new one, 
-        // but usually, Firebase handles the active session intelligently.
+        _startTimer(); 
       },
       onError: (errorMsg) {
         setState(() => _isLoading = false);
@@ -104,25 +112,20 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   void _verifyCode() async {
     final code = _otpController.text.trim();
     if (code.length != 6) {
-      _showSnackBar("Please enter the 6-digit code.", Colors.redAccent);
+      _showSnackBar("Please enter the full 6-digit code.", Colors.redAccent);
       return;
     }
 
     setState(() => _isLoading = true);
 
-    // 1. Check the code with Firebase
     final userCredential = await _authService.verifyOTP(
       verificationId: widget.verificationId, 
       smsCode: code,
     );
 
     if (userCredential != null && userCredential.user != null) {
-      // 🔥 FIREBASE SUCCESS! Route based on the scenario:
       
       if (widget.pendingRegistrationData != null) {
-        // ==========================================
-        // SCENARIO A: NEW USER REGISTRATION
-        // ==========================================
         final apiError = await _apiClient.register(widget.pendingRegistrationData!);
         
         if (apiError == null) {
@@ -130,9 +133,19 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
              widget.pendingRegistrationData!['phone_number'], 
              widget.pendingRegistrationData!['password']
            );
+           
            setState(() => _isLoading = false);
+           
            if (mounted) {
-             Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const ProfileScreen(isNewUser: true)), (route) => false);
+             String role = widget.pendingRegistrationData!['role'] ?? 'farmer';
+             
+             await _apiClient.saveUserRole(role); 
+             
+             if (role == 'buyer') {
+               Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const CustomerProfileScreen()), (route) => false);
+             } else {
+               Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const ProfileScreen(isNewUser: true)), (route) => false);
+             }
            }
         } else {
            setState(() => _isLoading = false);
@@ -140,55 +153,73 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         }
         
       } else if (widget.is2FALogin && widget.pendingLoginData != null) {
-        // ==========================================
-        // SCENARIO B: 2FA EXISTING USER LOGIN
-        // ==========================================
-        // OTP is correct, so perform the final actual login to get the token!
-        final apiError = await _apiClient.login(
-          widget.pendingLoginData!['phone'], 
-          widget.pendingLoginData!['password']
-        );
+            
+            // 1. Exchange the phone/password for the JWT Token
+            final error = await _apiClient.login(
+              widget.pendingLoginData!['phone']!,
+              widget.pendingLoginData!['password']!
+            );
 
-        setState(() => _isLoading = false);
+            if (error == null) {
+              // 2. Token is saved! Now fetch their profile to see WHO they are.
+              final profileData = await _apiClient.getProfile();
+              
+              print("🚨 DEBUG PROFILE DATA: $profileData");
+              // 3. Extract the role (default to farmer if something goes wrong)
+              String role = profileData?['role'] ?? 'farmer';
+              
+              print("🚨 DEBUG EXTRACTED ROLE: $role");
+              // 4. Save it locally so the app boots up perfectly next time
+              await _apiClient.saveUserRole(role);
 
-        if (apiError == null) {
-          if (mounted) {
-            Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const HomeScreen()), (route) => false);
+              if (mounted) {
+                // 5. THE TRAFFIC COP ROUTING
+                if (role == 'buyer') {
+                  Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const BuyerDashboard()), (route) => false);
+                } else {
+                  Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const HomeScreen()), (route) => false);
+                }
+              }
+            } else {
+              setState(() => _isLoading = false);
+              if (mounted) _showError(error); // Login failed
+            }
           }
-        } else {
-          if (mounted) _showSnackBar(apiError, Colors.redAccent);
-        }
-
-      } else if (widget.isPasswordReset) {
-        // ==========================================
-        // SCENARIO C: PASSWORD RESET
-        // ==========================================
+ else if (widget.isPasswordReset) {
         setState(() => _isLoading = false);
         if (mounted) {
-          // 🔥 Successfully verified OTP, route to Create New Password
           Navigator.pushReplacement(
             context, 
             MaterialPageRoute(
               builder: (_) => CreateNewPasswordScreen(
                 phoneNumber: widget.phoneNumber,
-                uid: userCredential.user!.uid, // Send the verified Firebase UID!
+                uid: userCredential.user!.uid,
               )
             )
           );
         }
       }
       else if (widget.pendingGoogleData != null) {
-        // ==========================================
-        // SCENARIO D: GOOGLE PHONE LINK REGISTRATION
-        // ==========================================
         final apiStatus = await _apiClient.googleRegister(widget.pendingGoogleData!);
-        setState(() => _isLoading = false);
 
         if (apiStatus == 'needs_profile') {
+          setState(() => _isLoading = false);
           if (mounted) Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const ProfileScreen(isNewUser: true)), (route) => false);
         } else if (apiStatus == 'success') {
-          if (mounted) Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const HomeScreen()), (route) => false);
+          final profileData = await _apiClient.getProfile();
+          setState(() => _isLoading = false);
+
+          if (mounted) {
+            String role = profileData?['role'] ?? 'farmer';
+            
+            if (role == 'buyer') {
+              Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const BuyerDashboard()), (route) => false);
+            } else {
+              Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const HomeScreen()), (route) => false);
+            }
+          }
         } else {
+          setState(() => _isLoading = false);
           if (mounted) _showSnackBar(apiStatus ?? "Failed to link phone.", Colors.redAccent);
         }
       }
@@ -202,159 +233,177 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   void _showSnackBar(String message, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: GoogleFonts.poppins()), 
+        content: Text(message, style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w500)), 
         backgroundColor: color,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(20),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: Stack(
-        children: [
-          Container(
-            height: MediaQuery.of(context).size.height * 0.45,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.green.shade900, Colors.green.shade500],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-          ),
-          
-          SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: IconButton(
-                        icon: const Icon(LucideIcons.arrowLeft, color: Colors.white),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-
-                    FadeInDown(
-                      duration: const Duration(milliseconds: 600),
-                      child: Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
-                        child: const Icon(LucideIcons.messageSquare, size: 50, color: Colors.white),
-                      ),
-                    ),
-                    const SizedBox(height: 25),
-
-                    FadeInUp(
-                      delay: const Duration(milliseconds: 300),
-                      child: Container(
-                        padding: const EdgeInsets.all(28),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(24),
-                          boxShadow: [
-                            BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, 10)),
-                          ],
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Text(
-                              "Verification",
-                              style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.black87),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              "We've sent a 6-digit code to",
-                              style: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 13),
-                              textAlign: TextAlign.center,
-                            ),
-                            Text(
-                              widget.phoneNumber,
-                              style: GoogleFonts.poppins(color: Colors.green.shade800, fontSize: 14, fontWeight: FontWeight.bold),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 30),
-
-                            Container(
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade50,
-                                borderRadius: BorderRadius.circular(15),
-                                border: Border.all(color: Colors.green.shade200, width: 1.5),
-                              ),
-                              child: TextField(
-                                controller: _otpController,
-                                keyboardType: TextInputType.number,
-                                textAlign: TextAlign.center,
-                                maxLength: 6,
-                                style: GoogleFonts.poppins(fontSize: 28, letterSpacing: 12, fontWeight: FontWeight.bold, color: Colors.black87),
-                                decoration: const InputDecoration(
-                                  counterText: "", 
-                                  border: InputBorder.none,
-                                  contentPadding: EdgeInsets.symmetric(vertical: 16),
-                                ),
-                                onChanged: (value) {
-                                  if (value.length == 6) {
-                                    FocusScope.of(context).unfocus(); 
-                                    _verifyCode();
-                                  }
-                                },
-                              ),
-                            ),
-                            const SizedBox(height: 30),
-
-                            SizedBox(
-                              height: 55,
-                              child: ElevatedButton(
-                                onPressed: _isLoading ? null : _verifyCode,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.green.shade700,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                  elevation: 0,
-                                ),
-                                child: _isLoading 
-                                  ? const CircularProgressIndicator(color: Colors.white)
-                                  : Text("Verify Code", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                              ),
-                            ),
-                            const SizedBox(height: 24),
-
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text("Didn't receive the code? ", style: GoogleFonts.poppins(color: Colors.black54, fontSize: 13)),
-                                GestureDetector(
-                                  onTap: _canResend ? _resendOTP : null,
-                                  child: Text(
-                                    _canResend ? "Resend" : "Resend in 00:${_start.toString().padLeft(2, '0')}", 
-                                    style: GoogleFonts.poppins(
-                                      color: _canResend ? Colors.green.shade800 : Colors.grey, 
-                                      fontWeight: FontWeight.bold, 
-                                      fontSize: 13
-                                    )
-                                  ),
-                                )
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(), 
+      child: Scaffold(
+        backgroundColor: Colors.grey.shade50,
+        body: Stack(
+          children: [
+            Container(
+              height: MediaQuery.of(context).size.height * 0.45,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.green.shade900, Colors.green.shade600],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
                 ),
               ),
             ),
-          ),
-        ],
+            SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: IconButton(
+                          icon: const Icon(LucideIcons.arrowLeft, color: Colors.white),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Pulse(
+                        infinite: true,
+                        duration: const Duration(seconds: 2),
+                        child: Container(
+                          padding: const EdgeInsets.all(24),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.15), 
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white.withOpacity(0.3), width: 2)
+                          ),
+                          child: const Icon(LucideIcons.shieldCheck, size: 50, color: Colors.white),
+                        ),
+                      ),
+                      const SizedBox(height: 30),
+                      FadeInUp(
+                        delay: const Duration(milliseconds: 200),
+                        child: Container(
+                          padding: const EdgeInsets.all(32),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(30),
+                            boxShadow: [
+                              BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 25, offset: const Offset(0, 10)),
+                            ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                "Secure Verification",
+                                style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                "We've sent a 6-digit security code to",
+                                style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 14),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                widget.phoneNumber,
+                                style: GoogleFonts.poppins(color: Colors.green.shade700, fontSize: 15, fontWeight: FontWeight.bold),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 35),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade50,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: Colors.green.shade200, width: 2),
+                                  boxShadow: [
+                                    BoxShadow(color: Colors.green.shade100.withOpacity(0.5), blurRadius: 10, offset: const Offset(0, 4))
+                                  ]
+                                ),
+                                child: TextField(
+                                  controller: _otpController,
+                                  keyboardType: TextInputType.number,
+                                  textAlign: TextAlign.center,
+                                  maxLength: 6,
+                                  style: GoogleFonts.poppins(fontSize: 32, letterSpacing: 16, fontWeight: FontWeight.w900, color: Colors.black87),
+                                  decoration: const InputDecoration(
+                                    counterText: "", 
+                                    border: InputBorder.none,
+                                    contentPadding: EdgeInsets.symmetric(vertical: 20),
+                                  ),
+                                  onChanged: (value) {
+                                    if (value.length == 6) {
+                                      FocusScope.of(context).unfocus(); 
+                                      _verifyCode();
+                                    }
+                                  },
+                                ),
+                              ),
+                              const SizedBox(height: 35),
+                              SizedBox(
+                                height: 60,
+                                child: ElevatedButton(
+                                  onPressed: _isLoading ? null : _verifyCode,
+                                  style: ElevatedButton.styleFrom(
+                                    padding: EdgeInsets.zero,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                    elevation: 0,
+                                  ),
+                                  child: Ink(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(colors: [Colors.green.shade600, Colors.green.shade800]),
+                                      borderRadius: BorderRadius.circular(16),
+                                      boxShadow: [BoxShadow(color: Colors.green.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))]
+                                    ),
+                                    child: Container(
+                                      alignment: Alignment.center,
+                                      child: _isLoading 
+                                        ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                                        : Text("Authenticate", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1.1)),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 25),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text("Didn't receive the code? ", style: GoogleFonts.poppins(color: Colors.black54, fontSize: 13)),
+                                  GestureDetector(
+                                    onTap: _canResend ? _resendOTP : null,
+                                    child: AnimatedDefaultTextStyle(
+                                      duration: const Duration(milliseconds: 300),
+                                      style: GoogleFonts.poppins(
+                                        color: _canResend ? Colors.green.shade700 : Colors.grey.shade400, 
+                                        fontWeight: FontWeight.bold, 
+                                        fontSize: 13
+                                      ),
+                                      child: Text(_canResend ? "Resend" : "Wait 00:${_start.toString().padLeft(2, '0')}"),
+                                    ),
+                                  )
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
