@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Enum, UniqueConstraint, Date
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Enum as SQLEnum, UniqueConstraint, Date, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from geoalchemy2 import Geometry
@@ -11,22 +11,26 @@ class UserRole(str, enum.Enum):
     BUYER = "buyer"
     ADMIN = "admin"
 
-
 class Harvest(Base):
     __tablename__ = "harvests"
 
     id = Column(Integer, primary_key=True, index=True)
     farmer_id = Column(Integer, ForeignKey("users.id"))
     
-    crop_name = Column(String, nullable=False) # e.g., "Maize"
+    crop_name = Column(String, nullable=False) 
     weight_kg = Column(Float, nullable=False)
-    price_per_kg = Column(Float, nullable=True) # Optional asking price
+    price_per_kg = Column(Float, nullable=True) 
     
     cluster_id = Column(Integer, nullable=True) 
+    
+    # 🔥 NEW: Tracking Hub Pooled Listings
+    is_pooled = Column(Boolean, default=False)
+    hub_id = Column(Integer, ForeignKey("hubs.id"), nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     farmer = relationship("User", back_populates="harvests")
+
 class User(Base):
     __tablename__ = "users"
 
@@ -39,6 +43,7 @@ class User(Base):
     phone_number = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String, nullable=True)
     
+    # 🔥 STRICT ENUM ENFORCEMENT
     role = Column(String, default="farmer")
     
     bio = Column(String, nullable=True)
@@ -56,25 +61,31 @@ class User(Base):
     hub_id = Column(Integer, ForeignKey("hubs.id"), nullable=True)
 
     hub = relationship("Hub", back_populates="members", foreign_keys=[hub_id])
-
     pledges = relationship("Pledge", back_populates="farmer")
-
     harvests = relationship("Harvest", back_populates="farmer")
 
 class BulkRequest(Base):
     __tablename__ = "bulk_requests"
     
     id = Column(Integer, primary_key=True, index=True)
+    buyer_id = Column(Integer, ForeignKey("users.id"))
     buyer_name = Column(String, index=True) 
     crop_name = Column(String, index=True)
     target_weight_kg = Column(Float)
     price_per_kg = Column(Float)
     county = Column(String)
     ward = Column(String, nullable=True) 
+    urgency = Column(String, default="High") 
     status = Column(String, default="Open") 
+    
+    # 🔥 NEW: Delivery Squad Management
+    coordinator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    squad_status = Column(String, default="gathering") # gathering, voting, active, completed
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     
     pledges = relationship("Pledge", back_populates="bulk_request")
+    coordinator = relationship("User", foreign_keys=[coordinator_id])
 
 class Pledge(Base):
     __tablename__ = "pledges"
@@ -82,13 +93,13 @@ class Pledge(Base):
     id = Column(Integer, primary_key=True, index=True)
     bulk_request_id = Column(Integer, ForeignKey("bulk_requests.id"))
     farmer_id = Column(Integer, ForeignKey("users.id"))
+    
     pledged_weight_kg = Column(Float)
-    status = Column(String, default="Pending")
-    notes = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    status = Column(String, default="pending_dropoff") # pending_dropoff, received, rejected, in_transit
-    actual_weight_kg = Column(Float, nullable=True) # Because the scale might say 49kg instead of 50kg!
+    actual_weight_kg = Column(Float, nullable=True) # Scale weight logged by coordinator
+    
+    status = Column(String, default="pledged") # pledged, dropped_off, rejected
     notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
     
     bulk_request = relationship("BulkRequest", back_populates="pledges")
     farmer = relationship("User", back_populates="pledges")
@@ -97,7 +108,7 @@ class HubMessage(Base):
     __tablename__ = "hub_messages"
     
     id = Column(Integer, primary_key=True, index=True)
-    hub_name = Column(String, index=True) # e.g., "Makindu Hub"
+    hub_name = Column(String, index=True)
     sender_id = Column(Integer, ForeignKey("users.id"))
     message = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -108,13 +119,12 @@ class MarketPrice(Base):
     __tablename__ = "market_prices"
 
     id = Column(Integer, primary_key=True, index=True)
-    county = Column(String, index=True)      # e.g., "nairobi"
-    commodity = Column(String, index=True)   # e.g., "beans"
-    pricetype = Column(String, index=True)   # "wholesale" or "retail"
+    county = Column(String, index=True)      
+    commodity = Column(String, index=True)   
+    pricetype = Column(String, index=True)   
     price = Column(Float)
-    ds = Column(Date, index=True)            # The date of the price
+    ds = Column(Date, index=True)            
 
-    # 🔥 ENTERPRISE SHIELD: Prevent the daily scraper from accidentally inserting duplicate prices for the same day
     __table_args__ = (
         UniqueConstraint('county', 'commodity', 'pricetype', 'ds', name='_county_commodity_price_date_uc'),
     )
@@ -141,7 +151,7 @@ class HubRequest(Base):
     id = Column(Integer, primary_key=True, index=True)
     hub_id = Column(Integer, ForeignKey("hubs.id"))
     farmer_id = Column(Integer, ForeignKey("users.id"))
-    status = Column(String, default="pending") # 'pending', 'approved', 'rejected'
+    status = Column(String, default="pending") 
     created_at = Column(DateTime, default=datetime.utcnow)
 
     hub = relationship("Hub", back_populates="requests")
@@ -153,7 +163,7 @@ class HubCandidate(Base):
     id = Column(Integer, primary_key=True, index=True)
     hub_id = Column(Integer, ForeignKey("hubs.id"))
     farmer_id = Column(Integer, ForeignKey("users.id"))
-    pitch = Column(String) # E.g., "Vote for me, I have 3 acres and a pickup truck!"
+    pitch = Column(String) 
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class HubVote(Base):

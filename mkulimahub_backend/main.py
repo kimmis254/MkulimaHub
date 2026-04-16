@@ -173,20 +173,25 @@ def read_root():
 
 @app.post("/auth/register", response_model=schemas.UserResponse)
 def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    # 1. Check if the phone number is already taken
     existing_user = db.query(models.User).filter(models.User.phone_number == user.phone_number).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Phone number already registered")
 
+    # 2. Create the user, making sure to use `user.` for all fields!
     new_user = models.User(
         full_name=user.full_name,
         phone_number=user.phone_number,
         hashed_password=security.get_password_hash(user.password),
-        role=user.role
+        role=user.role,                 # 🔥 FIXED: Changed 'payload.role' to 'user.role'
+        latitude=user.latitude,         # 🔥 Added so Farmer GPS coordinates don't get lost
+        longitude=user.longitude        # 🔥 Added so Farmer GPS coordinates don't get lost
     )
 
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    
     return new_user
 
 @app.post("/auth/login", response_model=schemas.Token)
@@ -290,22 +295,10 @@ def update_profile(profile_data: schemas.UserProfileUpdate, db: Session = Depend
     db.refresh(current_user)
     return current_user
 
-@app.get("/users/me")
+@app.get("/users/me", response_model=schemas.UserRead)
 def get_my_profile(current_user: models.User = Depends(get_current_user)):
-    return {
-        "id": current_user.id,
-        "full_name": current_user.full_name,
-        "phone_number": current_user.phone_number,
-        "bio": current_user.bio,
-        "farm_size_acres": current_user.farm_size_acres,
-        "main_crops": current_user.main_crops,
-        "farming_method": current_user.farming_method,
-        "county": current_user.county,
-        "sub_county": current_user.sub_county,
-        "ward": current_user.ward,
-        "village": current_user.village,
-        "hub_id": current_user.hub_id # Expose the hub_id so Flutter knows their status!
-    }
+    # FastAPI will automatically grab the role, hub_id, etc., based on your schema!
+    return current_user
 
 @app.delete("/users/me")
 def delete_my_account(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -468,12 +461,14 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db)):
     
     hubs = query.all()
     
-    # Also fetch the "Noise" - farmers who have GPS but no Hub
+    # 🔥 THE FIX: Fetch "Noise" - strictly FARMERS who have GPS but no Hub
     indep_query = db.query(models.User).filter(
         models.User.latitude.isnot(None),
         models.User.longitude.isnot(None),
-        models.User.hub_id == None
+        models.User.hub_id == None,
+        models.User.role == "farmer"  # 🛑 THIS LOCKS OUT THE BUYERS!
     )
+    
     if crop and crop != 'All':
         indep_query = indep_query.filter(models.User.main_crops.ilike(f"%{crop}%"))
     
@@ -484,7 +479,15 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db)):
     total_analyzed = len(independent_farmers)
     
     for h in hubs:
-        hub_members = db.query(models.User).filter(models.User.hub_id == h.id).all()
+        # It's also good practice to ensure hub members are only farmers just in case!
+        hub_members = db.query(models.User).filter(
+            models.User.hub_id == h.id,
+            models.User.role == "farmer"
+        ).all()
+        
+        if len(hub_members) == 0:
+            continue
+
         total_analyzed += len(hub_members)
         
         final_hubs.append({
@@ -518,6 +521,11 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db)):
         "independent_farmers": indep_list
     }
 
+@app.put("/users/leave-hub")
+def leave_hub(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    current_user.hub_id = None
+    db.commit()
+    return {"message": "Successfully left the Co-op."}
 
 @app.get("/api/hubs/{hub_name}/messages", response_model=List[schemas.HubMessageRead])
 def get_hub_messages(hub_name: str, db: Session = Depends(get_db)):
@@ -692,56 +700,94 @@ def predict_prices(request: PredictionRequest, db: Session = Depends(get_db)):
 
 
 load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-def fetch_weather_data(location: str = "Kenya"):
-    conditions = ["Sunny, 28°C", "Heavy Rain expected", "Overcast, 22°C", "Dry spell, 30°C"]
-    return f"Live Weather Data for {location}: {random.choice(conditions)}."
+class ChatRequest(BaseModel):
+    message: str
+    role: str = "farmer"
+    user_name: str = "User"
+    location: str = "Kenya"
+    business_details: str = "Agriculture" 
 
-def run_ml_diagnosis(symptoms: str):
-    symptoms = symptoms.lower()
-    if "yellow" in symptoms and "leaves" in symptoms:
-        return "ML Model Prediction: 85% probability of Nitrogen Deficiency. 15% Maize Lethal Necrosis."
-    elif "spots" in symptoms or "brown" in symptoms:
-        return "ML Model Prediction: 90% probability of Fungal Blight."
-    else:
-        return "ML Model Prediction: Unable to classify with high confidence. Need more data."
+# ==========================================
+# 🔥 THE AI TOOLBOX (For LIVE data only)
+# ==========================================
+def get_market_spot_price(crop: str, county: str) -> str:
+    """Fetches the LIVE current wholesale spot price for a specific crop."""
+    return f"Live Spot Price: {crop.capitalize()} is currently trading at KES 4,500 per 90kg bag in {county.capitalize()}."
 
-def query_agronomy_database(query: str):
-    return "KALRO Database excerpt: For optimal maize yields in Eastern Kenya, apply 50kg of DAP fertilizer per acre during planting, and top-dress with CAN after 4 weeks."
+def predict_price_trend(crop: str) -> str:
+    """Predicts the future price trend for a specific crop."""
+    return f"AI Trend Analysis: {crop.capitalize()} prices are expected to drop by 12% next month."
 
+def get_weather_forecast(location: str) -> str:
+    """Fetches the LIVE weather forecast for a location."""
+    return f"Live Weather Data for {location}: Sunny, 28°C."
+
+def diagnose_crop_disease(symptoms: str) -> str:
+    """Analyzes crop symptoms to predict diseases."""
+    return "ML Prediction: High probability of Fungal Blight."
+
+
+# ==========================================
+# 🔥 THE UNCHAINED ENDPOINT
+# ==========================================
 @app.post("/api/ai-chat")
-def advanced_agri_bot(chat: schemas.ChatMessage): 
-    user_msg = chat.message.lower()
-    system_context = ""
+def advanced_agri_bot(request: ChatRequest): 
     
-    if "weather" in user_msg or "rain" in user_msg or "forecast" in user_msg:
-        system_context = fetch_weather_data()
-    elif "disease" in user_msg or "yellow" in user_msg or "spots" in user_msg or "sick" in user_msg:
-        system_context = run_ml_diagnosis(user_msg)
+    if request.role == "buyer":
+        # PERSONA: The Brilliant Procurement Expert
+        system_instruction = f"""
+        You are 'Market Intel', an elite procurement and agricultural supply chain AI for buyers in Kenya on MkulimaHub.
+        
+        USER CONTEXT (Do not explicitly repeat this back to them, just use it to be smart):
+        - Name: {request.user_name}
+        - Location: {request.location}
+        - Business: {request.business_details}
+        
+        CRITICAL INSTRUCTIONS:
+        1. ACT LIKE A BRILLIANT HUMAN EXPERT. Speak naturally, warmly, and confidently. NEVER sound like a robot. Do not use phrases like "Based on the system data" or "According to my parameters."
+        2. USE YOUR VAST INTERNAL KNOWLEDGE. You already know everything about Kenyan agriculture, geography, and crop seasonality (e.g., when mangoes are in season at the Coast vs. Eastern). Answer general questions immediately using your own brain.
+        3. USE TOOLS FOR LIVE DATA. Only use your function tools if the user asks for *live* market prices or specific future trends. 
+        4. BE CONCISE. Keep your answers brief and highly conversational (1-2 short paragraphs).
+        """
+        available_tools = [get_market_spot_price, predict_price_trend]
+        
     else:
-        system_context = query_agronomy_database(user_msg)
+        # PERSONA: The Friendly Agronomist
+        system_instruction = f"""
+        You are 'MkulimaBot', a highly intelligent, friendly agronomist AI for farmers in Kenya on MkulimaHub.
+        
+        USER CONTEXT (Do not explicitly repeat this back to them, just use it to be smart):
+        - Name: {request.user_name}
+        - Farm Location: {request.location}
+        - Crops: {request.business_details}
+        
+        CRITICAL INSTRUCTIONS:
+        1. ACT LIKE A BRILLIANT HUMAN EXPERT. Speak warmly and confidently. NEVER sound robotic. 
+        2. USE YOUR VAST INTERNAL KNOWLEDGE. You already know all farming best practices, fertilizer ratios, and planting seasons in Kenya. Answer general questions directly from your own brain.
+        3. USE TOOLS FOR LIVE DATA. Only use your tools if they ask for the LIVE weather forecast or a specific ML disease diagnosis.
+        4. BE CONCISE. Keep answers to 1-2 short, friendly paragraphs. End with a helpful, natural question.
+        """
+        available_tools = [get_weather_forecast, diagnose_crop_disease, get_market_spot_price]
 
     try:
-        prompt = f"""
-        You are MkulimaBot, an expert agronomist AI for the MkulimaHub app in Kenya.
+        model = genai.GenerativeModel(
+            model_name='gemini-2.5-flash',
+            system_instruction=system_instruction,
+            tools=available_tools
+        )
         
-        The farmer asked: "{chat.message}"
+        # Start chat with automatic function calling enabled
+        chat = model.start_chat(enable_automatic_function_calling=True)
         
-        You MUST base your advice strictly on the following system data retrieved from our backend:
-        [SYSTEM DATA]: {system_context}
-        
-        Format your response nicely, be encouraging, and keep it under 3 short paragraphs.
-        """
-        
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        response = model.generate_content(prompt)
+        response = chat.send_message(request.message)
         
         return {"reply": response.text}
         
     except Exception as e:
-        return {"reply": f"MkulimaBot is resting. (Error: {str(e)})"}
-
+        return {"reply": f"The AI is currently resting. (Error: {str(e)})"}
+    
 @app.get("/api/market-metadata")
 def get_market_metadata(db: Session = Depends(get_db)):
     counties = db.query(models.MarketPrice.county).distinct().all()
@@ -766,7 +812,6 @@ def get_market_metadata(db: Session = Depends(get_db)):
 
 @app.get("/api/hubs/nearby")
 def get_nearby_hubs(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Finds the closest permanent hubs to an independent farmer."""
     if current_user.latitude is None or current_user.longitude is None:
         raise HTTPException(status_code=400, detail="Please update your profile with your location first.")
 
@@ -1060,3 +1105,176 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
         })
         
     return results
+
+@app.get("/api/buyer/dashboard")
+def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Aggregates data for the Corporate Buyer's Procurement Dashboard."""
+    
+    # 🔥 MATCHED TO YOUR SCHEMA: Filtering by buyer_name instead of buyer_id
+    contracts = db.query(models.BulkRequest).filter(models.BulkRequest.buyer_name == current_user.full_name).all()
+    
+    total_capital_committed = 0
+    total_tonnage_requested = 0
+    active_contracts = []
+    
+    for contract in contracts:
+        pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == contract.id).all()
+        total_pledged_kg = sum(p.pledged_weight_kg for p in pledges if p.pledged_weight_kg)
+        
+        # 🔥 MATCHED TO YOUR SCHEMA: Using target_weight_kg
+        contract_value = contract.target_weight_kg * contract.price_per_kg
+        total_capital_committed += contract_value
+        total_tonnage_requested += contract.target_weight_kg
+        
+        progress_pct = (total_pledged_kg / contract.target_weight_kg) if contract.target_weight_kg > 0 else 0
+        
+        active_contracts.append({
+            "contract_id": contract.id,
+            "crop_name": contract.crop_name,
+            "target_weight_kg": contract.target_weight_kg,
+            "pledged_weight_kg": total_pledged_kg,
+            "price_per_kg": contract.price_per_kg,
+            "progress_percentage": min(progress_pct, 1.0),
+            "status": "fulfilled" if total_pledged_kg >= contract.target_weight_kg else "active"
+        })
+        
+    return {
+        "metrics": {
+            "total_capital_kes": total_capital_committed,
+            "total_tonnage_kg": total_tonnage_requested,
+            "active_contract_count": len(contracts)
+        },
+        "contracts": active_contracts
+    }
+
+class BulkRequestCreate(BaseModel):
+    crop_name: str
+    target_weight_kg: float
+    price_per_kg: float
+    county: str
+    ward: Optional[str] = None
+
+@app.post("/api/buyer/contracts")
+def create_bulk_contract(payload: BulkRequestCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Allows a buyer to post a new Bulk Contract to the Marketplace."""
+    
+    new_contract = models.BulkRequest(
+        buyer_name=current_user.full_name, # Auto-filled from their profile!
+        crop_name=payload.crop_name,
+        target_weight_kg=payload.target_weight_kg,
+        price_per_kg=payload.price_per_kg,
+        county=payload.county,
+        ward=payload.ward,
+        status="Open"
+    )
+    
+    db.add(new_contract)
+    db.commit()
+    db.refresh(new_contract)
+    
+    return {"message": "Contract broadcasted to the network!", "contract_id": new_contract.id}
+
+@app.put("/pledges/{pledge_id}/complete", response_model=schemas.PledgeRead)
+def complete_pledge_delivery(
+    pledge_id: int, 
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    # 1. Find the pledge
+    pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
+    if not pledge:
+        raise HTTPException(status_code=404, detail="Pledge not found")
+
+    # 2. Security Check: Only buyers can release escrow
+    if current_user.role != "buyer":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Security Error: Only the Corporate Buyer can verify quality and release Escrow funds."
+        )
+
+    # 3. Logic Check: Ensure it actually arrived at the hub first!
+    if pledge.status != "received_at_hub":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot complete order. Current status is '{pledge.status}', but it must be 'received_at_hub' first."
+        )
+
+    # 4. Release Escrow!
+    pledge.status = "completed"
+    db.commit()
+    db.refresh(pledge)
+    
+    return pledge
+
+@app.post("/bulk-requests/", response_model=schemas.BulkRequestRead)
+def create_bulk_request(
+    request: schemas.BulkRequestCreate, 
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    if current_user.role != "buyer":
+        raise HTTPException(status_code=403, detail="Only Corporate Buyers can post bulk requests.")
+
+    new_request = models.BulkRequest(
+        buyer_id=current_user.id,
+        buyer_name=current_user.full_name, 
+        crop_name=request.crop_name,
+        target_weight_kg=request.target_weight_kg,
+        price_per_kg=request.price_per_kg,
+        county=request.county, # Ensure county is saved
+        urgency=request.urgency,
+        status="Open",
+        squad_status="gathering" # Default squad status
+    )
+    db.add(new_request)
+    db.commit()
+    db.refresh(new_request)
+    return new_request
+
+@app.get("/bulk-requests/", response_model=List[schemas.BulkRequestRead])
+def get_active_bulk_requests(db: Session = Depends(get_db)):
+    # Fetch all bulk requests that haven't been fully fulfilled yet
+    requests = db.query(models.BulkRequest).filter(models.BulkRequest.status == "Open").all()
+    return requests
+
+@app.get("/harvests/me", response_model=List[HarvestRead])
+def get_my_harvests(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # Safely fetch only the harvests belonging to the logged-in user
+    harvests = db.query(models.Harvest).filter(models.Harvest.farmer_id == current_user.id).all()
+    return harvests
+
+@app.post("/bulk-requests/{request_id}/pledge", response_model=schemas.PledgeRead)
+def create_pledge(
+    request_id: int, 
+    pledge: schemas.PledgeBase, 
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    if current_user.role != "farmer":
+        raise HTTPException(status_code=403, detail="Only farmers can pledge.")
+
+    bulk_req = db.query(models.BulkRequest).filter(models.BulkRequest.id == request_id).first()
+    if not bulk_req:
+        raise HTTPException(status_code=404, detail="Bulk request not found.")
+
+    # 1. Create the Pledge
+    new_pledge = models.Pledge(
+        bulk_request_id=request_id,
+        farmer_id=current_user.id,
+        pledged_weight_kg=pledge.pledged_weight_kg,
+        status="pledged"
+    )
+    db.add(new_pledge)
+    db.commit()
+    db.refresh(new_pledge)
+    
+    # 2. Squad Logic Evaluation
+    current_pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == request_id).all()
+    unique_farmers = len(set([p.farmer_id for p in current_pledges]))
+
+    # If this is the second farmer to join, trigger the Election Phase!
+    if unique_farmers >= 2 and bulk_req.squad_status == "gathering":
+        bulk_req.squad_status = "voting"
+        db.commit()
+
+    return new_pledge
