@@ -13,7 +13,6 @@ import 'package:mkulimahub_mobile/features/buyer/buyer_wallet_screen.dart';
 import 'package:mkulimahub_mobile/features/buyer/buyer_create_order_screen.dart';
 import 'package:mkulimahub_mobile/features/buyer/buyer_cart_screen.dart';
 
-
 final GlobalKey<BuyerMarketplaceViewState> buyerMarketplaceKey = GlobalKey<BuyerMarketplaceViewState>();
 
 class BuyerDashboard extends StatefulWidget {
@@ -32,9 +31,9 @@ class _BuyerDashboardState extends State<BuyerDashboard> {
     super.initState();
     _screens = [
       BuyerMarketplaceView(key: buyerMarketplaceKey), // Tab 0: Market
-      const BuyerOrdersScreen(),                      // Tab 1: 🔥 The real Orders & Tracking screen!
-      const BuyerInsightsScreen(),                           // Tab 2: 🔥 The Market Intel AI!
-      const BuyerWalletScreen(),                        // Tab 3: Financials (Placeholder for now)
+      const BuyerOrdersScreen(),                      // Tab 1: Orders
+      const BuyerInsightsScreen(),                    // Tab 2: Insights
+      const BuyerWalletScreen(),                      // Tab 3: Wallet
     ];
   }
 
@@ -71,13 +70,9 @@ class _BuyerDashboardState extends State<BuyerDashboard> {
                   
                   GestureDetector(
                     onTap: () async {
-                      // 🔥 Send them to the creation screen!
                       final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => const BuyerCreateOrderScreen()));
-                      
-                      // If they successfully posted an order, switch them to the "Orders" tab
                       if (result == true) {
                         setState(() => _selectedIndex = 1);
-                        // TODO: You can call a method here to refresh the Orders list from the API later
                       }
                     },
                     child: Container(
@@ -220,6 +215,10 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
   @override
   Widget build(BuildContext context) {
     final displayHarvests = _filteredHarvests;
+    
+    // 🔥 SEPARATE BULK AND INDIVIDUAL LISTINGS
+    final bulkHarvests = displayHarvests.where((h) => h.cropName.contains('Pool')).toList();
+    final individualHarvests = displayHarvests.where((h) => !h.cropName.contains('Pool')).toList();
 
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
@@ -275,7 +274,6 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                           const SizedBox(width: 10),
                           BouncyButton(
                             onPressed: () {
-                              // 🔥 Send the buyer to the Cart!
                               Navigator.push(context, MaterialPageRoute(builder: (_) => const BuyerCartScreen()));
                             },
                             child: Container(
@@ -359,18 +357,54 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                       },
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        _searchQuery.isNotEmpty ? 'Search Results' : (_selectedCategoryIndex == 0 ? "Fresh Arrivals" : "${_categories[_selectedCategoryIndex]['name']} Available"), 
-                        style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)
-                      ),
-                      Text("See All", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.teal.shade700)),
-                    ],
+                ],
+              ),
+            ),
+          ),
+          
+          // 🔥 NEW: ACTIVE HUB POOLS SECTION (Horizontal Slider)
+          if (bulkHarvests.isNotEmpty) ...[
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 15, left: 20, right: 20, bottom: 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text("Active Hub Pools", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.amber.shade100, borderRadius: BorderRadius.circular(8)),
+                      child: Text("Wholesale", style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.amber.shade900)),
+                    )
+                  ],
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 180,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  physics: const BouncingScrollPhysics(),
+                  itemCount: bulkHarvests.length,
+                  itemBuilder: (context, index) => _buildBulkCard(bulkHarvests[index]),
+                ),
+              ),
+            ),
+          ],
+
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 25, left: 20, right: 20, bottom: 15),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    _searchQuery.isNotEmpty ? 'Search Results' : (_selectedCategoryIndex == 0 ? "Individual Farmers" : "${_categories[_selectedCategoryIndex]['name']} Available"), 
+                    style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)
                   ),
-                  const SizedBox(height: 15),
+                  Text("See All", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.teal.shade700)),
                 ],
               ),
             ),
@@ -378,7 +412,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
           
           if (_isLoading)
             const SliverFillRemaining(child: Center(child: CircularProgressIndicator(color: Colors.teal)))
-          else if (displayHarvests.isEmpty)
+          else if (individualHarvests.isEmpty)
             SliverFillRemaining(
               child: Center(
                 child: Column(
@@ -386,7 +420,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                   children: [
                     Icon(LucideIcons.shoppingBag, size: 50, color: Colors.grey.shade300),
                     const SizedBox(height: 10),
-                    Text("No crops found.", style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 16)),
+                    Text("No individual crops found.", style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 16)),
                   ],
                 )
               )
@@ -402,19 +436,8 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                   mainAxisSpacing: 15
                 ),
                 delegate: SliverChildBuilderDelegate((context, index) {
-                  final harvest = displayHarvests[index];
-                  
-                  bool isBulk = harvest.cropName.contains('Pool)');
-                  String rawTitle = harvest.cropName;
-                  
-                  if (isBulk) {
-                    int start = harvest.cropName.indexOf('(');
-                    if (start != -1) {
-                      rawTitle = harvest.cropName.substring(0, start).trim();
-                    }
-                  }
-
-                  String cleanDisplayTitle = _formatCropName(rawTitle);
+                  final harvest = individualHarvests[index];
+                  String cleanDisplayTitle = _formatCropName(harvest.cropName);
 
                   return FadeInUp(
                     delay: Duration(milliseconds: index * 50), 
@@ -444,22 +467,6 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                                       gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black.withOpacity(0.3), Colors.transparent, Colors.transparent])
                                     ),
                                   ),
-                                  
-                                  if (isBulk)
-                                    Positioned(
-                                      top: 10, left: 10,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                        decoration: BoxDecoration(color: Colors.orange.shade700, borderRadius: BorderRadius.circular(10)),
-                                        child: Row(
-                                          children: [
-                                            const Icon(LucideIcons.users, size: 12, color: Colors.white),
-                                            const SizedBox(width: 4),
-                                            Text("BULK HUB", style: GoogleFonts.poppins(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
                                 ],
                               ),
                             ),
@@ -514,11 +521,78 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                       ),
                     ),
                   );
-                }, childCount: displayHarvests.length),
+                }, childCount: individualHarvests.length),
               ),
             ),
           const SliverToBoxAdapter(child: SizedBox(height: 120)),
         ],
+      ),
+    );
+  }
+
+  // 🔥 WIDGET: THE PREMIUM BULK LISTING CARD
+  Widget _buildBulkCard(Harvest harvest) {
+    // Strip out the "(HubName Pool)" part for a cleaner title
+    String cleanName = harvest.cropName;
+    int start = harvest.cropName.indexOf('(');
+    if (start != -1) {
+      cleanName = harvest.cropName.substring(0, start).trim();
+    }
+
+    return FadeInRight(
+      child: Container(
+        width: 300,
+        margin: const EdgeInsets.only(right: 15),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(colors: [Colors.teal.shade900, Colors.teal.shade700], begin: Alignment.topLeft, end: Alignment.bottomRight),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [BoxShadow(color: Colors.teal.withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 8))],
+        ),
+        child: Stack(
+          children: [
+            Positioned(right: -20, bottom: -20, child: Icon(LucideIcons.packageCheck, size: 100, color: Colors.white.withOpacity(0.1))),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(color: Colors.amber.shade400, borderRadius: BorderRadius.circular(10)),
+                        child: Text("CO-OP VERIFIED", style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.teal.shade900)),
+                      ),
+                      const Icon(LucideIcons.shieldCheck, color: Colors.white, size: 20),
+                    ],
+                  ),
+                  Text(_formatCropName(cleanName), style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Row(
+                    children: [
+                      const Icon(LucideIcons.scale, color: Colors.amber, size: 16),
+                      const SizedBox(width: 8),
+                      Text("${harvest.weightKg} KG Available", style: GoogleFonts.poppins(color: Colors.white, fontSize: 14)),
+                    ],
+                  ),
+                  const Divider(color: Colors.white24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text("KES ${harvest.pricePerKg}/KG", style: GoogleFonts.poppins(color: Colors.amber.shade400, fontWeight: FontWeight.bold, fontSize: 16)),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(12)),
+                        child: Text("Buy Bulk", style: GoogleFonts.poppins(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                      )
+                    ],
+                  )
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

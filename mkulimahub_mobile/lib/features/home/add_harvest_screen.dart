@@ -50,9 +50,8 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
   void _submitHarvest() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedCrop == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please select a crop"), backgroundColor: Colors.red),
-      );
+      // 🔥 UPDATED TO PREMIUM TOAST
+      _showPremiumToast(context, "Please select a crop", isError: true);
       return;
     }
 
@@ -73,18 +72,49 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
 
     if (error == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Harvest Posted Successfully!"), backgroundColor: Colors.green),
-        );
+        // 🔥 UPDATED TO PREMIUM TOAST
+        _showPremiumToast(context, "Harvest Posted Successfully!");
         Navigator.pop(context, true); 
       }
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error), backgroundColor: Colors.red),
-        );
+        // 🔥 UPDATED TO PREMIUM TOAST
+        _showPremiumToast(context, error, isError: true);
       }
     }
+  }
+
+  void _showPremiumToast(BuildContext context, String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Container(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              Icon(isError ? LucideIcons.alertCircle : LucideIcons.checkCircle, color: Colors.white, size: 24),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message, 
+                  style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)
+                )
+              ),
+            ],
+          ),
+        ),
+        backgroundColor: isError ? Colors.red.shade800 : Colors.teal.shade800,
+        behavior: SnackBarBehavior.floating,
+        // 🔥 THIS MARGIN PUSHES IT TO THE MIDDLE OF THE SCREEN
+        margin: EdgeInsets.only(
+          bottom: MediaQuery.of(context).size.height * 0.45, // 45% up the screen!
+          left: 24,
+          right: 24,
+        ),
+        elevation: 15,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   @override

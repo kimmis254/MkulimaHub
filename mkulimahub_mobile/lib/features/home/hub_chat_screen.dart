@@ -45,6 +45,39 @@ class _HubChatScreenState extends State<HubChatScreen> {
     super.dispose();
   }
 
+  // 🔥 PREMIUM CENTER-SCREEN TOAST
+  void _showPremiumToast(BuildContext context, String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Container(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              Icon(isError ? LucideIcons.alertCircle : LucideIcons.checkCircle, color: Colors.white, size: 24),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message, 
+                  style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)
+                )
+              ),
+            ],
+          ),
+        ),
+        backgroundColor: isError ? Colors.red.shade800 : Colors.teal.shade800,
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.only(
+          bottom: MediaQuery.of(context).size.height * 0.45,
+          left: 24,
+          right: 24,
+        ),
+        elevation: 15,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
   Future<void> _fetchInitialData() async {
     final profile = await _apiClient.getProfile();
     _myFullName = profile?['full_name'] ?? '';
@@ -103,10 +136,53 @@ class _HubChatScreenState extends State<HubChatScreen> {
     
     if (error != null) {
       setState(() => _messages.removeLast());
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+      if (mounted) _showPremiumToast(context, error, isError: true);
     }
     
     setState(() => _isSending = false);
+  }
+
+  Future<void> _leaveHub() async {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(LucideIcons.logOut, color: Colors.red.shade600),
+            const SizedBox(width: 10),
+            Text("Leave Co-op?", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 18)),
+          ],
+        ),
+        content: Text("Are you sure you want to leave ${widget.hubName}? You will stop receiving messages and updates.", style: GoogleFonts.poppins(fontSize: 14)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context), 
+            child: Text("Cancel", style: GoogleFonts.poppins(color: Colors.grey.shade600))
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context); 
+              setState(() => _isLoading = true);
+              
+              final error = await _apiClient.leaveHub();
+              
+              if (mounted) {
+                if (error == null) {
+                  _showPremiumToast(context, "Left Co-op successfully.");
+                  Navigator.pop(context, true); 
+                } else {
+                  setState(() => _isLoading = false);
+                  _showPremiumToast(context, error, isError: true);
+                }
+              }
+            }, 
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade600, elevation: 0),
+            child: Text("Leave", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold))
+          ),
+        ],
+      )
+    );
   }
 
   void _showJointListingDialog() {
@@ -123,7 +199,8 @@ class _HubChatScreenState extends State<HubChatScreen> {
             return Dialog(
               backgroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-              child: Padding(
+              insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24), // 🔥 Prevents edge-to-edge stretching
+              child: SingleChildScrollView( // 🔥 Prevents keyboard overflow
                 padding: const EdgeInsets.all(24.0),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -134,8 +211,15 @@ class _HubChatScreenState extends State<HubChatScreen> {
                       child: Icon(LucideIcons.store, color: Colors.blue.shade700, size: 32),
                     ),
                     const SizedBox(height: 15),
-                    Text("Create Joint Listing", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 20)),
-                    Text("Push your pooled crops to buyers", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]), textAlign: TextAlign.center),
+                    Text("Create Joint Listing", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 20), textAlign: TextAlign.center),
+                    const SizedBox(height: 4),
+                    // 🔥 Fixed RenderFlex Issue
+                    Text(
+                      "Push your pooled crops to buyers", 
+                      style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]), 
+                      textAlign: TextAlign.center,
+                      softWrap: true, // Allows wrapping
+                    ),
                     const SizedBox(height: 25),
                     
                     _buildPremiumDialogField(controller: cropController, label: "Crop Name (e.g., Mangoes)", icon: LucideIcons.sprout),
@@ -163,25 +247,24 @@ class _HubChatScreenState extends State<HubChatScreen> {
                           child: ElevatedButton(
                             onPressed: isSubmitting ? null : () async {
                               if (cropController.text.isEmpty || weightController.text.isEmpty || priceController.text.isEmpty) {
-                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
+                                _showPremiumToast(context, "Please fill all fields", isError: true);
                                 return;
                               }
 
                               setDialogState(() => isSubmitting = true);
                               
+                              // Create a unique name to differentiate it from independent crops
                               final specialCropName = "${cropController.text.trim()} (${widget.hubName} Pool)";
                               final data = {
                                 "crop_name": specialCropName,
-                                "weight_kg": double.tryParse(weightController.text) ?? 0,
-                                "price_per_kg": double.tryParse(priceController.text) ?? 0,
+                                "weight_kg": double.tryParse(weightController.text) ?? 0.0,
+                                "price_per_kg": double.tryParse(priceController.text) ?? 0.0,
                               };
 
                               final error = await _apiClient.addHarvest(data);
                               
                               if (error == null && context.mounted) {
                                 Navigator.pop(context); 
-                                
-                                dashboardKey.currentState?.loadHarvests();
                                 
                                 await _apiClient.postHubMessage(
                                   widget.hubName, 
@@ -190,10 +273,13 @@ class _HubChatScreenState extends State<HubChatScreen> {
                                 await _fetchMessages(silent: true);
                                 _scrollToBottom();
                                 
-                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Joint Listing Published!"), backgroundColor: Colors.green));
+                                _showPremiumToast(context, "Joint Listing Published!");
+                                
+                                // Refresh the dashboard if the key is available
+                                dashboardKey.currentState?.loadHarvests();
                               } else if (context.mounted) {
                                 setDialogState(() => isSubmitting = false);
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? "Error"), backgroundColor: Colors.red));
+                                _showPremiumToast(context, error ?? "Error saving listing.", isError: true);
                               }
                             },
                             style: ElevatedButton.styleFrom(
@@ -222,7 +308,7 @@ class _HubChatScreenState extends State<HubChatScreen> {
   Widget _buildPremiumDialogField({required TextEditingController controller, required String label, required IconData icon, bool isNumber = false}) {
     return TextField(
       controller: controller,
-      keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+      keyboardType: isNumber ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
       style: GoogleFonts.poppins(fontSize: 14),
       decoration: InputDecoration(
         labelText: label,
@@ -289,7 +375,7 @@ class _HubChatScreenState extends State<HubChatScreen> {
           ),
           actions: [
             Padding(
-              padding: const EdgeInsets.only(top: 10.0, right: 8.0),
+              padding: const EdgeInsets.only(top: 10.0),
               child: IconButton(
                 icon: Container(
                   padding: const EdgeInsets.all(8),
@@ -298,6 +384,28 @@ class _HubChatScreenState extends State<HubChatScreen> {
                 ),
                 tooltip: "Create Joint Listing",
                 onPressed: _showJointListingDialog,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 10.0, right: 8.0),
+              child: PopupMenuButton<String>(
+                icon: const Icon(LucideIcons.moreVertical, color: Colors.white),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                onSelected: (value) {
+                  if (value == 'leave') _leaveHub();
+                },
+                itemBuilder: (BuildContext context) => [
+                  PopupMenuItem(
+                    value: 'leave',
+                    child: Row(
+                      children: [
+                        Icon(LucideIcons.logOut, color: Colors.red.shade600, size: 18),
+                        const SizedBox(width: 10),
+                        Text("Leave Co-op", style: GoogleFonts.poppins(color: Colors.red.shade700, fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -467,6 +575,7 @@ class _HubChatScreenState extends State<HubChatScreen> {
                 style: GoogleFonts.poppins(fontSize: 14),
                 decoration: InputDecoration(
                   hintText: "Message the Co-op...",
+                  // 🔥 Removed the accidental spaces here!
                   hintStyle: GoogleFonts.poppins(color: Colors.grey.shade400, fontSize: 14),
                   border: InputBorder.none,
                   isDense: true,

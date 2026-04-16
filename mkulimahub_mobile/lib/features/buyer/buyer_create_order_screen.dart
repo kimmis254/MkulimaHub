@@ -2,6 +2,7 @@ import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:mkulimahub_mobile/core/api_client.dart'; // 🔥 Ensure you have this import!
 
 class BuyerCreateOrderScreen extends StatefulWidget {
   const BuyerCreateOrderScreen({super.key});
@@ -12,12 +13,14 @@ class BuyerCreateOrderScreen extends StatefulWidget {
 
 class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
   final _formKey = GlobalKey<FormState>();
+  final ApiClient _apiClient = ApiClient(); // 🔥 Initialized ApiClient
   
   // Form State
   String _selectedCrop = "Maize";
   final TextEditingController _weightController = TextEditingController();
   final TextEditingController _priceController = TextEditingController();
   String _selectedCounty = "Nairobi";
+  String _selectedUrgency = "High"; // 🔥 Added Urgency State
   bool _isLoading = false;
 
   // Dynamic Calculator State
@@ -49,26 +52,45 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
     });
   }
 
+  // 🔥 COMPLETELY REWRITTEN TO TALK TO FASTAPI
   void _submitOrder() async {
     if (!_formKey.currentState!.validate()) return;
     
     setState(() => _isLoading = true);
 
-    // TODO: In the next step, we will wire this to FastAPI!
-    // For now, simulate network delay
-    await Future.delayed(const Duration(seconds: 2));
+    // Build the payload matching the BulkRequestCreate schema
+    final requestData = {
+      "crop_name": _selectedCrop,
+      "target_weight_kg": double.tryParse(_weightController.text) ?? 0.0,
+      "price_per_kg": double.tryParse(_priceController.text) ?? 0.0,
+      "county": _selectedCounty,
+      "urgency": _selectedUrgency,
+    };
 
-    setState(() => _isLoading = false);
+    // Send it to the backend
+    final error = await _apiClient.postBulkRequest(requestData);
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Success! Order broadcasted to farmers.", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-          backgroundColor: Colors.teal.shade800,
-          behavior: SnackBarBehavior.floating,
-        )
-      );
-      Navigator.pop(context, true); // Go back and tell Dashboard to refresh
+      setState(() => _isLoading = false);
+
+      if (error == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Success! Order broadcasted to farmers.", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+            backgroundColor: Colors.teal.shade800,
+            behavior: SnackBarBehavior.floating,
+          )
+        );
+        Navigator.pop(context, true); // Go back and tell Dashboard to refresh
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+            backgroundColor: Colors.red.shade800,
+            behavior: SnackBarBehavior.floating,
+          )
+        );
+      }
     }
   }
 
@@ -217,6 +239,40 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
                                   }).toList(),
                                 ),
                               ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 25),
+
+                      // 🔥 URGENCY SELECTOR (NEW!)
+                      FadeInUp(
+                        delay: const Duration(milliseconds: 500),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text("Urgency Level", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade700)),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: ["High", "Medium", "Low"].map((level) {
+                                bool isSelected = _selectedUrgency == level;
+                                return Expanded(
+                                  child: GestureDetector(
+                                    onTap: () => setState(() => _selectedUrgency = level),
+                                    child: Container(
+                                      margin: const EdgeInsets.only(right: 8),
+                                      padding: const EdgeInsets.symmetric(vertical: 12),
+                                      decoration: BoxDecoration(
+                                        color: isSelected ? Colors.orange.shade50 : Colors.white,
+                                        border: Border.all(color: isSelected ? Colors.orange : Colors.grey.shade200, width: 2),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      alignment: Alignment.center,
+                                      child: Text(level, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: isSelected ? Colors.orange.shade800 : Colors.grey.shade500)),
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
                             ),
                           ],
                         ),

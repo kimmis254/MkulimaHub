@@ -146,15 +146,9 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
   final ApiClient _apiClient = ApiClient();
   
   List<Harvest> _myHarvests = [];
+  List<dynamic> _activeBulkRequests = []; // 🔥 Real data storage
   bool _isLoading = true;
   String _userName = "Farmer";
-
-  // Mock data for Bulk Requests (Opportunities)
-  final List<Map<String, dynamic>> _hotRequests = [
-    {"buyer": "Unga Group Ltd", "crop": "Maize", "weight": "5,000 kg", "price": "KES 4,500/bag", "urgency": "High"},
-    {"buyer": "City Restaurants", "crop": "Tomatoes", "weight": "200 kg", "price": "KES 80/kg", "urgency": "Medium"},
-    {"buyer": "Export Co.", "crop": "Avocados", "weight": "1,000 kg", "price": "KES 150/kg", "urgency": "High"},
-  ];
 
   @override
   void initState() {
@@ -171,17 +165,31 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
       setState(() => _userName = profile['full_name']?.split(' ')[0] ?? "Farmer");
     }
 
-    await loadHarvests();
+    // 🔥 Load both personal crops AND global buyer requests
+    await Future.wait([
+      loadHarvests(),
+      _loadBulkRequests(),
+    ]);
+
+    if (mounted) setState(() => _isLoading = false);
   }
 
   Future<void> loadHarvests() async {
-    // In a real app, this should call an endpoint like /harvests/me
-    // For now, we fetch all and pretend they belong to the farmer to show the UI
-    final data = await _apiClient.getHarvests();
+    // 🔥 FIXED: Now strictly pulls ONLY the logged-in user's harvests!
+    final data = await _apiClient.getMyHarvests();
     if (mounted) {
       setState(() {
         _myHarvests = data;
-        _isLoading = false;
+      });
+    }
+  }
+
+  // 🔥 NEW: Fetch dynamic bulk requests from corporate buyers
+  Future<void> _loadBulkRequests() async {
+    final data = await _apiClient.getActiveBulkRequests();
+    if (mounted) {
+      setState(() {
+        _activeBulkRequests = data;
       });
     }
   }
@@ -259,9 +267,9 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                   // 🔥 QUICK STATS CARDS
                   Row(
                     children: [
-                      _buildStatCard("Active Listings", "12", LucideIcons.layoutList),
+                      _buildStatCard("Active Listings", _myHarvests.length.toString(), LucideIcons.layoutList),
                       const SizedBox(width: 15),
-                      _buildStatCard("Pending Pledges", "3", LucideIcons.truck),
+                      _buildStatCard("Open Requests", _activeBulkRequests.length.toString(), LucideIcons.flame),
                     ],
                   )
                 ],
@@ -287,57 +295,71 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                     ),
                   ),
                   const SizedBox(height: 15),
-                  SizedBox(
-                    height: 140,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: _hotRequests.length,
-                      physics: const BouncingScrollPhysics(),
-                      itemBuilder: (context, index) {
-                        final req = _hotRequests[index];
-                        return FadeInRight(
-                          delay: Duration(milliseconds: index * 100),
-                          child: Container(
-                            width: 260,
-                            margin: const EdgeInsets.only(right: 15),
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: Colors.orange.shade100, width: 1.5),
-                              boxShadow: [BoxShadow(color: Colors.orange.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 5))]
+                  
+                  if (_isLoading)
+                    const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator(color: Colors.green)))
+                  else if (_activeBulkRequests.isEmpty)
+                     Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(16)),
+                        child: Text("No corporate requests posted yet today.", style: GoogleFonts.poppins(color: Colors.orange.shade800), textAlign: TextAlign.center),
+                      ),
+                    )
+                  else
+                    SizedBox(
+                      height: 140,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        itemCount: _activeBulkRequests.length,
+                        physics: const BouncingScrollPhysics(),
+                        itemBuilder: (context, index) {
+                          final req = _activeBulkRequests[index];
+                          return FadeInRight(
+                            delay: Duration(milliseconds: index * 100),
+                            child: Container(
+                              width: 260,
+                              margin: const EdgeInsets.only(right: 15),
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: Colors.orange.shade100, width: 1.5),
+                                boxShadow: [BoxShadow(color: Colors.orange.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 5))]
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(8)),
+                                        child: Text("High Priority", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontSize: 10, fontWeight: FontWeight.bold)),
+                                      ),
+                                      Icon(LucideIcons.flame, color: Colors.orange.shade400, size: 18),
+                                    ],
+                                  ),
+                                  Text("${req['target_weight_kg']}kg of ${req['crop_name']}", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Expanded(child: Text(req['buyer_name'], style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                      Text("KES ${req['price_per_kg']}/kg", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade700)),
+                                    ],
+                                  ),
+                                ],
+                              ),
                             ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                      decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(8)),
-                                      child: Text(req['urgency'] + " Priority", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontSize: 10, fontWeight: FontWeight.bold)),
-                                    ),
-                                    Icon(LucideIcons.flame, color: Colors.orange.shade400, size: 18),
-                                  ],
-                                ),
-                                Text("${req['weight']} of ${req['crop']}", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(req['buyer'], style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
-                                    Text(req['price'], style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade700)),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }
-                    ),
-                  )
+                          );
+                        }
+                      ),
+                    )
                 ],
               ),
             ),
