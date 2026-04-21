@@ -5,6 +5,8 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/home/hub_chat_screen.dart';
 import 'package:mkulimahub_mobile/features/home/receiving_dashboard.dart'; 
+import 'package:mkulimahub_mobile/features/home/delivery_squads_screen.dart'; // 🔥 Import for View Squad
+import 'package:mkulimahub_mobile/features/home/contracts_screen.dart';       // 🔥 Import for Join Squad
 
 class ClusterScreen extends StatefulWidget {
   const ClusterScreen({super.key});
@@ -23,15 +25,16 @@ class _ClusterScreenState extends State<ClusterScreen> {
   List<dynamic> _hubs = [];
   List<dynamic> _pendingRequests = [];
   List<dynamic> _independentFarmers = []; 
+  List<dynamic> _activeSquads = []; 
   int _totalFarmersAnalyzed = 0;
   String? _errorMessage;
   
-  // 🔥 Current User & Hub State
+  // Current User & Hub State
   Map<String, dynamic>? _currentUser;
   bool _isCoordinator = false;
   String? _myClusterId; 
 
-  // 🔥 Election State
+  // Election State
   String? _electionStatus;
   bool _hasVoted = false;
   List<dynamic> _candidates = [];
@@ -67,6 +70,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
         setState(() {
           _hubs = clusterData['hubs'] ?? [];
           _independentFarmers = clusterData['independent_farmers'] ?? [];
+          _activeSquads = clusterData['active_squads'] ?? []; 
           _totalFarmersAnalyzed = clusterData['total_farmers_analyzed'] ?? 0;
           _pendingRequests = pendingReqs ?? [];
           _currentUser = profileData;
@@ -84,16 +88,8 @@ class _ClusterScreenState extends State<ClusterScreen> {
             final myHub = _hubs.firstWhere((h) => h['hub_id'] == myHubId, orElse: () => <String, dynamic>{});
             _myClusterId = myHub.isNotEmpty ? myHub['hub_name'] : "My Co-op Hub";
             
-            // 🔥 THE FIX: Force both to be Strings so Dart doesn't get confused!
             _isCoordinator = myHub.isNotEmpty && 
                 myHub['coordinator_id'].toString() == _currentUser?['id'].toString();
-            
-            // 🔥 THE X-RAY: Print exactly what is happening to your debug console
-            print("🛑 DEBUG: My ID is ${_currentUser?['id']}");
-            print("🛑 DEBUG: Coordinator ID is ${myHub['coordinator_id']}");
-            print("🛑 DEBUG: Am I Coordinator? $_isCoordinator");
-            print("🛑 RAW PROFILE DATA: $profileData");
-
           } else {
             _myClusterId = null; 
             _isCoordinator = false;
@@ -135,6 +131,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
       ),
       body: Column(
         children: [
+          // Header Section
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
             decoration: BoxDecoration(
@@ -184,7 +181,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
                         child: ListView(
                           padding: const EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 80),
                           children: [
-                            // 🔥 Show banner only if they are the actual coordinator
                             if (_isCoordinator)
                               FadeInDown(child: _buildCoordinatorBanner()),
 
@@ -194,6 +190,90 @@ class _ClusterScreenState extends State<ClusterScreen> {
                             _buildMyStatusCard(),
                             const SizedBox(height: 25),
 
+                            // 🔥 NEW: DISPLAY TEMPORARY DELIVERY SQUADS
+                            if (_activeSquads.isNotEmpty) ...[
+                              Row(
+                                children: [
+                                  const Icon(LucideIcons.zap, color: Colors.orange, size: 20),
+                                  const SizedBox(width: 8),
+                                  Text("Active Delivery Squads", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                ],
+                              ),
+                              Text("Temporary teams fulfilling corporate orders", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
+                              const SizedBox(height: 15),
+                              
+                              ..._activeSquads.map((squad) {
+                                // 🔥 1. THE SMART LOGIC: Check if the user is already in the squad
+                                final pledges = squad['pledges'] as List<dynamic>? ?? [];
+                                bool hasPledged = false;
+                                
+                                if (_currentUser != null) {
+                                  // Safely convert both to Strings to avoid Int vs String mismatch errors
+                                  hasPledged = pledges.any((p) => p['farmer_id'].toString() == _currentUser?['id'].toString());
+                                }
+
+                                return FadeInLeft(
+                                  child: Container(
+                                    margin: const EdgeInsets.only(bottom: 15),
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: hasPledged ? Colors.purple.shade50 : Colors.orange.shade50, 
+                                      border: Border.all(color: hasPledged ? Colors.purple.shade200 : Colors.orange.shade200),
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(10),
+                                          decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                                          child: Icon(hasPledged ? LucideIcons.users : LucideIcons.truck, color: hasPledged ? Colors.purple : Colors.orange),
+                                        ),
+                                        const SizedBox(width: 15),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text("${squad['target_weight_kg']}kg of ${squad['crop_name']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
+                                              Text("For ${squad['buyer_name']}", style: GoogleFonts.poppins(fontSize: 12, color: hasPledged ? Colors.purple.shade800 : Colors.orange.shade800)),
+                                            ],
+                                          ),
+                                        ),
+                                        
+                                        // 🔥 2. THE DYNAMIC BUTTON
+                                        hasPledged
+                                            ? ElevatedButton(
+                                                onPressed: () {
+                                                  // Send them straight to their active delivery!
+                                                  Navigator.push(context, MaterialPageRoute(builder: (_) => const DeliverySquadsScreen()));
+                                                },
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: Colors.purple.shade600,
+                                                  elevation: 0,
+                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
+                                                ),
+                                                child: Text("View Squad", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                                              )
+                                            : ElevatedButton(
+                                                onPressed: () {
+                                                  // Send them to the Contracts tab to pledge!
+                                                  Navigator.push(context, MaterialPageRoute(builder: (_) => const ContractsScreen()));
+                                                },
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: Colors.orange.shade600,
+                                                  elevation: 0,
+                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
+                                                ),
+                                                child: Text("Join Squad", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                                              )
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }),
+                              const SizedBox(height: 25),
+                            ],
+
+                            // EXISTING: DISPLAY PERMANENT HUBS
                             if (_hubs.isNotEmpty) ...[
                               Text("Active Co-op Hubs", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
                               const SizedBox(height: 15),
@@ -228,6 +308,8 @@ class _ClusterScreenState extends State<ClusterScreen> {
       ),
     );
   }
+
+  // --- Helper Widgets Below ---
 
   Widget _buildMyStatusCard() {
     bool isIndependent = _myClusterId == null; 
@@ -787,15 +869,10 @@ class _ClusterScreenState extends State<ClusterScreen> {
     );
   }
 
-  // ==========================================
-  // 🔥 ELECTIONS & DEMOCRACY UI (Merged & Upgraded)
-  // ==========================================
-
   Widget _buildElectionBanner() {
     bool isEmpty = _candidates.isEmpty;
     
     return GestureDetector(
-      // 🔥 Both states now open the merged _showElectionSheet
       onTap: _showElectionSheet,
       child: Container(
         margin: const EdgeInsets.only(bottom: 20),
@@ -852,7 +929,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
         return StatefulBuilder(
           builder: (context, setSheetState) {
             
-            // Check if current user is already in the list of candidates
             bool hasPitched = _currentUser != null && _candidates.any((c) => c['farmer_id'] == _currentUser!['id']);
 
             return Padding(
@@ -871,7 +947,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
                       Text("Vote for your Coordinator. First to >50% wins!", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
                       const SizedBox(height: 15),
                       
-                      // Show confirmation if voted
                       if (_hasVoted)
                         Container(
                           padding: const EdgeInsets.all(12),
@@ -886,7 +961,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
                           ),
                         ),
 
-                      // List current candidates
                       if (_candidates.isNotEmpty) ...[
                         Text("Current Candidates:", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.grey.shade700)),
                         const SizedBox(height: 10),
@@ -924,7 +998,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                             _fetchClusters(); 
                                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vote cast successfully!"), backgroundColor: Colors.green));
                                           } else {
-                                            // 🔥 The beautiful alert dialog for when they try to vote for themselves!
                                             showDialog(
                                               context: context,
                                               builder: (ctx) => AlertDialog(
@@ -967,7 +1040,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
 
                       const SizedBox(height: 10),
 
-                      // The Pitch form - Show if they haven't pitched yet!
                       if (!hasPitched) ...[
                         const Divider(),
                         const SizedBox(height: 10),

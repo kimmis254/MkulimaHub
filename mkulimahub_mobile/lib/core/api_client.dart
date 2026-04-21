@@ -223,7 +223,7 @@ class ApiClient {
   // ==========================================
 
   Future<Map<String, dynamic>> getPrediction(String commodity, String region, String priceType) async {
-    final url = Uri.parse('$baseUrl/predict');
+    final url = Uri.parse('$baseUrl/api/predict-price');
     
     final response = await http.post(
       url,
@@ -554,22 +554,35 @@ class ApiClient {
   }
 
   Future<List<dynamic>> getMyPledges() async {
-    final token = await getToken();
-    if (token == null) return [];
-
     try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      // 🔥 THE FIX: Using your exact secret key!
+      final token = prefs.getString('auth_token') ?? '';
+      
+      print("🔐 DEBUG TOKEN CHECK: Does token exist? ${token.isNotEmpty}");
+
       final response = await http.get(
         Uri.parse('$baseUrl/api/my-pledges'),
-        headers: {"Authorization": "Bearer $token"},
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token', // 🔥 The valid ID badge is attached!
+        },
       );
 
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
+        final data = json.decode(response.body);
+        print("🔥 RAW SQUAD DATA: $data"); 
+        return data;
+      } else {
+        print("❌ API ERROR: ${response.statusCode} - ${response.body}");
+        return [];
       }
     } catch (e) {
-      print("Error fetching my pledges: $e");
+      print("❌ NETWORK ERROR: $e");
+      return [];
     }
-    return [];
   }
 
   // ==========================================
@@ -858,5 +871,40 @@ class ApiClient {
   Future<String?> getUserRole() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('user_role');
+  }
+  // 🔥 Run for temporary Squad Coordinator
+  Future<String?> runForSquadCoordinator(int squadId, String pitch) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token') ?? '';
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/squads/$squadId/run'),
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
+        body: json.encode({'pitch': pitch}),
+      );
+
+      return response.statusCode == 200 ? null : json.decode(response.body)['detail'] ?? "Failed to submit candidacy.";
+    } catch (e) {
+      return "Network error. Please try again.";
+    }
+  }
+
+  // 🔥 Vote for a temporary Squad Coordinator
+  Future<String?> castSquadVote(int squadId, int candidateId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token') ?? '';
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/squads/$squadId/vote'),
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
+        body: json.encode({'candidate_id': candidateId}),
+      );
+
+      return response.statusCode == 200 ? null : json.decode(response.body)['detail'] ?? "Failed to cast vote.";
+    } catch (e) {
+      return "Network error. Please try again.";
+    }
   }
 }

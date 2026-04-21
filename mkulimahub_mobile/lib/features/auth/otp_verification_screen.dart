@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
@@ -51,6 +52,10 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   void initState() {
     super.initState();
     _startTimer();
+    // 🔥 Listen to the controller to dynamically update our custom boxes
+    _otpController.addListener(() {
+      setState(() {});
+    });
   }
 
   @override
@@ -59,6 +64,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     _otpController.dispose();
     super.dispose();
   }
+
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -138,7 +144,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
            
            if (mounted) {
              String role = widget.pendingRegistrationData!['role'] ?? 'farmer';
-             
              await _apiClient.saveUserRole(role); 
              
              if (role == 'buyer') {
@@ -153,27 +158,17 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         }
         
       } else if (widget.is2FALogin && widget.pendingLoginData != null) {
-            
-            // 1. Exchange the phone/password for the JWT Token
             final error = await _apiClient.login(
               widget.pendingLoginData!['phone']!,
               widget.pendingLoginData!['password']!
             );
 
             if (error == null) {
-              // 2. Token is saved! Now fetch their profile to see WHO they are.
               final profileData = await _apiClient.getProfile();
-              
-              print("🚨 DEBUG PROFILE DATA: $profileData");
-              // 3. Extract the role (default to farmer if something goes wrong)
               String role = profileData?['role'] ?? 'farmer';
-              
-              print("🚨 DEBUG EXTRACTED ROLE: $role");
-              // 4. Save it locally so the app boots up perfectly next time
               await _apiClient.saveUserRole(role);
 
               if (mounted) {
-                // 5. THE TRAFFIC COP ROUTING
                 if (role == 'buyer') {
                   Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const BuyerDashboard()), (route) => false);
                 } else {
@@ -182,10 +177,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
               }
             } else {
               setState(() => _isLoading = false);
-              if (mounted) _showError(error); // Login failed
+              if (mounted) _showError(error); 
             }
-          }
- else if (widget.isPasswordReset) {
+      } else if (widget.isPasswordReset) {
         setState(() => _isLoading = false);
         if (mounted) {
           Navigator.pushReplacement(
@@ -198,8 +192,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             )
           );
         }
-      }
-      else if (widget.pendingGoogleData != null) {
+      } else if (widget.pendingGoogleData != null) {
         final apiStatus = await _apiClient.googleRegister(widget.pendingGoogleData!);
 
         if (apiStatus == 'needs_profile') {
@@ -211,7 +204,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
           if (mounted) {
             String role = profileData?['role'] ?? 'farmer';
-            
             if (role == 'buyer') {
               Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const BuyerDashboard()), (route) => false);
             } else {
@@ -239,6 +231,42 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.all(20),
       ),
+    );
+  }
+
+  // 🔥 CUSTOM PREMIUM OTP BOX GENERATOR
+  Widget _buildOtpBoxes() {
+    String currentText = _otpController.text;
+    
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: List.generate(6, (index) {
+        // Determine the state of this specific box
+        bool isFilled = index < currentText.length;
+        bool isActive = index == currentText.length; // The box currently waiting for input
+        
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: 45,
+          height: 55,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: isFilled ? Colors.green.shade50 : (isActive ? Colors.white : Colors.grey.shade50),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isFilled ? Colors.green.shade400 : (isActive ? Colors.green.shade700 : Colors.grey.shade300),
+              width: isActive ? 2 : 1,
+            ),
+            boxShadow: isActive 
+                ? [BoxShadow(color: Colors.green.withOpacity(0.2), blurRadius: 8, offset: const Offset(0, 3))] 
+                : [],
+          ),
+          child: Text(
+            isFilled ? currentText[index] : "",
+            style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.green.shade900),
+          ),
+        );
+      }),
     );
   }
 
@@ -321,34 +349,41 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                                 textAlign: TextAlign.center,
                               ),
                               const SizedBox(height: 35),
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade50,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(color: Colors.green.shade200, width: 2),
-                                  boxShadow: [
-                                    BoxShadow(color: Colors.green.shade100.withOpacity(0.5), blurRadius: 10, offset: const Offset(0, 4))
-                                  ]
-                                ),
-                                child: TextField(
-                                  controller: _otpController,
-                                  keyboardType: TextInputType.number,
-                                  textAlign: TextAlign.center,
-                                  maxLength: 6,
-                                  style: GoogleFonts.poppins(fontSize: 32, letterSpacing: 16, fontWeight: FontWeight.w900, color: Colors.black87),
-                                  decoration: const InputDecoration(
-                                    counterText: "", 
-                                    border: InputBorder.none,
-                                    contentPadding: EdgeInsets.symmetric(vertical: 20),
-                                  ),
-                                  onChanged: (value) {
-                                    if (value.length == 6) {
-                                      FocusScope.of(context).unfocus(); 
-                                      _verifyCode();
-                                    }
-                                  },
+                              
+                              // 🔥 THE MAGIC INVISIBLE TEXTFIELD TRICK
+                              SizedBox(
+                                height: 60,
+                                child: Stack(
+                                  children: [
+                                    // 1. The visual boxes underneath
+                                    Center(child: _buildOtpBoxes()),
+                                    
+                                    // 2. The completely transparent text field right on top catching the taps
+                                    TextField(
+                                      controller: _otpController,
+                                      keyboardType: TextInputType.number,
+                                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                      maxLength: 6,
+                                      showCursor: false, // Hide cursor
+                                      style: const TextStyle(color: Colors.transparent, fontSize: 1), // Hide text
+                                      decoration: const InputDecoration(
+                                        counterText: "", // Hide character counter
+                                        border: InputBorder.none,
+                                        enabledBorder: InputBorder.none,
+                                        focusedBorder: InputBorder.none,
+                                        fillColor: Colors.transparent,
+                                      ),
+                                      onChanged: (value) {
+                                        if (value.length == 6) {
+                                          FocusScope.of(context).unfocus(); 
+                                          _verifyCode();
+                                        }
+                                      },
+                                    ),
+                                  ],
                                 ),
                               ),
+                              
                               const SizedBox(height: 35),
                               SizedBox(
                                 height: 60,

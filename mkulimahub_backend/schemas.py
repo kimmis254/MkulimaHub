@@ -140,3 +140,22 @@ class HubMessageRead(BaseModel):
 
 class ChatMessage(BaseModel):
     message: str
+
+class BulkRequestSimple(BaseModel):
+    id: int
+    buyer_name: str
+    crop_name: str
+    target_weight_kg: float
+    price_per_kg: float
+    county: str
+    squad_status: str
+    coordinator_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+class PledgeWithRequest(PledgeRead):
+    bulk_request: BulkRequestSimple
+
+    class Config:
+        from_attributes = True

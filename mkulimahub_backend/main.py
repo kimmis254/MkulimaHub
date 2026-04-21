@@ -25,8 +25,7 @@ from sqlalchemy import select, distinct, text, func
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-
-# 🔥 NEW IMPORTS FOR BACKGROUND SCHEDULING
+from sqlalchemy.orm import joinedload
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 
@@ -35,6 +34,11 @@ models.Base.metadata.create_all(bind=engine)
 # ==========================================
 # 1. APP & SCHEDULER INITIALIZATION
 # ==========================================
+class SquadPitch(BaseModel):
+    pitch: str
+
+class SquadVoteRequest(BaseModel):
+    candidate_id: int
 
 # We define the background clustering job here so it can be called by the scheduler
 def scheduled_clustering_job():
@@ -371,20 +375,45 @@ def create_pledge(contract_id: int, pledge: schemas.PledgeBase, db: Session = De
     return new_pledge
 
 @app.get("/api/my-pledges")
-def get_my_pledges(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+def get_my_pledges(
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    if current_user.role != "farmer":
+        raise HTTPException(status_code=403, detail="Only farmers can view delivery squads.")
+
+    # 1. Get all pledges for this farmer
     pledges = db.query(models.Pledge).filter(models.Pledge.farmer_id == current_user.id).all()
+    
     result = []
     for p in pledges:
+        req = p.bulk_request # Grab the connected corporate request
+        
+        # 🔥 THE FIX: If the request was deleted, this is a Ghost Pledge!
+        if not req:
+            db.delete(p) # Delete the ghost from the database
+            db.commit()
+            continue # Skip sending this ghost to Flutter
+
+        # If it's a real pledge, send it exactly as Flutter expects
         result.append({
             "id": p.id,
             "pledged_weight_kg": p.pledged_weight_kg,
-            "buyer_name": p.bulk_request.buyer_name,
-            "crop_name": p.bulk_request.crop_name,
-            "status": p.bulk_request.status,
-            "date": p.created_at.strftime("%Y-%m-%d")
+            "actual_weight_kg": p.actual_weight_kg,
+            "status": p.status,
+            "bulk_request": {
+                "id": req.id,
+                "buyer_name": req.buyer_name,
+                "crop_name": req.crop_name,
+                "target_weight_kg": req.target_weight_kg,
+                "price_per_kg": req.price_per_kg,
+                "county": req.county,
+                "squad_status": req.squad_status,
+                "coordinator_id": req.coordinator_id
+            }
         })
+        
     return result
-
 
 # ==========================================
 # 6. HUBS, CLUSTERS, & CO-OP CHAT
@@ -451,7 +480,7 @@ def admin_trigger_clustering(crop: str = "Maize", db: Session = Depends(get_db))
     return {"message": f"Successfully created {created} new permanent Hubs."}
 
 @app.get("/api/clusters")
-def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db)):
+def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db),current_user: models.User = Depends(get_current_user)):
     """
     NEW FASTER ENDPOINT: Pulls permanently frozen Hubs from the DB instead of calculating on the fly.
     """
@@ -461,7 +490,7 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db)):
     
     hubs = query.all()
     
-    # 🔥 THE FIX: Fetch "Noise" - strictly FARMERS who have GPS but no Hub
+    # Fetch "Noise" - strictly FARMERS who have GPS but no Hub
     indep_query = db.query(models.User).filter(
         models.User.latitude.isnot(None),
         models.User.longitude.isnot(None),
@@ -479,7 +508,7 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db)):
     total_analyzed = len(independent_farmers)
     
     for h in hubs:
-        # It's also good practice to ensure hub members are only farmers just in case!
+        # Ensure hub members are only farmers
         hub_members = db.query(models.User).filter(
             models.User.hub_id == h.id,
             models.User.role == "farmer"
@@ -514,11 +543,58 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db)):
         } for f in independent_farmers
     ]
     
+    # 🔥 1. Get the raw squads from the database
+    squads_db = db.query(models.BulkRequest).filter(
+        models.BulkRequest.status == "Open",
+        models.BulkRequest.squad_status.in_(["gathering", "voting"]) 
+    ).all()
+    
+    # 🔥 2. THE FIX: Explicitly format the data so FastAPI includes the pledges!
+    active_squads_data = []
+    
+    for req in squads_db:
+        # Check if the current user has voted in this specific squad
+        has_voted = False
+        if current_user:
+            vote_check = db.query(models.SquadVote).filter(
+                models.SquadVote.bulk_request_id == req.id,
+                models.SquadVote.farmer_id == current_user.id
+            ).first()
+            if vote_check:
+                has_voted = True
+
+        # Fetch the candidates for this specific squad
+        candidates_db = db.query(models.SquadCandidate).filter(models.SquadCandidate.bulk_request_id == req.id).all()
+        candidates_list = []
+        for c in candidates_db:
+            candidates_list.append({
+                "candidate_id": c.id,
+                "farmer_id": c.farmer_id,
+                "farmer_name": c.farmer.full_name if c.farmer else "Unknown",
+                "pitch": c.pitch,
+                "votes": c.votes
+            })
+
+        active_squads_data.append({
+            "id": req.id,
+            "buyer_name": req.buyer_name,
+            "crop_name": req.crop_name,
+            "target_weight_kg": req.target_weight_kg,
+            "price_per_kg": req.price_per_kg,
+            "county": req.county,
+            "squad_status": req.squad_status,
+            "coordinator_id": req.coordinator_id,
+            "pledges": [{"farmer_id": p.farmer_id} for p in req.pledges],
+            "candidates": candidates_list, # 🔥 Attach the ballot!
+            "has_voted": has_voted         # 🔥 Tell Flutter if they voted!
+        })
+    
     return {
         "total_farmers_analyzed": total_analyzed,
         "total_hubs_found": len(final_hubs),
         "hubs": final_hubs,
-        "independent_farmers": indep_list
+        "independent_farmers": indep_list,
+        "active_squads": active_squads_data # 🔥 Send the complete data down to Flutter
     }
 
 @app.put("/users/leave-hub")
@@ -570,6 +646,7 @@ class PredictionRequest(BaseModel):
     region: str
     price_type: str
 
+# Use your exact KENYA_COUNTIES list here...
 KENYA_COUNTIES = [
     "Mombasa", "Kwale", "Kilifi", "Tana River", "Lamu", "Taita Taveta", 
     "Garissa", "Wajir", "Mandera", "Marsabit", "Isiolo", "Meru", 
@@ -581,67 +658,75 @@ KENYA_COUNTIES = [
     "Kisumu", "Homa Bay", "Migori", "Kisii", "Nyamira", "Nairobi"
 ]
 
-@app.post("/predict")
+@app.post("/api/predict-price") # Standardized endpoint name
 def predict_prices(request: PredictionRequest, db: Session = Depends(get_db)):
-    safe_region = request.region.lower().strip().replace(" ", "_")
-    req_crop = request.commodity.lower().strip()
-    req_type = request.price_type.lower().strip()
+    safe_region = request.region.strip()
+    req_crop = request.commodity.strip()
+    req_type = request.price_type.strip()
 
     fallback_type = "none"
 
     def get_db_data(target_county, target_crop, target_type):
-        query = db.query(models.MarketPrice.ds, models.MarketPrice.price).filter(
-            models.MarketPrice.commodity == target_crop,
-            models.MarketPrice.pricetype == target_type
+        # 🔥 THE FIX: Use the actual PostgreSQL column names (date, price_kes, market_type)
+        query = db.query(models.MarketPrice.date, models.MarketPrice.price_kes).filter(
+            models.MarketPrice.commodity.ilike(f"%{target_crop}%"),
+            models.MarketPrice.market_type.ilike(f"%{target_type}%")
         )
         if target_county:
-            query = query.filter(models.MarketPrice.county == target_county)
+            query = query.filter(models.MarketPrice.county.ilike(f"%{target_county}%"))
             
         records = query.all()
         if not records:
             return pd.DataFrame()
             
-        df = pd.DataFrame([{"ds": r.ds, "price": r.price} for r in records])
+        # 🔥 THE FIX: Instantly map Postgres names to Prophet names ('ds' and 'y')
+        df = pd.DataFrame([{"ds": r.date, "y": r.price_kes} for r in records])
+        
+        # Clean and group the data
         df['ds'] = pd.to_datetime(df['ds'])
-        df = df.groupby('ds', as_index=False)['price'].mean()
+        df = df.groupby('ds', as_index=False)['y'].mean()
         df = df.sort_values(by='ds')
         return df
 
+    # 1. Try exact match
     df_filtered = get_db_data(safe_region, req_crop, req_type)
 
+    # 2. Fallback: Same county, different market type
     if df_filtered.empty:
-        alt_type = "retail" if req_type == "wholesale" else "wholesale"
+        alt_type = "Retail" if req_type.lower() == "wholesale" else "Wholesale"
         df_filtered = get_db_data(safe_region, req_crop, alt_type)
         if not df_filtered.empty:
-            fallback_type = f"alt_type_{alt_type}"
+            fallback_type = f"alt_type_{alt_type.lower()}"
 
+    # 3. Fallback: National average, exact market type
     if df_filtered.empty:
         df_filtered = get_db_data(None, req_crop, req_type)
         if not df_filtered.empty:
             fallback_type = "national"
         else:
-            alt_type = "retail" if req_type == "wholesale" else "wholesale"
+            # 4. Absolute fallback: National average, alternative market type
+            alt_type = "Retail" if req_type.lower() == "wholesale" else "Wholesale"
             df_filtered = get_db_data(None, req_crop, alt_type)
             if not df_filtered.empty:
-                fallback_type = f"national_alt_{alt_type}"
+                fallback_type = f"national_alt_{alt_type.lower()}"
 
     if df_filtered.empty:
         raise HTTPException(status_code=404, detail="Crop not found anywhere in the database.")
 
     historical_dates = df_filtered['ds'].dt.strftime('%Y-%m-%d').tolist()
-    historical_prices = df_filtered['price'].round(2).tolist()
+    historical_prices = df_filtered['y'].round(2).tolist()
 
+    # Handle tiny datasets that Prophet can't train on
     if len(df_filtered) < 3:
         last_date = df_filtered['ds'].iloc[-1]
-        last_price = float(df_filtered['price'].iloc[-1])
+        last_price = float(df_filtered['y'].iloc[-1])
         future_dates = [(last_date + pd.Timedelta(days=i)).strftime('%Y-%m-%d') for i in [7, 14, 30]]
-        future_prices = [last_price, last_price, last_price] 
         
         return {
             "historical_dates": historical_dates,
             "historical_prices": historical_prices,
             "future_dates": future_dates,
-            "future_prices": future_prices,
+            "future_prices": [last_price, last_price, last_price],
             "current_price": last_price,
             "predicted_price": last_price,
             "trend": "stable",
@@ -650,9 +735,11 @@ def predict_prices(request: PredictionRequest, db: Session = Depends(get_db)):
 
     try:
         m = Prophet(daily_seasonality=False, yearly_seasonality=True)
-        m.fit(df_filtered[['ds', 'price']].rename(columns={'price': 'y'}))
+        # Data is already named 'ds' and 'y', so we just pass it straight in!
+        m.fit(df_filtered)
         
-        future = m.make_future_dataframe(periods=90)
+        # Predict the exact number of days requested
+        future = m.make_future_dataframe(periods=request.days)
         forecast = m.predict(future)
         
         future_forecast = forecast[forecast['ds'] > df_filtered['ds'].max()]
@@ -661,6 +748,7 @@ def predict_prices(request: PredictionRequest, db: Session = Depends(get_db)):
         hist_max = max(historical_prices)
         hist_min = min(historical_prices)
         
+        # Cap wild predictions (The Prophet bounds you wrote are excellent)
         capped_future = []
         for p in future_prices_list:
             if p > (hist_max * 1.5): 
@@ -696,6 +784,7 @@ def predict_prices(request: PredictionRequest, db: Session = Depends(get_db)):
             "fallback_type": fallback_type
         }
     except Exception as e:
+        print(f"Prophet Error: {e}")
         raise HTTPException(status_code=500, detail="AI prediction failed")
 
 
@@ -1257,6 +1346,15 @@ def create_pledge(
     if not bulk_req:
         raise HTTPException(status_code=404, detail="Bulk request not found.")
 
+    # 🔥 NEW: Prevent a farmer from pledging twice to the same order
+    existing_pledge = db.query(models.Pledge).filter(
+        models.Pledge.bulk_request_id == request_id,
+        models.Pledge.farmer_id == current_user.id
+    ).first()
+    
+    if existing_pledge:
+        raise HTTPException(status_code=400, detail="You have already pledged to this request. You can update your drop-off later.")
+
     # 1. Create the Pledge
     new_pledge = models.Pledge(
         bulk_request_id=request_id,
@@ -1268,13 +1366,153 @@ def create_pledge(
     db.commit()
     db.refresh(new_pledge)
     
-    # 2. Squad Logic Evaluation
+    # 2. 🔥 VIRTUAL HUB / SQUAD INITIALIZATION LOGIC
     current_pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == request_id).all()
     unique_farmers = len(set([p.farmer_id for p in current_pledges]))
 
-    # If this is the second farmer to join, trigger the Election Phase!
-    if unique_farmers >= 2 and bulk_req.squad_status == "gathering":
+    # State 1: The very first pledge! The "Virtual Hub" is born.
+    if unique_farmers == 1:
+        bulk_req.squad_status = "gathering"
+        db.commit()
+        
+    # State 2: A second farmer joins! It's time to elect a coordinator.
+    elif unique_farmers >= 2 and bulk_req.squad_status == "gathering":
         bulk_req.squad_status = "voting"
         db.commit()
 
     return new_pledge
+
+# 🔥 THE BULLETPROOF ENDPOINT
+@app.get("/api/my-pledges")
+def get_my_pledges(
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    if current_user.role != "farmer":
+        raise HTTPException(status_code=403, detail="Only farmers can view delivery squads.")
+
+    # 1. Get all pledges for this farmer
+    pledges = db.query(models.Pledge).filter(models.Pledge.farmer_id == current_user.id).all()
+    
+    # 2. Manually construct the exact JSON dictionary Flutter expects
+    result = []
+    for p in pledges:
+        req = p.bulk_request # Grab the connected corporate request
+        
+        result.append({
+            "id": p.id,
+            "pledged_weight_kg": p.pledged_weight_kg,
+            "actual_weight_kg": p.actual_weight_kg,
+            "status": p.status,
+            # 🔥 Force the nested data to attach!
+            "bulk_request": {
+                "id": req.id,
+                "buyer_name": req.buyer_name,
+                "crop_name": req.crop_name,
+                "target_weight_kg": req.target_weight_kg,
+                "price_per_kg": req.price_per_kg,
+                "county": req.county,
+                "squad_status": req.squad_status,
+                "coordinator_id": req.coordinator_id
+            } if req else {}
+        })
+        
+    return result
+
+@app.post("/api/squads/{squad_id}/run")
+def run_for_squad_coordinator(
+    squad_id: int, 
+    payload: SquadPitch, 
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    # 1. Verify the squad exists
+    squad = db.query(models.BulkRequest).filter(models.BulkRequest.id == squad_id).first()
+    if not squad:
+        raise HTTPException(status_code=404, detail="Squad not found.")
+
+    # 2. Verify the farmer is actually IN this squad
+    is_member = db.query(models.Pledge).filter(
+        models.Pledge.bulk_request_id == squad_id,
+        models.Pledge.farmer_id == current_user.id
+    ).first()
+    
+    if not is_member:
+        raise HTTPException(status_code=403, detail="You must pledge to this squad before running for coordinator.")
+
+    # 3. Check if they are already running
+    existing_candidate = db.query(models.SquadCandidate).filter(
+        models.SquadCandidate.bulk_request_id == squad_id,
+        models.SquadCandidate.farmer_id == current_user.id
+    ).first()
+    
+    if existing_candidate:
+        raise HTTPException(status_code=400, detail="You are already on the ballot!")
+
+    # 4. Add them to the ballot
+    new_candidate = models.SquadCandidate(
+        bulk_request_id=squad_id,
+        farmer_id=current_user.id,
+        pitch=payload.pitch
+    )
+    db.add(new_candidate)
+    db.commit()
+
+    return {"message": "You are officially on the ballot!"}
+
+
+@app.post("/api/squads/{squad_id}/vote")
+def cast_squad_vote(
+    squad_id: int, 
+    payload: SquadVoteRequest, 
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    # 1. Verify they are in the squad
+    is_member = db.query(models.Pledge).filter(
+        models.Pledge.bulk_request_id == squad_id,
+        models.Pledge.farmer_id == current_user.id
+    ).first()
+    if not is_member:
+        raise HTTPException(status_code=403, detail="Only squad members can vote.")
+
+    # 2. Prevent Double Voting
+    existing_vote = db.query(models.SquadVote).filter(
+        models.SquadVote.bulk_request_id == squad_id,
+        models.SquadVote.farmer_id == current_user.id
+    ).first()
+    if existing_vote:
+        raise HTTPException(status_code=400, detail="You have already cast your vote!")
+
+    # 3. Prevent voting for themselves
+    candidate = db.query(models.SquadCandidate).filter(models.SquadCandidate.id == payload.candidate_id).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+    if candidate.farmer_id == current_user.id:
+        raise HTTPException(status_code=400, detail="You cannot vote for yourself! Democracy relies on your peers.")
+
+    # 4. Cast the vote
+    new_vote = models.SquadVote(
+        bulk_request_id=squad_id,
+        farmer_id=current_user.id,
+        candidate_id=payload.candidate_id
+    )
+    candidate.votes += 1
+    db.add(new_vote)
+    
+    # 5. 🔥 THE MAGIC HANDOVER LOGIC (Check if they won!)
+    total_members = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == squad_id).count()
+    majority_threshold = total_members / 2
+
+    if candidate.votes > majority_threshold:
+        # We have a winner!
+        squad = db.query(models.BulkRequest).filter(models.BulkRequest.id == squad_id).first()
+        squad.coordinator_id = candidate.farmer_id
+        squad.squad_status = "active" # Lock the election, it's time to deliver!
+        
+        # Optional: Delete all candidates and votes for this squad to keep the DB clean
+        db.query(models.SquadCandidate).filter(models.SquadCandidate.bulk_request_id == squad_id).delete()
+        db.query(models.SquadVote).filter(models.SquadVote.bulk_request_id == squad_id).delete()
+
+    db.commit()
+    return {"message": "Vote cast successfully!"}

@@ -15,7 +15,7 @@ class Harvest(Base):
     __tablename__ = "harvests"
 
     id = Column(Integer, primary_key=True, index=True)
-    farmer_id = Column(Integer, ForeignKey("users.id"))
+    farmer_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     
     crop_name = Column(String, nullable=False) 
     weight_kg = Column(Float, nullable=False)
@@ -92,7 +92,7 @@ class Pledge(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     bulk_request_id = Column(Integer, ForeignKey("bulk_requests.id"))
-    farmer_id = Column(Integer, ForeignKey("users.id"))
+    farmer_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     
     pledged_weight_kg = Column(Float)
     actual_weight_kg = Column(Float, nullable=True) # Scale weight logged by coordinator
@@ -119,15 +119,22 @@ class MarketPrice(Base):
     __tablename__ = "market_prices"
 
     id = Column(Integer, primary_key=True, index=True)
-    county = Column(String, index=True)      
-    commodity = Column(String, index=True)   
-    pricetype = Column(String, index=True)   
-    price = Column(Float)
-    ds = Column(Date, index=True)            
-
-    __table_args__ = (
-        UniqueConstraint('county', 'commodity', 'pricetype', 'ds', name='_county_commodity_price_date_uc'),
-    )
+    date = Column(Date) # 🔥 Make sure this says 'date', NOT 'ds'
+    region = Column(String)
+    county = Column(String)
+    market = Column(String)
+    market_id = Column(Integer)
+    latitude = Column(Float)
+    longitude = Column(Float)
+    category = Column(String)
+    commodity = Column(String)
+    commodity_id = Column(Integer)
+    unit = Column(String)
+    price_flag = Column(String)
+    market_type = Column(String) # 🔥 Make sure this says 'market_type', NOT 'pricetype'
+    currency = Column(String)
+    price_kes = Column(Float) # 🔥 Make sure this says 'price_kes', NOT 'price'
+    price_usd = Column(Float)
 
 class Hub(Base):
     __tablename__ = "hubs"
@@ -150,7 +157,7 @@ class HubRequest(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     hub_id = Column(Integer, ForeignKey("hubs.id"))
-    farmer_id = Column(Integer, ForeignKey("users.id"))
+    farmer_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     status = Column(String, default="pending") 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -162,7 +169,7 @@ class HubCandidate(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     hub_id = Column(Integer, ForeignKey("hubs.id"))
-    farmer_id = Column(Integer, ForeignKey("users.id"))
+    farmer_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     pitch = Column(String) 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -174,3 +181,24 @@ class HubVote(Base):
     voter_id = Column(Integer, ForeignKey("users.id"))
     candidate_id = Column(Integer, ForeignKey("hub_candidates.id"))
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class SquadCandidate(Base):
+    __tablename__ = "squad_candidates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bulk_request_id = Column(Integer, ForeignKey("bulk_requests.id", ondelete="CASCADE"))
+    farmer_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    pitch = Column(String)
+    votes = Column(Integer, default=0)
+
+    # Relationships
+    farmer = relationship("User")
+    bulk_request = relationship("BulkRequest")
+
+class SquadVote(Base):
+    __tablename__ = "squad_votes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bulk_request_id = Column(Integer, ForeignKey("bulk_requests.id", ondelete="CASCADE"))
+    farmer_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    candidate_id = Column(Integer, ForeignKey("squad_candidates.id", ondelete="CASCADE"))

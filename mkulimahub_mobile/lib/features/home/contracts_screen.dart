@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
-import 'package:mkulimahub_mobile/features/home/my_deliveries_screen.dart';
+import 'package:mkulimahub_mobile/features/home/delivery_squads_screen.dart'; // 🔥 Updated import!
 
 class ContractsScreen extends StatefulWidget {
   const ContractsScreen({super.key});
@@ -17,6 +17,7 @@ class _ContractsScreenState extends State<ContractsScreen> {
   
   bool _isLoading = true;
   List<dynamic> _contracts = [];
+  int? _currentUserId; // 🔥 NEW: Store the user's ID
   String _selectedFilter = 'All';
   final List<String> _filters = ['All', 'Maize', 'Beans', 'Mangoes', 'Avocados'];
 
@@ -28,11 +29,20 @@ class _ContractsScreenState extends State<ContractsScreen> {
 
   Future<void> _fetchContracts() async {
     setState(() => _isLoading = true);
-    final data = await _apiClient.getContracts();
+    
+    // 🔥 Fetch both contracts AND the user's profile at the same time
+    final results = await Future.wait([
+      _apiClient.getContracts(),
+      _apiClient.getProfile(),
+    ]);
     
     if (mounted) {
       setState(() {
-        _contracts = data ?? [];
+        _contracts = (results[0] as List<dynamic>?) ?? [];
+        final profile = results[1] as Map<String, dynamic>?;
+        if (profile != null) {
+          _currentUserId = profile['id']; // Extract the ID
+        }
         _isLoading = false;
       });
     }
@@ -44,7 +54,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
     return _contracts.where((c) => c['crop_name'].toString().toLowerCase() == _selectedFilter.toLowerCase()).toList();
   }
 
-  // 🔥 UPGRADED: A beautiful Bottom Sheet instead of a boring dialog
   void _showPledgeBottomSheet(int contractId, String cropName, double targetWeight, double currentProgress) {
     final TextEditingController weightController = TextEditingController();
     bool isSubmitting = false;
@@ -179,33 +188,13 @@ class _ContractsScreenState extends State<ContractsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        backgroundColor: Colors.green.shade800,
-        elevation: 0,
-        centerTitle: true,
-        title: Text("Marketplace", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
-        actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 16),
-            child: IconButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const MyDeliveriesScreen()),
-                );
-              },
-              icon: const Icon(LucideIcons.truck, color: Colors.white),
-              tooltip: "My Deliveries",
-            ),
-          )
-        ],
-      ),
+      // 🔥 Removed AppBar since this is now likely inside the ContractsHubScreen TabBarView
       body: Column(
         children: [
           // 🔥 Custom Header Section
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.only(left: 20, right: 20, bottom: 20, top: 10),
+            padding: const EdgeInsets.only(left: 20, right: 20, bottom: 20, top: 20),
             decoration: BoxDecoration(
               color: Colors.green.shade800,
               borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(30), bottomRight: Radius.circular(30)),
@@ -277,9 +266,15 @@ class _ContractsScreenState extends State<ContractsScreen> {
                           double progress = totalPledged / targetWeight;
                           if (progress > 1.0) progress = 1.0;
 
+                          // 🔥 CHECK IF THE USER ALREADY PLEDGED TO THIS CONTRACT
+                          bool hasPledged = false;
+                          if (_currentUserId != null) {
+                            hasPledged = pledges.any((p) => p['farmer_id'] == _currentUserId);
+                          }
+
                           return FadeInUp(
                             delay: Duration(milliseconds: 100 * index),
-                            child: _buildPremiumContractCard(contract, totalPledged, targetWeight, progress),
+                            child: _buildPremiumContractCard(contract, totalPledged, targetWeight, progress, hasPledged),
                           );
                         },
                       ),
@@ -290,7 +285,8 @@ class _ContractsScreenState extends State<ContractsScreen> {
     );
   }
 
-  Widget _buildPremiumContractCard(Map<String, dynamic> contract, double totalPledged, double targetWeight, double progress) {
+  // 🔥 ADDED `hasPledged` PARAMETER HERE
+  Widget _buildPremiumContractCard(Map<String, dynamic> contract, double totalPledged, double targetWeight, double progress, bool hasPledged) {
     bool isFulfilled = progress >= 1.0;
 
     return Container(
@@ -399,32 +395,56 @@ class _ContractsScreenState extends State<ContractsScreen> {
             padding: const EdgeInsets.all(20),
             child: SizedBox(
               width: double.infinity,
-              child: ElevatedButton(
-                onPressed: isFulfilled ? null : () => _showPledgeBottomSheet(contract['id'], contract['crop_name'], targetWeight, totalPledged),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: isFulfilled ? Colors.grey.shade200 : Colors.green.shade700,
-                  foregroundColor: isFulfilled ? Colors.grey.shade500 : Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  elevation: 0,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(isFulfilled ? LucideIcons.checkCircle : LucideIcons.truck, size: 18),
-                    const SizedBox(width: 10),
-                    Text(
-                      isFulfilled ? "Contract Fulfilled" : "Pledge to Fulfill",
-                      style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 15),
-                    ),
-                  ],
-                ),
-              ),
+              child: _buildDynamicActionButton(contract, hasPledged, isFulfilled, targetWeight, totalPledged),
             ),
           )
         ],
       ),
     );
+  }
+
+  // 🔥 THE NEW SMART BUTTON LOGIC
+  Widget _buildDynamicActionButton(Map<String, dynamic> contract, bool hasPledged, bool isFulfilled, double targetWeight, double totalPledged) {
+    if (hasPledged) {
+      return ElevatedButton.icon(
+        onPressed: () {
+          // Send them to their Delivery Squads!
+          Navigator.push(context, MaterialPageRoute(builder: (_) => const DeliverySquadsScreen()));
+        },
+        icon: const Icon(LucideIcons.users, size: 18, color: Colors.white),
+        label: Text("View Delivery Squad", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.purple.shade600,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          elevation: 0,
+        ),
+      );
+    } else if (isFulfilled) {
+      return ElevatedButton.icon(
+        onPressed: null,
+        icon: const Icon(LucideIcons.checkCircle, size: 18, color: Colors.grey),
+        label: Text("Contract Fulfilled", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.grey.shade500)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.grey.shade200,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          elevation: 0,
+        ),
+      );
+    } else {
+      return ElevatedButton.icon(
+        onPressed: () => _showPledgeBottomSheet(contract['id'], contract['crop_name'], targetWeight, totalPledged),
+        icon: const Icon(LucideIcons.truck, size: 18, color: Colors.white),
+        label: Text("Pledge to Fulfill", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.green.shade700,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          elevation: 0,
+        ),
+      );
+    }
   }
 
   Widget _buildEmptyState() {
