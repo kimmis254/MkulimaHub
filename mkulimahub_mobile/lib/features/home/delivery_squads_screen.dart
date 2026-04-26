@@ -3,9 +3,14 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:animate_do/animate_do.dart';
+import 'package:mkulimahub_mobile/features/home/my_deliveries_screen.dart';
+import 'package:mkulimahub_mobile/features/home/squad_chat_screen.dart';
 
 class DeliverySquadsScreen extends StatefulWidget {
-  const DeliverySquadsScreen({super.key});
+  // 🔥 Accept the specific Contract ID!
+  final int? targetSquadId;
+  
+  const DeliverySquadsScreen({super.key, this.targetSquadId});
 
   @override
   State<DeliverySquadsScreen> createState() => _DeliverySquadsScreenState();
@@ -15,6 +20,9 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
   final ApiClient _apiClient = ApiClient();
   bool _isLoading = true;
   List<dynamic> _myPledges = [];
+  
+  // 🔥 1. Add this variable to store the logged-in user's ID
+  int? _currentUserId; 
 
   @override
   void initState() {
@@ -24,17 +32,33 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
 
   Future<void> _loadMyPledges() async {
     setState(() => _isLoading = true);
-    final data = await _apiClient.getMyPledges(); 
+    
+    // 🔥 2. Fetch the pledges AND the user's profile at the exact same time!
+    final results = await Future.wait([
+      _apiClient.getMyPledges(),
+      _apiClient.getProfile(),
+    ]);
+    
     if (mounted) {
       setState(() {
-        _myPledges = data;
+        final data = results[0] as List<dynamic>;
+        final profile = results[1] as Map<String, dynamic>?;
+
+        // Save the user's ID!
+        if (profile != null) {
+          _currentUserId = profile['id'];
+        }
+
+        if (widget.targetSquadId != null) {
+          _myPledges = data.where((p) => p['bulk_request'] != null && p['bulk_request']['id'] == widget.targetSquadId).toList();
+        } else {
+          _myPledges = data;
+        }
         _isLoading = false;
       });
     }
   }
 
-  // 🔥 NEW: Beautiful Voting Bottom Sheet
-  // 🔥 UPGRADED: Dynamic Squad Voting Bottom Sheet
   void _showVotingSheet(Map<String, dynamic> bulkRequest) {
     final TextEditingController pitchController = TextEditingController();
     bool isSubmitting = false;
@@ -237,12 +261,168 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
       }
     );
   }
+  void _showEditPledgeSheet(int pledgeId, double currentWeight) {
+    final TextEditingController weightController = TextEditingController(text: currentWeight.toStringAsFixed(0));
+    bool isSubmitting = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+              child: Container(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
+                    const SizedBox(height: 20),
+                    Text("Manage Your Pledge", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 20),
+                    
+                    TextField(
+                      controller: weightController,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: "Pledged Weight (KG)",
+                        filled: true,
+                        fillColor: Colors.grey.shade50,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: isSubmitting ? null : () async {
+                          final double? newWeight = double.tryParse(weightController.text);
+                          if (newWeight == null || newWeight <= 0) return;
+
+                          setSheetState(() => isSubmitting = true);
+                          final error = await _apiClient.updatePledge(pledgeId, newWeight);
+                          
+                          if (mounted) {
+                            Navigator.pop(context);
+                            if (error == null) {
+                              _loadMyPledges(); // Refresh screen!
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pledge updated!"), backgroundColor: Colors.green));
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                            }
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green.shade700,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: isSubmitting 
+                            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : Text("Update Weight", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton.icon(
+                        onPressed: () async {
+                          // Show confirmation dialog before deleting
+                          bool confirm = await showDialog(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text("Cancel Pledge?"),
+                              content: const Text("Are you sure you want to withdraw from this squad?"),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("No")),
+                                TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Yes, Cancel", style: TextStyle(color: Colors.red))),
+                              ],
+                            )
+                          ) ?? false;
+
+                          if (confirm) {
+                            setSheetState(() => isSubmitting = true);
+                            final error = await _apiClient.deletePledge(pledgeId);
+                            if (mounted) {
+                              Navigator.pop(context);
+                              if (error == null) {
+                                _loadMyPledges();
+                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pledge removed."), backgroundColor: Colors.red));
+                              }
+                            }
+                          }
+                        },
+                        icon: const Icon(LucideIcons.trash2, color: Colors.red, size: 16),
+                        label: Text("Cancel My Pledge", style: GoogleFonts.poppins(color: Colors.red, fontWeight: FontWeight.bold)),
+                      ),
+                    )
+                  ],
+                ),
+              ),
+            );
+          }
+        );
+      }
+    );
+  }
+
+  Widget _buildPremiumButton({
+    required String title,
+    required IconData icon,
+    required List<Color> gradientColors,
+    required VoidCallback? onTap,
+    bool isPulsing = false,
+  }) {
+    Widget button = AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: onTap == null ? null : LinearGradient(colors: gradientColors, begin: Alignment.topLeft, end: Alignment.bottomRight),
+        color: onTap == null ? Colors.grey.shade200 : null,
+        borderRadius: BorderRadius.circular(16),
+        // Add a soft glowing drop-shadow that matches the gradient!
+        boxShadow: onTap == null ? [] : [
+          BoxShadow(color: gradientColors.last.withOpacity(0.4), blurRadius: 15, offset: const Offset(0, 6))
+        ]
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: onTap == null ? Colors.grey.shade400 : Colors.white, size: 18),
+                const SizedBox(width: 10),
+                Text(
+                  title, 
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 15, color: onTap == null ? Colors.grey.shade500 : Colors.white)
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // If it's a critical action, add a soft pulse animation!
+return isPulsing ? Pulse(duration: const Duration(seconds: 2), child: button) : button;  
+}
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
-      // 🔥 Removed default AppBar to match the custom curved header style!
+
       body: Column(
         children: [
           // 🔥 Premium Custom Curved Header
@@ -256,8 +436,9 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text("Active Deliveries", style: GoogleFonts.poppins(color: Colors.green.shade100, fontSize: 14)),
-                Text("Your Fulfillment Squads", style: GoogleFonts.poppins(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+                // 🔥 Dynamic Titles!
+                Text(widget.targetSquadId != null ? "Squad Details" : "Active Deliveries", style: GoogleFonts.poppins(color: Colors.green.shade100, fontSize: 14)),
+                Text(widget.targetSquadId != null ? "Contract Fulfillment" : "Your Fulfillment Squads", style: GoogleFonts.poppins(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 10),
                 Text("Coordinate with other farmers to hit bulk targets.", style: GoogleFonts.poppins(color: Colors.green.shade50, fontSize: 12)),
               ],
@@ -301,10 +482,20 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                         
                         double targetWeight = (bulkRequest['target_weight_kg'] ?? 0).toDouble();
                         double pricePerKg = (bulkRequest['price_per_kg'] ?? 0).toDouble();
-                        double pledgedWeight = (pledge['pledged_weight_kg'] ?? 0).toDouble();
+                        double myPledgedWeight = (pledge['pledged_weight_kg'] ?? 0).toDouble();
 
-                        // Calculate visual progress (Assuming for UI purposes until backend sends total)
-                        double progress = (pledgedWeight * 3) / targetWeight; 
+                        // 🔥 THE FIX: Calculate the REAL total weight from the squad roster!
+                        double totalSquadWeight = 0;
+                        if (bulkRequest['squad_roster'] != null) {
+                          for (var member in bulkRequest['squad_roster']) {
+                            totalSquadWeight += (member['pledge_kg'] ?? 0).toDouble();
+                          }
+                        } else {
+                          totalSquadWeight = myPledgedWeight; // Fallback
+                        }
+
+                        // Calculate the true progress percentage
+                        double progress = targetWeight > 0 ? (totalSquadWeight / targetWeight) : 0; 
                         if (progress > 1.0) progress = 1.0;
 
                         return FadeInUp(
@@ -356,8 +547,27 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
+                                      // Added the exact Contract ID
+                                      Text("Contract #BR-${bulkRequest['id'].toString().padLeft(4, '0')}", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.orange.shade700)),
+                                      const SizedBox(height: 4),
+                                      
                                       Text("${targetWeight}kg of $cropName", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
                                       const SizedBox(height: 8),
+                                      
+                                      // Added Price Per KG and Total Value
+                                      Row(
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(6)),
+                                            child: Text("KES $pricePerKg / kg", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade700)),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Text("Total: KES ${targetWeight * pricePerKg}", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 12),
+                                      
                                       Row(
                                         children: [
                                           const Icon(LucideIcons.mapPin, size: 14, color: Colors.grey),
@@ -375,7 +585,8 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                             children: [
                                               Text("Squad Progress", style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade500, fontWeight: FontWeight.w600)),
-                                              Text("${(progress * 100).toStringAsFixed(0)}%", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.orange.shade700)),
+                                              // 🔥 Show the exact KG!
+                                              Text("${totalSquadWeight.toStringAsFixed(0)} / ${targetWeight.toStringAsFixed(0)} KG", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.orange.shade700)),
                                             ],
                                           ),
                                           const SizedBox(height: 8),
@@ -392,72 +603,161 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                       ),
                                       
                                       const Divider(height: 30),
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Text("My Pledge", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
-                                              Text("$pledgedWeight KG", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green.shade700)),
-                                            ],
-                                          ),
-                                          Column(
-                                            crossAxisAlignment: CrossAxisAlignment.end,
-                                            children: [
-                                              Text("Est. Payout", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
-                                              Text("KES ${pledgedWeight * pricePerKg}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.teal.shade700)),
-                                            ],
-                                          ),
-                                        ],
+                                      // 🔥 NEW: SQUAD ROSTER SECTION
+                                      Text("Squad Roster", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                      const SizedBox(height: 10),
+                                      
+                                      // Map through the team members sent from the backend
+                                      if (bulkRequest['squad_roster'] != null)
+                                        ...((bulkRequest['squad_roster'] as List).map((member) {
+                                          bool isMe = member['farmer_id'] == _currentUserId; 
+                                          
+                                          return AnimatedContainer(
+                                            duration: const Duration(milliseconds: 200),
+                                            margin: const EdgeInsets.only(bottom: 10),
+                                            decoration: BoxDecoration(
+                                              // Modern soft gradient for the user, flat crisp white for others
+                                              gradient: isMe 
+                                                ? LinearGradient(colors: [Colors.green.shade50, Colors.teal.shade50], begin: Alignment.topLeft, end: Alignment.bottomRight) 
+                                                : null,
+                                              color: isMe ? null : Colors.white,
+                                              borderRadius: BorderRadius.circular(16),
+                                              border: Border.all(
+                                                color: isMe ? Colors.green.shade300 : Colors.grey.shade100, 
+                                                width: isMe ? 1.5 : 1
+                                              ),
+                                              // A soft floating glow for the user's card
+                                              boxShadow: isMe ? [
+                                                BoxShadow(color: Colors.green.shade700.withOpacity(0.12), blurRadius: 12, offset: const Offset(0, 4))
+                                              ] : [],
+                                            ),
+                                            child: Material(
+                                              color: Colors.transparent, // Ensures the ripple shows on top of the gradient!
+                                              child: InkWell(
+                                                onTap: isMe ? () => _showEditPledgeSheet(pledge['id'], member['pledge_kg'].toDouble()) : null,
+                                                borderRadius: BorderRadius.circular(16),
+                                                child: Padding(
+                                                  padding: const EdgeInsets.all(14),
+                                                  child: Row(
+                                                    children: [
+                                                      CircleAvatar(
+                                                        radius: 18, // Slightly larger for a premium feel
+                                                        backgroundColor: isMe ? Colors.green.shade200 : Colors.orange.shade50,
+                                                        child: Icon(LucideIcons.user, size: 18, color: isMe ? Colors.green.shade800 : Colors.orange.shade400),
+                                                      ),
+                                                      const SizedBox(width: 15),
+                                                      Expanded(
+                                                        child: Column(
+                                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                                          children: [
+                                                            Row(
+                                                              children: [
+                                                                Text(
+                                                                  isMe ? "You" : member['name'], 
+                                                                  style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: isMe ? Colors.green.shade900 : Colors.black87)
+                                                                ),
+                                                                if (isMe) ...[
+                                                                  const SizedBox(width: 6),
+                                                                  Icon(LucideIcons.edit2, size: 14, color: Colors.green.shade700)
+                                                                ]
+                                                              ],
+                                                            ),
+                                                            const SizedBox(height: 2),
+                                                            Text(
+                                                              "${member['pledge_kg']} KG Contributed", 
+                                                              style: GoogleFonts.poppins(fontSize: 12, color: isMe ? Colors.teal.shade800 : Colors.grey.shade500, fontWeight: FontWeight.w500)
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                      Column(
+                                                        crossAxisAlignment: CrossAxisAlignment.end,
+                                                        children: [
+                                                          if (isMe) ...[
+                                                            Text("Est. Payout", style: GoogleFonts.poppins(fontSize: 10, color: Colors.teal.shade600, fontWeight: FontWeight.w600)),
+                                                            Text(
+                                                              "KES ${member['payout_kes']}", 
+                                                              style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.green.shade800)
+                                                            ),
+                                                          ] else ...[
+                                                            Text("Payout", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade400, fontWeight: FontWeight.w600)),
+                                                            Text(
+                                                              "Hidden", 
+                                                              style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.grey.shade300)
+                                                            ),
+                                                          ]
+                                                        ],
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        })),
+
+                                      const SizedBox(height: 25),
+
+                                      _buildPremiumButton(
+                                        title: "Open Squad Chat",
+                                        icon: LucideIcons.messageCircle,
+                                        gradientColors: [Colors.teal.shade500, Colors.teal.shade800],
+                                        onTap: () {
+                                          showModalBottomSheet(
+                                            context: context,
+                                            isScrollControlled: true,
+                                            backgroundColor: Colors.transparent,
+                                            builder: (context) => SquadChatSheet(bulkRequestId: bulkRequest['id']),
+                                          );
+                                        },
                                       ),
+                                      const SizedBox(height: 15),
                                       
-                                      const SizedBox(height: 20),
-                                      
-                                      // 🔥 DYNAMIC ACTION BUTTONS
-                                      if (isVotingPhase)
-                                        SizedBox(
-                                          width: double.infinity,
-                                          child: ElevatedButton.icon(
-                                            onPressed: () => _showVotingSheet(bulkRequest),
-                                            icon: const Icon(LucideIcons.vote, color: Colors.white, size: 16),
-                                            label: Text("Elect Squad Coordinator", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.white)),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Colors.purple.shade600,
-                                              padding: const EdgeInsets.symmetric(vertical: 14),
-                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                              elevation: 0
-                                            ),
-                                          ),
+                                      // 🔥 DYNAMIC ACTION BUTTONS (Your existing logic)
+                                      if (squadStatus == 'fulfilled')
+                                        _buildPremiumButton(
+                                          title: "Order 100% Fulfilled",
+                                          icon: LucideIcons.checkCircle,
+                                          gradientColors: [Colors.green.shade400, Colors.green.shade700],
+                                          onTap: null, // Leaves it gracefully disabled
                                         )
-                                      else if (isCoordinator)
-                                        SizedBox(
-                                          width: double.infinity,
-                                          child: OutlinedButton.icon(
-                                            onPressed: () {},
-                                            icon: const Icon(LucideIcons.userCheck, color: Colors.green, size: 16),
-                                            label: Text("Drop-off Coordinator Elected", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-                                            style: OutlinedButton.styleFrom(
-                                              foregroundColor: Colors.green.shade700,
-                                              side: BorderSide(color: Colors.green.shade300, width: 2),
-                                              padding: const EdgeInsets.symmetric(vertical: 14),
-                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
-                                            ),
-                                          ),
+                                        
+                                      else if (squadStatus == 'active')
+                                        if (bulkRequest['coordinator_id'] == _currentUserId)
+                                          _buildPremiumButton(
+                                            title: "👑 You are the Coordinator!",
+                                            icon: LucideIcons.crown,
+                                            gradientColors: [Colors.blue.shade400, Colors.blue.shade800],
+                                            onTap: () {
+                                              Navigator.push(context, MaterialPageRoute(builder: (_) => const MyDeliveriesScreen()));
+                                            }, 
+                                            isPulsing: true, 
+                                          )
+                                        else
+                                          _buildPremiumButton(
+                                            title: "Deliver to Coordinator",
+                                            icon: LucideIcons.truck,
+                                            gradientColors: [Colors.orange.shade400, Colors.deepOrange.shade600],
+                                            onTap: () {
+                                              Navigator.push(context, MaterialPageRoute(builder: (_) => const MyDeliveriesScreen()));
+                                            }, 
+                                          )
+                                          
+                                      else if (squadStatus == 'voting')
+                                        _buildPremiumButton(
+                                          title: "Elect Squad Coordinator",
+                                          icon: LucideIcons.vote,
+                                          gradientColors: [Colors.purple.shade400, Colors.deepPurple.shade700],
+                                          onTap: () => _showVotingSheet(bulkRequest),
+                                          isPulsing: true, // Pulses to remind them they need to vote!
                                         )
+                                        
                                       else
-                                        SizedBox(
-                                          width: double.infinity,
-                                          child: ElevatedButton.icon(
-                                            onPressed: null,
-                                            icon: const Icon(LucideIcons.users, color: Colors.grey, size: 16),
-                                            label: Text("Waiting for more farmers...", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Colors.grey.shade200,
-                                              padding: const EdgeInsets.symmetric(vertical: 14),
-                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                            ),
-                                          ),
+                                        _buildPremiumButton(
+                                          title: "Waiting for more farmers...",
+                                          icon: LucideIcons.users,
+                                          gradientColors: [Colors.grey.shade300, Colors.grey.shade400],
+                                          onTap: null, 
                                         )
                                     ],
                                   ),

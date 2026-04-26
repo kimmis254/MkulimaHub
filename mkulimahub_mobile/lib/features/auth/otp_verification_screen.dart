@@ -193,7 +193,10 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           );
         }
       } else if (widget.pendingGoogleData != null) {
-        final apiStatus = await _apiClient.googleRegister(widget.pendingGoogleData!);
+        final apiStatus = await _apiClient.googleRegister(
+  idToken: widget.pendingGoogleData!['idToken'],
+  phoneNumber: widget.pendingGoogleData!['phoneNumber'],
+);
 
         if (apiStatus == 'needs_profile') {
           setState(() => _isLoading = false);

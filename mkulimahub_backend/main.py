@@ -28,6 +28,9 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import joinedload
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+import json
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -53,17 +56,83 @@ def scheduled_clustering_job():
     finally:
         db.close()
 
-# Use lifespan events (FastAPI 0.93+) to handle startup/shutdown of the scheduler cleanly
+def scheduled_ml_predictions():
+    print("🧠 [SCHEDULER] Waking up to train Prophet Models...")
+    db: Session = SessionLocal()
+    try:
+        # 1. Figure out which crops we actually track
+        crops = db.query(models.MarketPrice.commodity).distinct().all()
+        crop_list = [c[0] for c in crops if c[0]]
+        
+        # We will do National level first, and you can expand this to counties later!
+        for crop in crop_list:
+            for market_type in ["Wholesale", "Retail"]:
+                cache_key = f"{crop.lower()}_national_{market_type.lower()}"
+                print(f"📈 Training model for {cache_key}...")
+                
+                # Fetch historical data
+                records = db.query(models.MarketPrice.date, models.MarketPrice.price_kes).filter(
+                    models.MarketPrice.commodity.ilike(f"%{crop}%"),
+                    models.MarketPrice.market_type.ilike(f"%{market_type}%")
+                ).all()
+                
+                if len(records) < 3:
+                    continue # Skip crops with no data
+                
+                df = pd.DataFrame([{"ds": r.date, "y": r.price_kes} for r in records])
+                df['ds'] = pd.to_datetime(df['ds'])
+                df = df.groupby('ds', as_index=False)['y'].mean().sort_values(by='ds')
+                
+                # Train Prophet!
+                m = Prophet(daily_seasonality=False, yearly_seasonality=True)
+                m.fit(df)
+                
+                future = m.make_future_dataframe(periods=30)
+                forecast = m.predict(future)
+                
+                # Format exactly how Flutter wants it
+                historical_prices = df['y'].round(2).tolist()
+                future_forecast = forecast[forecast['ds'] > df['ds'].max()]
+                
+                payload = {
+                    "historical_dates": df['ds'].dt.strftime('%Y-%m-%d').tolist(),
+                    "historical_prices": historical_prices,
+                    "future_dates": future_forecast['ds'].dt.strftime('%Y-%m-%d').tolist(),
+                    "future_prices": future_forecast['yhat'].round(2).tolist(),
+                    "current_price": float(historical_prices[-1]),
+                    "predicted_price": float(future_forecast['yhat'].iloc[-1]) if not future_forecast.empty else float(historical_prices[-1]),
+                    "trend": "rising" if (future_forecast['yhat'].iloc[-1] if not future_forecast.empty else 0) > float(historical_prices[-1]) else "falling",
+                    "fallback_type": "national"
+                }
+                
+                # Save to Cache Database
+                existing = db.query(models.CachedPrediction).filter_by(cache_key=cache_key).first()
+                if existing:
+                    existing.payload = payload
+                    existing.last_updated = datetime.utcnow()
+                else:
+                    new_cache = models.CachedPrediction(cache_key=cache_key, payload=payload)
+                    db.add(new_cache)
+                    
+                db.commit()
+                
+        print("✅ [SCHEDULER] All ML Models Trained and Cached!")
+    except Exception as e:
+        print(f"❌ [SCHEDULER ERROR]: {e}")
+    finally:
+        db.close()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("🚀 Starting MkulimaHub API and Background Scheduler...")
     scheduler = BackgroundScheduler()
-    # Runs the clustering algorithm every hour. Change hours=1 to minutes=1 for quick testing!
     scheduler.add_job(scheduled_clustering_job, 'interval', hours=1)
+    
+    scheduler.add_job(scheduled_ml_predictions, 'cron', hour=2, minute=0)
+    
     scheduler.start()
     
-    yield # The app runs here
-    
+    yield
     print("🛑 Shutting down Scheduler...")
     scheduler.shutdown()
 
@@ -87,64 +156,83 @@ def get_db():
 # ==========================================
 # 3. AUTHENTICATION & SECURITY ENDPOINTS
 # ==========================================
+GOOGLE_CLIENT_ID = "654543955611-g18qameesn4daglsc8pup7rkj6c1n541.apps.googleusercontent.com"
 
+# 🔥 We only need ONE schema now. The token holds the email, name, and UID!
 class GoogleAuthRequest(BaseModel):
-    email: str
-    full_name: str
-    google_uid: str
-
-class GoogleRegisterRequest(BaseModel):
-    email: str
-    full_name: str
-    google_uid: str
-    phone_number: str
+    id_token: str
+    phone_number: Optional[str] = None
 
 @app.post("/auth/google")
 @limiter.limit("5/minute")
-def google_login(
-    request: Request,                   
-    payload: GoogleAuthRequest,         
-    db: Session = Depends(get_db)
-):
-    user = db.query(models.User).filter(models.User.email == payload.email).first()
+def google_login(request: Request, payload: GoogleAuthRequest, db: Session = Depends(get_db)):
+    try:
+        # Verify the token cryptographically with Google's servers
+        idinfo = id_token.verify_oauth2_token(payload.id_token, google_requests.Request(), GOOGLE_CLIENT_ID,clock_skew_in_seconds=10)
+        
+        # If we get here, the token is 100% real. Extract the verified email.
+        verified_email = idinfo['email']
+        
+    except ValueError as e:
+        # 🔥 THE SNITCH: This will print the EXACT reason Google rejected it to your terminal!
+        print(f"🚨 GOOGLE TOKEN REJECTED: {str(e)}") 
+        
+        # 🔥 It will also send the exact error directly to your phone screen!
+        raise HTTPException(status_code=401, detail=f"Token Error: {str(e)}")
+
+    user = db.query(models.User).filter(models.User.email == verified_email).first()
     
     if user:
         if not user.phone_number:
             return {"status": "needs_phone"}
             
         access_token = security.create_access_token(data={"sub": str(user.id), "role": user.role})
-        return {
-            "access_token": access_token, 
-            "token_type": "bearer", 
-            "status": "success"
-        }
+        return {"access_token": access_token, "token_type": "bearer", "status": "success"}
     else:
         return {"status": "needs_phone"}
 
 @app.post("/auth/google-register")
 @limiter.limit("5/minute")
-def google_register(request: Request, payload: GoogleRegisterRequest, db: Session = Depends(get_db)):
+def google_register(request: Request, payload: GoogleAuthRequest, db: Session = Depends(get_db)):
+    if not payload.phone_number:
+        raise HTTPException(status_code=400, detail="Phone number is required for registration.")
+        
+    try:
+        # 🔥 THE FIX: Securely verify the token for registration too!
+        idinfo = id_token.verify_oauth2_token(payload.id_token, google_requests.Request(), GOOGLE_CLIENT_ID,clock_skew_in_seconds=10)
+        
+        # Extract the iron-clad data straight from Google
+        verified_email = idinfo['email']
+        verified_name = idinfo.get('name', 'New Farmer')
+        verified_uid = idinfo['sub']
+        
+    except ValueError as e:
+        
+        # 🔥 It will also send the exact error directly to your phone screen!
+        raise HTTPException(status_code=401, detail=f"Token Error: {str(e)}")
+
+    # Check for duplicate phone numbers
     existing_phone = db.query(models.User).filter(models.User.phone_number == payload.phone_number).first()
-    if existing_phone and existing_phone.email != payload.email:
+    if existing_phone and existing_phone.email != verified_email:
         raise HTTPException(status_code=400, detail="Phone number already registered to another account.")
     
-    user = db.query(models.User).filter(models.User.email == payload.email).first()
+    user = db.query(models.User).filter(models.User.email == verified_email).first()
     
     if user:
         user.phone_number = payload.phone_number
-        db.commit()
-        db.refresh(user)
     else:
+        # Use the mathematically verified data from Google, not the user's payload!
         user = models.User(
-            full_name=payload.full_name,
-            email=payload.email,
-            google_uid=payload.google_uid,
+            full_name=verified_name,
+            email=verified_email,
+            google_uid=verified_uid,
             phone_number=payload.phone_number,
             role="farmer"
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+    
+    db.commit()
+    db.refresh(user)
         
     access_token = security.create_access_token(data={"sub": str(user.id), "role": user.role})
     return {"access_token": access_token, "token_type": "bearer", "status": "needs_profile"}
@@ -170,38 +258,46 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
         
     return user
-
 @app.get("/")
 def read_root():
     return {"message": "MkulimaHub API is active!", "status": "secure"}
 
 @app.post("/auth/register", response_model=schemas.UserResponse)
 def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    # 1. Check if the phone number is already taken
     existing_user = db.query(models.User).filter(models.User.phone_number == user.phone_number).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Phone number already registered")
 
-    # 2. Create the user, making sure to use `user.` for all fields!
     new_user = models.User(
         full_name=user.full_name,
         phone_number=user.phone_number,
         hashed_password=security.get_password_hash(user.password),
-        role=user.role,                 # 🔥 FIXED: Changed 'payload.role' to 'user.role'
-        latitude=user.latitude,         # 🔥 Added so Farmer GPS coordinates don't get lost
-        longitude=user.longitude        # 🔥 Added so Farmer GPS coordinates don't get lost
+        role=user.role,                 
+        latitude=user.latitude,         
+        longitude=user.longitude        
     )
 
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    return new_user
+    # 🔥 THE FIX: Wrap the database writes safely
+    try:
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        return new_user
+    except Exception as e:
+        db.rollback() # Safely cancel the corrupted transaction!
+        print(f"❌ Database error during registration: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create account. Please try again.")
 
 @app.post("/auth/login", response_model=schemas.Token)
 @limiter.limit("5/minute")
 def login_user(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.phone_number == form_data.username).first()
+    
+    # 🔥 THE FIX: Format the incoming phone number so it perfectly matches the database!
+    search_phone = form_data.username.strip()
+    if search_phone.startswith("+254"):
+        search_phone = "0" + search_phone[4:]
+        
+    user = db.query(models.User).filter(models.User.phone_number == search_phone).first()
     
     if not user or not security.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
@@ -294,10 +390,16 @@ def update_profile(profile_data: schemas.UserProfileUpdate, db: Session = Depend
     for key, value in update_data.items():
         setattr(current_user, key, value) 
 
-    db.add(current_user)
-    db.commit()
-    db.refresh(current_user)
-    return current_user
+    # 🔥 THE FIX: Wrap the save in a try/except block
+    try:
+        db.add(current_user)
+        db.commit()
+        db.refresh(current_user)
+        return current_user
+    except Exception as e:
+        db.rollback()
+        print(f"❌ DB Error updating profile: {e}")
+        raise HTTPException(status_code=500, detail="Could not update profile. Please try again.")
 
 @app.get("/users/me", response_model=schemas.UserRead)
 def get_my_profile(current_user: models.User = Depends(get_current_user)):
@@ -326,10 +428,16 @@ def create_harvest(harvest: schemas.HarvestCreate, db: Session = Depends(get_db)
         weight_kg=harvest.weight_kg,
         price_per_kg=harvest.price_per_kg
     )
-    db.add(new_harvest)
-    db.commit()
-    db.refresh(new_harvest)
-    return {"message": "Harvest posted successfully", "id": new_harvest.id}
+    
+    try:
+        db.add(new_harvest)
+        db.commit()
+        db.refresh(new_harvest)
+        return {"message": "Harvest posted successfully", "id": new_harvest.id}
+    except Exception as e:
+        db.rollback()
+        print(f"❌ DB Error creating harvest: {e}")
+        raise HTTPException(status_code=500, detail="Failed to post harvest to the marketplace.")
 
 class HarvestRead(schemas.HarvestCreate):
     id: int
@@ -358,44 +466,74 @@ def get_open_contracts(county: str = None, db: Session = Depends(get_db)):
         query = query.filter(models.BulkRequest.county == county)
     return query.all()
 
-@app.post("/api/contracts/{contract_id}/pledge", response_model=schemas.PledgeRead)
-def create_pledge(contract_id: int, pledge: schemas.PledgeBase, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == contract_id).first()
-    if not contract:
-        raise HTTPException(status_code=404, detail="Contract not found")
-        
-    new_pledge = models.Pledge(
-        bulk_request_id=contract_id,
-        farmer_id=current_user.id,
-        pledged_weight_kg=pledge.pledged_weight_kg
-    )
-    db.add(new_pledge)
-    db.commit()
-    db.refresh(new_pledge)
-    return new_pledge
 
 @app.get("/api/my-pledges")
-def get_my_pledges(
-    db: Session = Depends(get_db), 
-    current_user: models.User = Depends(get_current_user)
-):
+def get_my_pledges(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     if current_user.role != "farmer":
         raise HTTPException(status_code=403, detail="Only farmers can view delivery squads.")
 
-    # 1. Get all pledges for this farmer
-    pledges = db.query(models.Pledge).filter(models.Pledge.farmer_id == current_user.id).all()
+    # 🔥 FIX #3 (N+1 Queries): Use joinedload to fetch the Pledges AND their connected BulkRequests 
+    # all at the exact same time in a single SQL query!
+    pledges = db.query(models.Pledge)\
+                .options(joinedload(models.Pledge.bulk_request))\
+                .filter(models.Pledge.farmer_id == current_user.id).all()
     
     result = []
+    db_needs_commit = False # 🔥 Tracks if we deleted ghosts OR healed a stuck contract
+    
     for p in pledges:
-        req = p.bulk_request # Grab the connected corporate request
+        req = p.bulk_request 
         
-        # 🔥 THE FIX: If the request was deleted, this is a Ghost Pledge!
         if not req:
-            db.delete(p) # Delete the ghost from the database
-            db.commit()
-            continue # Skip sending this ghost to Flutter
+            db.delete(p) 
+            db_needs_commit = True 
+            continue 
 
-        # If it's a real pledge, send it exactly as Flutter expects
+        # ==========================================
+        # 🔥 SELF-HEALING LOGIC (Fixing stuck contracts)
+        # ==========================================
+        if req.squad_status not in ["active", "voting", "fulfilled"]:
+            total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == req.id).scalar() or 0.0
+            
+            if total_pledged >= req.target_weight_kg:
+                unique_farmers = db.query(models.Pledge.farmer_id).filter(models.Pledge.bulk_request_id == req.id).distinct().count()
+                
+                if unique_farmers == 1:
+                    req.coordinator_id = p.farmer_id
+                    req.squad_status = "active"
+                else:
+                    req.squad_status = "voting"
+                
+                db_needs_commit = True
+
+        squad_pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == req.id).all()
+        squad_roster = []
+        for sp in squad_pledges:
+            farmer = db.query(models.User).filter(models.User.id == sp.farmer_id).first()
+            if farmer:
+                squad_roster.append({
+                    "farmer_id": farmer.id,
+                    "name": farmer.full_name,
+                    "pledge_kg": sp.pledged_weight_kg,
+                    "payout_kes": sp.pledged_weight_kg * req.price_per_kg
+                })
+
+        candidates_db = db.query(models.SquadCandidate).filter(models.SquadCandidate.bulk_request_id == req.id).all()
+        candidates_list = []
+        for c in candidates_db:
+            candidates_list.append({
+                "candidate_id": c.id,
+                "farmer_id": c.farmer_id,
+                "farmer_name": c.farmer.full_name if c.farmer else "Unknown",
+                "pitch": c.pitch,
+                "votes": c.votes
+            })
+
+        has_voted = db.query(models.SquadVote).filter(
+            models.SquadVote.bulk_request_id == req.id,
+            models.SquadVote.farmer_id == current_user.id
+        ).first() is not None
+
         result.append({
             "id": p.id,
             "pledged_weight_kg": p.pledged_weight_kg,
@@ -408,13 +546,100 @@ def get_my_pledges(
                 "target_weight_kg": req.target_weight_kg,
                 "price_per_kg": req.price_per_kg,
                 "county": req.county,
-                "squad_status": req.squad_status,
-                "coordinator_id": req.coordinator_id
+                "squad_status": req.squad_status, 
+                "coordinator_id": req.coordinator_id, 
+                "squad_roster": squad_roster,
+                "candidates": candidates_list, 
+                "has_voted": has_voted         
             }
         })
         
+    if db_needs_commit:
+        db.commit() 
+        
     return result
 
+class PledgeUpdate(BaseModel):
+    pledged_weight_kg: float
+
+@app.put("/api/pledges/{pledge_id}", response_model=schemas.PledgeRead)
+def update_pledge(pledge_id: int, payload: PledgeUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # 1. Find the exact pledge
+    pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id, models.Pledge.farmer_id == current_user.id).first()
+    if not pledge:
+        raise HTTPException(status_code=404, detail="Pledge not found.")
+
+    try:
+        # 2. Update the weight
+        pledge.pledged_weight_kg = payload.pledged_weight_kg
+        db.flush()
+
+        # 3. Recalculate the entire contract's math
+        bulk_req = db.query(models.BulkRequest).filter(models.BulkRequest.id == pledge.bulk_request_id).first()
+        total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == bulk_req.id).scalar() or 0.0
+
+        # If it dropped below 100%, reopen the contract!
+        if total_pledged < bulk_req.target_weight_kg:
+            bulk_req.status = "Open"
+        else:
+            bulk_req.status = "fulfilled"
+
+        db.commit()
+        db.refresh(pledge)
+        return pledge
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update pledge.")
+
+@app.delete("/api/pledges/{pledge_id}")
+def delete_pledge(pledge_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id, models.Pledge.farmer_id == current_user.id).first()
+    if not pledge:
+        raise HTTPException(status_code=404, detail="Pledge not found.")
+
+    try:
+        req_id = pledge.bulk_request_id
+        db.delete(pledge)
+        db.flush()
+
+        bulk_req = db.query(models.BulkRequest).filter(models.BulkRequest.id == req_id).first()
+        
+        # 🔥 THE FIX: Clean up their specific election data!
+        # 1. Remove them from the ballot if they were running
+        db.query(models.SquadCandidate).filter(
+            models.SquadCandidate.bulk_request_id == req_id, 
+            models.SquadCandidate.farmer_id == current_user.id
+        ).delete()
+        
+        # 2. Remove any votes they cast
+        db.query(models.SquadVote).filter(
+            models.SquadVote.bulk_request_id == req_id, 
+            models.SquadVote.farmer_id == current_user.id
+        ).delete()
+
+        # 3. IF THEY WERE THE COORDINATOR, DEPOSE THEM!
+        if bulk_req.coordinator_id == current_user.id:
+            bulk_req.coordinator_id = None
+            bulk_req.squad_status = "voting" # Force the remaining farmers to elect a new leader!
+
+        # Recalculate math
+        total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == req_id).scalar() or 0.0
+
+        if total_pledged < bulk_req.target_weight_kg:
+            bulk_req.status = "Open"
+            
+        # If everyone left the squad, completely reset the election!
+        if total_pledged == 0:
+            bulk_req.squad_status = "gathering"
+            bulk_req.coordinator_id = None
+            db.query(models.SquadCandidate).filter(models.SquadCandidate.bulk_request_id == req_id).delete()
+            db.query(models.SquadVote).filter(models.SquadVote.bulk_request_id == req_id).delete()
+
+        db.commit()
+        return {"message": "Pledge deleted successfully."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete pledge.")
 # ==========================================
 # 6. HUBS, CLUSTERS, & CO-OP CHAT
 # ==========================================
@@ -480,22 +705,33 @@ def admin_trigger_clustering(crop: str = "Maize", db: Session = Depends(get_db))
     return {"message": f"Successfully created {created} new permanent Hubs."}
 
 @app.get("/api/clusters")
-def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db),current_user: models.User = Depends(get_current_user)):
-    """
-    NEW FASTER ENDPOINT: Pulls permanently frozen Hubs from the DB instead of calculating on the fly.
-    """
+def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     query = db.query(models.Hub)
     if crop and crop != 'All':
         query = query.filter(models.Hub.crop.ilike(f"%{crop}%"))
     
     hubs = query.all()
     
+    # 🔥 THE FIX (N+1 Solution): Grab all Hub IDs, then fetch ALL farmers in exactly ONE database query!
+    hub_ids = [h.id for h in hubs]
+    all_hub_members = db.query(models.User).filter(
+        models.User.hub_id.in_(hub_ids),
+        models.User.role == "farmer"
+    ).all()
+    
+    # Group the farmers by hub_id using a fast Python dictionary
+    members_by_hub = {}
+    for member in all_hub_members:
+        if member.hub_id not in members_by_hub:
+            members_by_hub[member.hub_id] = []
+        members_by_hub[member.hub_id].append(member)
+
     # Fetch "Noise" - strictly FARMERS who have GPS but no Hub
     indep_query = db.query(models.User).filter(
         models.User.latitude.isnot(None),
         models.User.longitude.isnot(None),
         models.User.hub_id == None,
-        models.User.role == "farmer"  # 🛑 THIS LOCKS OUT THE BUYERS!
+        models.User.role == "farmer" 
     )
     
     if crop and crop != 'All':
@@ -503,16 +739,12 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db),current_
     
     independent_farmers = indep_query.all()
     
-    # Format Response for Flutter
     final_hubs = []
     total_analyzed = len(independent_farmers)
     
     for h in hubs:
-        # Ensure hub members are only farmers
-        hub_members = db.query(models.User).filter(
-            models.User.hub_id == h.id,
-            models.User.role == "farmer"
-        ).all()
+        # 🔥 Pull from our dictionary instead of hitting the database!
+        hub_members = members_by_hub.get(h.id, [])
         
         if len(hub_members) == 0:
             continue
@@ -658,225 +890,66 @@ KENYA_COUNTIES = [
     "Kisumu", "Homa Bay", "Migori", "Kisii", "Nyamira", "Nairobi"
 ]
 
-@app.post("/api/predict-price") # Standardized endpoint name
+@app.post("/api/predict-price")
 def predict_prices(request: PredictionRequest, db: Session = Depends(get_db)):
-    safe_region = request.region.strip()
-    req_crop = request.commodity.strip()
-    req_type = request.price_type.strip()
+    req_crop = request.commodity.strip().lower()
+    req_type = request.price_type.strip().lower()
+    
+    target_key = f"{req_crop}_national_{req_type}"
+    fallback_key = f"{req_crop}_national_retail" if req_type == "wholesale" else f"{req_crop}_national_wholesale"
 
-    fallback_type = "none"
-
-    def get_db_data(target_county, target_crop, target_type):
-        # 🔥 THE FIX: Use the actual PostgreSQL column names (date, price_kes, market_type)
-        query = db.query(models.MarketPrice.date, models.MarketPrice.price_kes).filter(
-            models.MarketPrice.commodity.ilike(f"%{target_crop}%"),
-            models.MarketPrice.market_type.ilike(f"%{target_type}%")
-        )
-        if target_county:
-            query = query.filter(models.MarketPrice.county.ilike(f"%{target_county}%"))
-            
-        records = query.all()
-        if not records:
-            return pd.DataFrame()
-            
-        # 🔥 THE FIX: Instantly map Postgres names to Prophet names ('ds' and 'y')
-        df = pd.DataFrame([{"ds": r.date, "y": r.price_kes} for r in records])
+    cached_data = db.query(models.CachedPrediction).filter_by(cache_key=target_key).first()
+    
+    if not cached_data:
+        cached_data = db.query(models.CachedPrediction).filter_by(cache_key=fallback_key).first()
         
-        # Clean and group the data
-        df['ds'] = pd.to_datetime(df['ds'])
-        df = df.groupby('ds', as_index=False)['y'].mean()
-        df = df.sort_values(by='ds')
-        return df
-
-    # 1. Try exact match
-    df_filtered = get_db_data(safe_region, req_crop, req_type)
-
-    # 2. Fallback: Same county, different market type
-    if df_filtered.empty:
-        alt_type = "Retail" if req_type.lower() == "wholesale" else "Wholesale"
-        df_filtered = get_db_data(safe_region, req_crop, alt_type)
-        if not df_filtered.empty:
-            fallback_type = f"alt_type_{alt_type.lower()}"
-
-    # 3. Fallback: National average, exact market type
-    if df_filtered.empty:
-        df_filtered = get_db_data(None, req_crop, req_type)
-        if not df_filtered.empty:
-            fallback_type = "national"
-        else:
-            # 4. Absolute fallback: National average, alternative market type
-            alt_type = "Retail" if req_type.lower() == "wholesale" else "Wholesale"
-            df_filtered = get_db_data(None, req_crop, alt_type)
-            if not df_filtered.empty:
-                fallback_type = f"national_alt_{alt_type.lower()}"
-
-    if df_filtered.empty:
-        raise HTTPException(status_code=404, detail="Crop not found anywhere in the database.")
-
-    historical_dates = df_filtered['ds'].dt.strftime('%Y-%m-%d').tolist()
-    historical_prices = df_filtered['y'].round(2).tolist()
-
-    # Handle tiny datasets that Prophet can't train on
-    if len(df_filtered) < 3:
-        last_date = df_filtered['ds'].iloc[-1]
-        last_price = float(df_filtered['y'].iloc[-1])
-        future_dates = [(last_date + pd.Timedelta(days=i)).strftime('%Y-%m-%d') for i in [7, 14, 30]]
+    if not cached_data:
+        raise HTTPException(status_code=404, detail="AI predictions for this crop are still processing. Check back soon!")
         
-        return {
-            "historical_dates": historical_dates,
-            "historical_prices": historical_prices,
-            "future_dates": future_dates,
-            "future_prices": [last_price, last_price, last_price],
-            "current_price": last_price,
-            "predicted_price": last_price,
-            "trend": "stable",
-            "fallback_type": "flatline" 
-        }
+    return cached_data.payload
 
-    try:
-        m = Prophet(daily_seasonality=False, yearly_seasonality=True)
-        # Data is already named 'ds' and 'y', so we just pass it straight in!
-        m.fit(df_filtered)
-        
-        # Predict the exact number of days requested
-        future = m.make_future_dataframe(periods=request.days)
-        forecast = m.predict(future)
-        
-        future_forecast = forecast[forecast['ds'] > df_filtered['ds'].max()]
-        future_prices_list = future_forecast['yhat'].round(2).tolist()
-        
-        hist_max = max(historical_prices)
-        hist_min = min(historical_prices)
-        
-        # Cap wild predictions (The Prophet bounds you wrote are excellent)
-        capped_future = []
-        for p in future_prices_list:
-            if p > (hist_max * 1.5): 
-                capped_future.append(round(hist_max * 1.5, 2))
-            elif p < (hist_min * 0.5): 
-                capped_future.append(round(hist_min * 0.5, 2))
-            elif p <= 0:
-                capped_future.append(round(hist_min * 0.8, 2)) 
-            else:
-                capped_future.append(p)
-                
-        future_prices_list = capped_future
-        future_dates_list = future_forecast['ds'].dt.strftime('%Y-%m-%d').tolist()
-        
-        current_price_val = float(historical_prices[-1])
-        predicted_price_val = float(future_prices_list[-1]) if future_prices_list else current_price_val
-        
-        if predicted_price_val > current_price_val * 1.02: 
-            trend_val = "rising"
-        elif predicted_price_val < current_price_val * 0.98: 
-            trend_val = "falling"
-        else:
-            trend_val = "stable" 
-            
-        return {
-            "historical_dates": historical_dates,
-            "historical_prices": historical_prices,
-            "future_dates": future_dates_list,
-            "future_prices": future_prices_list,
-            "current_price": current_price_val,
-            "predicted_price": predicted_price_val,
-            "trend": trend_val,
-            "fallback_type": fallback_type
-        }
-    except Exception as e:
-        print(f"Prophet Error: {e}")
-        raise HTTPException(status_code=500, detail="AI prediction failed")
-
-
-load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
-class ChatRequest(BaseModel):
-    message: str
-    role: str = "farmer"
-    user_name: str = "User"
-    location: str = "Kenya"
-    business_details: str = "Agriculture" 
-
-# ==========================================
-# 🔥 THE AI TOOLBOX (For LIVE data only)
-# ==========================================
 def get_market_spot_price(crop: str, county: str) -> str:
     """Fetches the LIVE current wholesale spot price for a specific crop."""
-    return f"Live Spot Price: {crop.capitalize()} is currently trading at KES 4,500 per 90kg bag in {county.capitalize()}."
+    db = SessionLocal() # Open a quick database session for the AI
+    try:
+        # Ask Postgres for the latest price for this crop and county
+        latest_record = db.query(models.MarketPrice).filter(
+            models.MarketPrice.commodity.ilike(f"%{crop}%"),
+            models.MarketPrice.county.ilike(f"%{county}%")
+        ).order_by(models.MarketPrice.date.desc()).first()
+        
+        if latest_record:
+            return f"Live Spot Price: {crop.capitalize()} is currently trading at KES {latest_record.price_kes} per kg in {county.capitalize()}."
+        return f"I couldn't find any recent market data for {crop} in {county}."
+    finally:
+        db.close() # Always close the session so we don't crash the server!
 
 def predict_price_trend(crop: str) -> str:
     """Predicts the future price trend for a specific crop."""
-    return f"AI Trend Analysis: {crop.capitalize()} prices are expected to drop by 12% next month."
+    db = SessionLocal()
+    try:
+        # Grab the cached AI prediction we built earlier!
+        cached = db.query(models.CachedPrediction).filter(
+            models.CachedPrediction.cache_key.ilike(f"%{crop.lower()}_national%")
+        ).first()
+        
+        if cached and cached.payload:
+            trend = cached.payload.get("trend", "stable")
+            pred_price = cached.payload.get("predicted_price", 0)
+            return f"AI Trend Analysis: {crop.capitalize()} prices are trending {trend} and are expected to hit KES {pred_price} in the next 30 days."
+        return f"AI Models are currently analyzing the 30-day forecast for {crop}. Check back soon."
+    finally:
+        db.close()
 
 def get_weather_forecast(location: str) -> str:
     """Fetches the LIVE weather forecast for a location."""
+    # (Optional: Connect this to a real Weather API later!)
     return f"Live Weather Data for {location}: Sunny, 28°C."
 
 def diagnose_crop_disease(symptoms: str) -> str:
     """Analyzes crop symptoms to predict diseases."""
-    return "ML Prediction: High probability of Fungal Blight."
-
-
-# ==========================================
-# 🔥 THE UNCHAINED ENDPOINT
-# ==========================================
-@app.post("/api/ai-chat")
-def advanced_agri_bot(request: ChatRequest): 
-    
-    if request.role == "buyer":
-        # PERSONA: The Brilliant Procurement Expert
-        system_instruction = f"""
-        You are 'Market Intel', an elite procurement and agricultural supply chain AI for buyers in Kenya on MkulimaHub.
-        
-        USER CONTEXT (Do not explicitly repeat this back to them, just use it to be smart):
-        - Name: {request.user_name}
-        - Location: {request.location}
-        - Business: {request.business_details}
-        
-        CRITICAL INSTRUCTIONS:
-        1. ACT LIKE A BRILLIANT HUMAN EXPERT. Speak naturally, warmly, and confidently. NEVER sound like a robot. Do not use phrases like "Based on the system data" or "According to my parameters."
-        2. USE YOUR VAST INTERNAL KNOWLEDGE. You already know everything about Kenyan agriculture, geography, and crop seasonality (e.g., when mangoes are in season at the Coast vs. Eastern). Answer general questions immediately using your own brain.
-        3. USE TOOLS FOR LIVE DATA. Only use your function tools if the user asks for *live* market prices or specific future trends. 
-        4. BE CONCISE. Keep your answers brief and highly conversational (1-2 short paragraphs).
-        """
-        available_tools = [get_market_spot_price, predict_price_trend]
-        
-    else:
-        # PERSONA: The Friendly Agronomist
-        system_instruction = f"""
-        You are 'MkulimaBot', a highly intelligent, friendly agronomist AI for farmers in Kenya on MkulimaHub.
-        
-        USER CONTEXT (Do not explicitly repeat this back to them, just use it to be smart):
-        - Name: {request.user_name}
-        - Farm Location: {request.location}
-        - Crops: {request.business_details}
-        
-        CRITICAL INSTRUCTIONS:
-        1. ACT LIKE A BRILLIANT HUMAN EXPERT. Speak warmly and confidently. NEVER sound robotic. 
-        2. USE YOUR VAST INTERNAL KNOWLEDGE. You already know all farming best practices, fertilizer ratios, and planting seasons in Kenya. Answer general questions directly from your own brain.
-        3. USE TOOLS FOR LIVE DATA. Only use your tools if they ask for the LIVE weather forecast or a specific ML disease diagnosis.
-        4. BE CONCISE. Keep answers to 1-2 short, friendly paragraphs. End with a helpful, natural question.
-        """
-        available_tools = [get_weather_forecast, diagnose_crop_disease, get_market_spot_price]
-
-    try:
-        model = genai.GenerativeModel(
-            model_name='gemini-2.5-flash',
-            system_instruction=system_instruction,
-            tools=available_tools
-        )
-        
-        # Start chat with automatic function calling enabled
-        chat = model.start_chat(enable_automatic_function_calling=True)
-        
-        response = chat.send_message(request.message)
-        
-        return {"reply": response.text}
-        
-    except Exception as e:
-        return {"reply": f"The AI is currently resting. (Error: {str(e)})"}
-    
+    return "Based on your description, there is a high probability of Fungal Blight. Ensure you check the undersides of the leaves."
+ 
 @app.get("/api/market-metadata")
 def get_market_metadata(db: Session = Depends(get_db)):
     counties = db.query(models.MarketPrice.county).distinct().all()
@@ -1172,28 +1245,105 @@ def process_hub_delivery(pledge_id: int, payload: ProcessDeliveryPayload, db: Se
 
 @app.get("/api/my-deliveries")
 def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Fetches the logged-in farmer's personal pledges/deliveries."""
+    """Fetches the logged-in farmer's personal pledges AND direct sales."""
+    
+    unified_deliveries = []
+    db_needs_commit = False
+
+    # ==========================================
+    # 1. FETCH BULK SQUAD PLEDGES
+    # ==========================================
     pledges = db.query(models.Pledge).filter(models.Pledge.farmer_id == current_user.id).all()
     
-    results = []
     for p in pledges:
         contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == p.bulk_request_id).first()
-        
         if not contract:
             continue
+        if contract.squad_status not in ["active", "voting", "fulfilled"]:
+            total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == contract.id).scalar() or 0.0
             
-        results.append({
-            "id": f"TRK-{p.id:04d}", 
+            if total_pledged >= contract.target_weight_kg:
+                unique_farmers = db.query(models.Pledge.farmer_id).filter(models.Pledge.bulk_request_id == contract.id).distinct().count()
+                
+                if unique_farmers == 1:
+                    contract.coordinator_id = p.farmer_id
+                    contract.squad_status = "active"
+                else:
+                    contract.squad_status = "voting"
+                
+                db_needs_commit = True
+            
+        unified_deliveries.append({
+            "id": f"BLK-{p.id:04d}", 
+            "type": "Bulk Contract",
             "crop": contract.crop_name, 
-            # 🔥 THE FIX: Changed to p.pledged_weight_kg
             "weight_kg": p.pledged_weight_kg,
             "expected_payout": p.pledged_weight_kg * contract.price_per_kg,
-            "status": p.status,
+            "status": p.status, 
             "buyer": contract.buyer_name, 
-            "notes": p.notes
+            "notes": p.notes or "Deliver to Coordinator Hub.",
+            "is_coordinator": contract.coordinator_id == current_user.id, # 🔥 MUST BE HERE
+            "bulk_request_id": contract.id # 🔥 MUST BE HERE
         })
+
+    # ==========================================
+    # 2. FETCH INDIVIDUAL DIRECT SALES (Harvest Table)
+    # ==========================================
+    # Note: Check if your columns are named slightly differently (e.g., quantity_kg vs weight_kg)
+    # This assumes you only want to track harvests that have actually been purchased (not just sitting available)
+    try:
+        # Fetching all harvests since there is no 'is_sold' column yet
+        direct_sales = db.query(models.Harvest).filter(
+            models.Harvest.farmer_id == current_user.id
+        ).all()
         
-    return results
+        for sale in direct_sales:
+            # Calculate the payout using your exact column names
+            expected_payout = (sale.weight_kg or 0) * (sale.price_per_kg or 0)
+            
+            # Determine status based on whether it is pooled at a Hub
+            ui_status = "received" if sale.is_pooled else "pending"
+            notes = "Pooled at Hub awaiting buyer." if sale.is_pooled else "Available in the marketplace."
+
+            unified_deliveries.append({
+                "id": f"DIR-{sale.id:04d}",
+                "type": "Market Listing", # 🔥 Updated badge name
+                "crop": sale.crop_name,
+                "weight_kg": sale.weight_kg, 
+                "expected_payout": expected_payout, 
+                "status": ui_status, # Hardcoded fallback since your table doesn't have a status
+                "buyer": "Pending Buyer", # Hardcoded fallback
+                "notes": notes,
+                "is_coordinator": False, 
+                "bulk_request_id": None
+            })
+    except Exception as e:
+        print(f"Direct Sales fetch error: {e}")
+
+    return unified_deliveries
+    
+class SquadStatusUpdate(BaseModel):
+    status: str
+
+class MessageCreate(BaseModel):
+    message: str 
+
+@app.put("/api/deliveries/squad/{bulk_request_id}/status")
+def update_squad_delivery_status(bulk_request_id: int, payload: SquadStatusUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Allows the Squad Coordinator to move the entire squad's delivery along the timeline."""
+    req = db.query(models.BulkRequest).filter(models.BulkRequest.id == bulk_request_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Contract not found.")
+        
+    if req.coordinator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the elected Squad Coordinator can update the transit status!")
+
+    squad_pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == bulk_request_id).all()
+    for pledge in squad_pledges:
+        pledge.status = payload.status
+        
+    db.commit()
+    return {"message": f"Squad delivery marked as {payload.status}!"}
 
 @app.get("/api/buyer/dashboard")
 def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -1310,15 +1460,21 @@ def create_bulk_request(
         crop_name=request.crop_name,
         target_weight_kg=request.target_weight_kg,
         price_per_kg=request.price_per_kg,
-        county=request.county, # Ensure county is saved
+        county=request.county, 
         urgency=request.urgency,
         status="Open",
-        squad_status="gathering" # Default squad status
+        squad_status="gathering" 
     )
-    db.add(new_request)
-    db.commit()
-    db.refresh(new_request)
-    return new_request
+    
+    try:
+        db.add(new_request)
+        db.commit()
+        db.refresh(new_request)
+        return new_request
+    except Exception as e:
+        db.rollback()
+        print(f"❌ DB Error creating bulk request: {e}")
+        raise HTTPException(status_code=500, detail="Failed to broadcast contract to the network.")
 
 @app.get("/bulk-requests/", response_model=List[schemas.BulkRequestRead])
 def get_active_bulk_requests(db: Session = Depends(get_db)):
@@ -1346,7 +1502,7 @@ def create_pledge(
     if not bulk_req:
         raise HTTPException(status_code=404, detail="Bulk request not found.")
 
-    # 🔥 NEW: Prevent a farmer from pledging twice to the same order
+    # 1. Prevent a farmer from pledging twice to the same order
     existing_pledge = db.query(models.Pledge).filter(
         models.Pledge.bulk_request_id == request_id,
         models.Pledge.farmer_id == current_user.id
@@ -1355,69 +1511,44 @@ def create_pledge(
     if existing_pledge:
         raise HTTPException(status_code=400, detail="You have already pledged to this request. You can update your drop-off later.")
 
-    # 1. Create the Pledge
+    # 2. Create the Pledge
     new_pledge = models.Pledge(
         bulk_request_id=request_id,
         farmer_id=current_user.id,
         pledged_weight_kg=pledge.pledged_weight_kg,
         status="pledged"
     )
-    db.add(new_pledge)
-    db.commit()
-    db.refresh(new_pledge)
     
-    # 2. 🔥 VIRTUAL HUB / SQUAD INITIALIZATION LOGIC
-    current_pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == request_id).all()
-    unique_farmers = len(set([p.farmer_id for p in current_pledges]))
+    try:
+        db.add(new_pledge)
+        db.flush() # Save it temporarily to calculate math
 
-    # State 1: The very first pledge! The "Virtual Hub" is born.
-    if unique_farmers == 1:
-        bulk_req.squad_status = "gathering"
+        # 🔥 THE SOLO FULFILLMENT CHECK
+        # Calculate the new total weight
+        total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == request_id).scalar() or 0.0
+        
+        # If the contract is 100% full...
+        if total_pledged >= bulk_req.target_weight_kg:
+            # Count how many unique farmers are in this squad
+            unique_farmers = db.query(models.Pledge.farmer_id).filter(models.Pledge.bulk_request_id == request_id).distinct().count()
+            
+            if unique_farmers == 1:
+                # Solo fulfillment! Auto-assign them as coordinator and unlock delivery.
+                bulk_req.coordinator_id = current_user.id
+                bulk_req.squad_status = "active"
+            else:
+                # Multiple people hit 100% together, trigger the election!
+                bulk_req.squad_status = "voting"
+
         db.commit()
+        db.refresh(new_pledge)
+        return new_pledge
         
-    # State 2: A second farmer joins! It's time to elect a coordinator.
-    elif unique_farmers >= 2 and bulk_req.squad_status == "gathering":
-        bulk_req.squad_status = "voting"
-        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"❌ DB Error during pledge creation: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process your pledge.")
 
-    return new_pledge
-
-# 🔥 THE BULLETPROOF ENDPOINT
-@app.get("/api/my-pledges")
-def get_my_pledges(
-    db: Session = Depends(get_db), 
-    current_user: models.User = Depends(get_current_user)
-):
-    if current_user.role != "farmer":
-        raise HTTPException(status_code=403, detail="Only farmers can view delivery squads.")
-
-    # 1. Get all pledges for this farmer
-    pledges = db.query(models.Pledge).filter(models.Pledge.farmer_id == current_user.id).all()
-    
-    # 2. Manually construct the exact JSON dictionary Flutter expects
-    result = []
-    for p in pledges:
-        req = p.bulk_request # Grab the connected corporate request
-        
-        result.append({
-            "id": p.id,
-            "pledged_weight_kg": p.pledged_weight_kg,
-            "actual_weight_kg": p.actual_weight_kg,
-            "status": p.status,
-            # 🔥 Force the nested data to attach!
-            "bulk_request": {
-                "id": req.id,
-                "buyer_name": req.buyer_name,
-                "crop_name": req.crop_name,
-                "target_weight_kg": req.target_weight_kg,
-                "price_per_kg": req.price_per_kg,
-                "county": req.county,
-                "squad_status": req.squad_status,
-                "coordinator_id": req.coordinator_id
-            } if req else {}
-        })
-        
-    return result
 
 @app.post("/api/squads/{squad_id}/run")
 def run_for_squad_coordinator(
@@ -1510,9 +1641,98 @@ def cast_squad_vote(
         squad.coordinator_id = candidate.farmer_id
         squad.squad_status = "active" # Lock the election, it's time to deliver!
         
-        # Optional: Delete all candidates and votes for this squad to keep the DB clean
-        db.query(models.SquadCandidate).filter(models.SquadCandidate.bulk_request_id == squad_id).delete()
-        db.query(models.SquadVote).filter(models.SquadVote.bulk_request_id == squad_id).delete()
 
+    # Now the commit will succeed because the candidate still exists!
     db.commit()
     return {"message": "Vote cast successfully!"}
+
+load_dotenv()
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+class AIChatRequest(BaseModel):
+    message: str
+    role: Optional[str] = "farmer"
+    user_name: Optional[str] = "Farmer"
+    location: Optional[str] = "Kenya"
+    business_details: Optional[str] = ""
+
+@app.post("/api/ai-chat")
+def ask_ai_chat(request: AIChatRequest):
+    try:
+        # 1. Give the AI context about EXACTLY who it is talking to
+        system_instruction = f"""
+        You are the MkulimaHub AI Assistant, an expert in Kenyan agriculture and market dynamics.
+        You are talking to {request.user_name}, who is a {request.role} located in {request.location}.
+        Business Context: {request.business_details}
+        
+        Always be helpful, encouraging, and concise. If they ask about crop prices, trends, weather, 
+        or diseases, YOU MUST USE YOUR TOOLS to fetch live data from the database before answering.
+        """
+
+        # 2. Initialize Gemini and equip it with your live database tools
+        model = genai.GenerativeModel(
+            model_name='gemini-2.5-flash',
+            tools=[get_market_spot_price, predict_price_trend, get_weather_forecast, diagnose_crop_disease],
+            system_instruction=system_instruction
+        )
+
+        # 3. Start a chat session with Auto-Function Calling enabled!
+        # (This means if the AI needs a price, it will automatically run your Python function, 
+        # get the database result, and then write the final message to the user!)
+        chat = model.start_chat(enable_automatic_function_calling=True)
+        
+        # 4. Send the user's message to Gemini
+        response = chat.send_message(request.message)
+
+        return {"reply": response.text}
+
+    except Exception as e:
+        print(f"❌ AI Chat Error: {e}")
+        raise HTTPException(status_code=500, detail="The AI is currently resting. Please try again in a moment!")
+    
+@app.get("/api/squads/{bulk_request_id}/messages")
+def get_squad_messages(bulk_request_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Fetches the chat history for a specific delivery squad."""
+    
+    # 1. Fetch all messages for this specific contract, sorted from oldest to newest
+    messages = db.query(models.SquadMessage)\
+                 .filter(models.SquadMessage.bulk_request_id == bulk_request_id)\
+                 .order_by(models.SquadMessage.created_at.asc())\
+                 .all()
+
+    # 2. Package them beautifully for Flutter
+    chat_history = []
+    for msg in messages:
+        chat_history.append({
+            "id": msg.id,
+            "sender_id": msg.sender_id,
+            "sender_name": msg.sender.full_name if msg.sender else "Unknown Farmer",
+            "message": msg.message,
+            # We send 'is_me' so Flutter knows whether to put the chat bubble on the left or right!
+            "is_me": msg.sender_id == current_user.id, 
+            "created_at": msg.created_at.isoformat()
+        })
+        
+    return chat_history
+
+
+@app.post("/api/squads/{bulk_request_id}/messages")
+def send_squad_message(bulk_request_id: int, payload: MessageCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Posts a new message to the squad chat."""
+    
+    # Optional Security: Ensure the contract actually exists
+    contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == bulk_request_id).first()
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found.")
+
+    # Create and save the message
+    new_message = models.SquadMessage(
+        bulk_request_id=bulk_request_id,
+        sender_id=current_user.id,
+        message=payload.message
+    )
+    
+    db.add(new_message)
+    db.commit()
+    
+    return {"status": "success", "message": "Message sent!"}

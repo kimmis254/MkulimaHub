@@ -128,6 +128,35 @@ class _ClusterScreenState extends State<ClusterScreen> {
           "MkulimaHub Network",
           style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(LucideIcons.cpu, color: Colors.white70), // A stealthy AI chip icon
+            tooltip: "Admin: Force AI Clustering",
+            onPressed: () async {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Booting up DBSCAN AI..."), duration: Duration(seconds: 1))
+              );
+              
+              // Pass the currently selected crop (or default to Maize if 'All' is selected)
+              final cropToCluster = _selectedCrop == 'All' ? 'Maize' : _selectedCrop;
+              final error = await _apiClient.triggerAdminClustering(cropToCluster);
+              
+              if (!mounted) return;
+              
+              if (error == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Clustering Complete!"), backgroundColor: Colors.green)
+                );
+                _fetchClusters(); // Refresh the screen instantly!
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(error), backgroundColor: Colors.red)
+                );
+              }
+            },
+          )
+        ],
+
       ),
       body: Column(
         children: [
@@ -244,8 +273,12 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                             ? ElevatedButton(
                                                 onPressed: () {
                                                   // Send them straight to their active delivery!
-                                                  Navigator.push(context, MaterialPageRoute(builder: (_) => const DeliverySquadsScreen()));
-                                                },
+Navigator.push(
+    context, 
+    MaterialPageRoute(
+      builder: (_) => DeliverySquadsScreen(targetSquadId: squad['id']) // 🔥 Pass the specific contract ID!
+    )
+  );                                           },
                                                 style: ElevatedButton.styleFrom(
                                                   backgroundColor: Colors.purple.shade600,
                                                   elevation: 0,

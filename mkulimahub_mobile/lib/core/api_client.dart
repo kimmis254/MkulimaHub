@@ -57,15 +57,14 @@ class ApiClient {
 
   // 🔥 NEW: Google Login/Signup Endpoint
   Future<String?> googleLogin({
-    required String email, 
-    required String name, 
-    required String uid
+    required String idToken, 
   }) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/auth/google'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': email, 'full_name': name, 'google_uid': uid}),
+        // The backend extracts the email and UID safely from this token!
+        body: jsonEncode({'id_token': idToken}), 
       );
 
       if (response.statusCode == 200) {
@@ -74,7 +73,6 @@ class ApiClient {
         
         if (token != null) await _saveToken(token); 
 
-        // 🔥 Return the exact status to the UI (success, needs_profile, or needs_phone)
         return data['status']; 
       } else {
         final errorData = jsonDecode(response.body);
@@ -85,19 +83,26 @@ class ApiClient {
     }
   }
   
-  Future<String?> googleRegister(Map<String, dynamic> data) async {
+  Future<String?> googleRegister({
+    required String idToken,
+    required String phoneNumber,
+  }) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/auth/google-register'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(data),
+        // The backend extracts the name and email from the token, we just provide the phone!
+        body: jsonEncode({
+          'id_token': idToken,
+          'phone_number': phoneNumber,
+        }),
       );
 
       if (response.statusCode == 200) {
         final respData = jsonDecode(response.body);
         final token = respData['access_token'];
         if (token != null) await _saveToken(token); 
-        return respData['status']; // Usually returns 'needs_profile'
+        return respData['status']; 
       } else {
         final errorData = jsonDecode(response.body);
         return errorData['detail'] ?? 'Registration failed.';
@@ -259,6 +264,10 @@ class ApiClient {
   // ==========================================
 
   Future<Map<String, dynamic>> getClusters([String? crop]) async {
+    // 🔥 1. Grab the secure token!
+    final token = await getToken();
+    if (token == null) return {'hubs': [], 'total_farmers_analyzed': 0};
+
     try {
       String url = '$baseUrl/api/clusters';
       
@@ -266,7 +275,14 @@ class ApiClient {
         url += '?crop=$crop';
       }
 
-      final response = await http.get(Uri.parse(url));
+      // 🔥 2. Attach the token to the headers!
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token" 
+        },
+      );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -533,7 +549,7 @@ class ApiClient {
 
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/api/contracts/$contractId/pledge'),
+        Uri.parse('$baseUrl/bulk-requests/$contractId/pledge'),
         headers: {
           "Content-Type": "application/json",
           "Authorization": "Bearer $token",
@@ -547,6 +563,50 @@ class ApiClient {
         return null; 
       } else {
         return "Failed to pledge: ${response.body}";
+      }
+    } catch (e) {
+      return "Connection error: $e";
+    }
+  }
+
+  Future<String?> updatePledge(int pledgeId, double newWeight) async {
+    final token = await getToken();
+    if (token == null) return "Authentication required";
+
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/pledges/$pledgeId'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token"
+        },
+        body: jsonEncode({"pledged_weight_kg": newWeight}),
+      );
+
+      if (response.statusCode == 200) {
+        return null; // Success!
+      } else {
+        return jsonDecode(response.body)['detail'] ?? "Failed to update pledge.";
+      }
+    } catch (e) {
+      return "Connection error: $e";
+    }
+  }
+
+  Future<String?> deletePledge(int pledgeId) async {
+    final token = await getToken();
+    if (token == null) return "Authentication required";
+
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/pledges/$pledgeId'),
+        headers: {"Authorization": "Bearer $token"},
+      );
+
+      if (response.statusCode == 200) {
+        return null; // Success!
+      } else {
+        return jsonDecode(response.body)['detail'] ?? "Failed to delete pledge.";
       }
     } catch (e) {
       return "Connection error: $e";
@@ -905,6 +965,88 @@ class ApiClient {
       return response.statusCode == 200 ? null : json.decode(response.body)['detail'] ?? "Failed to cast vote.";
     } catch (e) {
       return "Network error. Please try again.";
+    }
+  }
+  Future<String?> triggerAdminClustering([String crop = "Maize"]) async {
+    try {
+      final response = await http.post(
+        // We pass the crop parameter so it clusters the currently selected tab
+        Uri.parse('$baseUrl/api/admin/trigger-clustering?crop=$crop'),
+      );
+
+      if (response.statusCode == 200) {
+        return null; // Success!
+      } else {
+        final body = jsonDecode(response.body);
+        return body['detail'] ?? "Failed to trigger clustering.";
+      }
+    } catch (e) {
+      return "Connection error: $e";
+    }
+  }
+  Future<String?> updateSquadDeliveryStatus(int bulkRequestId, String status) async {
+    final token = await getToken();
+    if (token == null) return "Authentication required";
+
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/deliveries/squad/$bulkRequestId/status'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token"
+        },
+        body: jsonEncode({"status": status}),
+      );
+
+      if (response.statusCode == 200) {
+        return null; // Success!
+      } else {
+        return jsonDecode(response.body)['detail'] ?? "Failed to update status.";
+      }
+    } catch (e) {
+      return "Connection error: $e";
+    }
+  }
+  Future<List<dynamic>> getSquadMessages(int bulkRequestId) async {
+    final token = await getToken();
+    if (token == null) return [];
+
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/squads/$bulkRequestId/messages'),
+        headers: {"Authorization": "Bearer $token"},
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+    } catch (e) {
+      print("❌ Error fetching squad messages: $e");
+    }
+    return [];
+  }
+
+  Future<String?> sendSquadMessage(int bulkRequestId, String message) async {
+    final token = await getToken();
+    if (token == null) return "Please login to chat.";
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/squads/$bulkRequestId/messages'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode({"message": message}),
+      );
+
+      if (response.statusCode == 200) {
+        return null; // Success!
+      } else {
+        return "Failed to send: ${response.body}";
+      }
+    } catch (e) {
+      return "Connection error: $e";
     }
   }
 }

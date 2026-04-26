@@ -6,11 +6,15 @@ import 'package:mkulimahub_mobile/features/auth/auth_service.dart';
 import 'package:mkulimahub_mobile/features/auth/otp_verification_screen.dart';
 
 class GooglePhoneLinkScreen extends StatefulWidget {
-  final String email;
+  // 🔥 THE FIX: We only need the secure token and the name for the UI!
+  final String idToken; 
   final String name;
-  final String uid;
 
-  const GooglePhoneLinkScreen({super.key, required this.email, required this.name, required this.uid});
+  const GooglePhoneLinkScreen({
+    super.key, 
+    required this.idToken, 
+    required this.name,
+  });
 
   @override
   State<GooglePhoneLinkScreen> createState() => _GooglePhoneLinkScreenState();
@@ -53,10 +57,8 @@ class _GooglePhoneLinkScreenState extends State<GooglePhoneLinkScreen> {
                 phoneNumber: formattedPhone,
                 // 🔥 Pass all Google + Phone data so OTP screen can register them!
                 pendingGoogleData: {
-                  'email': widget.email,
-                  'full_name': widget.name,
-                  'google_uid': widget.uid,
-                  'phone_number': formattedPhone
+                  'idToken': widget.idToken,
+                  'phoneNumber': formattedPhone
                 },
               )
             )

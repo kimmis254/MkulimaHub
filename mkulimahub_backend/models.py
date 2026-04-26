@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Enum as SQLEnum, UniqueConstraint, Date, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, JSON,  ForeignKey, Enum as SQLEnum, UniqueConstraint, Date, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from geoalchemy2 import Geometry
@@ -86,6 +86,7 @@ class BulkRequest(Base):
     
     pledges = relationship("Pledge", back_populates="bulk_request")
     coordinator = relationship("User", foreign_keys=[coordinator_id])
+    status = Column(String, default="open", index=True)
 
 class Pledge(Base):
     __tablename__ = "pledges"
@@ -202,3 +203,24 @@ class SquadVote(Base):
     bulk_request_id = Column(Integer, ForeignKey("bulk_requests.id", ondelete="CASCADE"))
     farmer_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     candidate_id = Column(Integer, ForeignKey("squad_candidates.id", ondelete="CASCADE"))
+
+class CachedPrediction(Base):
+    __tablename__ = "cached_predictions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    # We will combine crop, region, and type into one key like "maize_nairobi_wholesale"
+    cache_key = Column(String, unique=True, index=True) 
+    payload = Column(JSON) # Stores the exact dictionary Flutter expects!
+    last_updated = Column(DateTime, default=datetime.utcnow)
+
+class SquadMessage(Base):
+    __tablename__ = "squad_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bulk_request_id = Column(Integer, ForeignKey("bulk_requests.id", ondelete="CASCADE"), nullable=False)
+    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    message = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationship to easily grab the sender's name
+    sender = relationship("User")

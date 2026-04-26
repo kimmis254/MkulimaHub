@@ -10,6 +10,7 @@ import 'package:mkulimahub_mobile/features/home/profile_screen.dart';
 import 'package:mkulimahub_mobile/features/auth/auth_service.dart';
 import 'package:mkulimahub_mobile/features/auth/otp_verification_screen.dart';
 import 'package:mkulimahub_mobile/features/auth/google_phone_link_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -159,21 +160,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // 🔥 Google Sign-In Logic for Registration
   void _handleGoogleSignIn() async {
-    setState(() => _isGoogleLoading = true);
+   setState(() => _isGoogleLoading = true);
     
-    final userCredential = await _authService.signInWithGoogle();
+    // 🔥 1. Call the updated service
+    final result = await _authService.signInWithGoogle();
 
-    if (userCredential != null && userCredential.user != null) {
-      final apiStatus = await _apiClient.googleLogin(
-        email: userCredential.user!.email ?? '',
-        name: userCredential.user!.displayName ?? 'Farmer',
-        uid: userCredential.user!.uid, 
-      );
+    if (result != null) {
+      final userCredential = result['firebase_user'] as UserCredential;
+      
+      // 🔥 2. Grab the raw Google Token from the Map!
+      final String? idToken = result['google_token'];
+      
+      if (idToken == null) {
+        setState(() => _isGoogleLoading = false);
+        // Use _showCustomSnackBar for register_screen and _showError for login_screen
+        if (mounted) _showCustomSnackBar('Failed to retrieve secure Google Token.', isError: true);
+        return;
+      }
+
+      // 🔥 3. Send the RAW Google token to FastAPI
+      final apiStatus = await _apiClient.googleLogin(idToken: idToken);
 
       setState(() => _isGoogleLoading = false);
 
       if (apiStatus == 'success') {
-        // Existing user somehow clicking register, send to Home
         if (mounted) {
           Navigator.pushAndRemoveUntil(
             context, 
@@ -182,7 +192,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           );
         }
       } else if (apiStatus == 'needs_profile') {
-        // Has phone, needs profile setup
         if (mounted) {
            Navigator.pushAndRemoveUntil(
             context, 
@@ -191,15 +200,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
           );
         }
       } else if (apiStatus == 'needs_phone') {
-        // 🔥 THE FIX: Route brand new Google users to the Phone Link Screen!
         if (mounted) {
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => GooglePhoneLinkScreen(
-                email: userCredential.user!.email ?? '',
-                name: userCredential.user!.displayName ?? 'Farmer',
-                uid: userCredential.user!.uid,
+                idToken: idToken,
+      name: userCredential.user!.displayName ?? 'Farmer',
               )
             )
           );

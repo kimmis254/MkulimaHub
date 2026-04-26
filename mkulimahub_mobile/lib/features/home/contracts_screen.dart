@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
-import 'package:mkulimahub_mobile/features/home/delivery_squads_screen.dart'; // 🔥 Updated import!
+import 'package:mkulimahub_mobile/features/home/delivery_squads_screen.dart';
+import 'package:mkulimahub_mobile/features/home/my_deliveries_screen.dart';
 
 class ContractsScreen extends StatefulWidget {
   const ContractsScreen({super.key});
@@ -17,9 +18,11 @@ class _ContractsScreenState extends State<ContractsScreen> {
   
   bool _isLoading = true;
   List<dynamic> _contracts = [];
-  int? _currentUserId; // 🔥 NEW: Store the user's ID
+  int? _currentUserId; 
   String _selectedFilter = 'All';
-  final List<String> _filters = ['All', 'Maize', 'Beans', 'Mangoes', 'Avocados'];
+  
+  // 🔥 FIX 2: Start with just 'All', we will populate the rest dynamically
+  List<String> _filters = ['All']; 
 
   @override
   void initState() {
@@ -30,7 +33,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
   Future<void> _fetchContracts() async {
     setState(() => _isLoading = true);
     
-    // 🔥 Fetch both contracts AND the user's profile at the same time
     final results = await Future.wait([
       _apiClient.getContracts(),
       _apiClient.getProfile(),
@@ -41,8 +43,23 @@ class _ContractsScreenState extends State<ContractsScreen> {
         _contracts = (results[0] as List<dynamic>?) ?? [];
         final profile = results[1] as Map<String, dynamic>?;
         if (profile != null) {
-          _currentUserId = profile['id']; // Extract the ID
+          _currentUserId = profile['id']; 
         }
+
+        // 🔥 FIX 2: Dynamically build the filter list based on available contracts
+        Set<String> uniqueCrops = {'All'}; // Set prevents duplicates automatically
+        for (var contract in _contracts) {
+          if (contract['crop_name'] != null) {
+            uniqueCrops.add(contract['crop_name'].toString());
+          }
+        }
+        _filters = uniqueCrops.toList();
+        
+        // Safety check: if the selected filter no longer exists in the new data, reset to 'All'
+        if (!_filters.contains(_selectedFilter)) {
+          _selectedFilter = 'All';
+        }
+
         _isLoading = false;
       });
     }
@@ -50,8 +67,33 @@ class _ContractsScreenState extends State<ContractsScreen> {
 
   // Helper to filter contracts locally for snappy UI
   List<dynamic> get _filteredContracts {
-    if (_selectedFilter == 'All') return _contracts;
-    return _contracts.where((c) => c['crop_name'].toString().toLowerCase() == _selectedFilter.toLowerCase()).toList();
+    // 1. First, apply the crop filter
+    List<dynamic> filteredList = _selectedFilter == 'All' 
+        ? List.from(_contracts) 
+        : _contracts.where((c) => c['crop_name'].toString().toLowerCase() == _selectedFilter.toLowerCase()).toList();
+
+    // 2. Now, sort the list: Active contracts bubble up, Fulfilled sink down!
+    filteredList.sort((a, b) {
+      // Calculate fulfillment for Contract A
+      double targetA = a['target_weight_kg'] ?? 1.0;
+      double pledgedA = 0;
+      for (var p in (a['pledges'] ?? [])) pledgedA += (p['pledged_weight_kg'] ?? 0);
+      bool isFulfilledA = pledgedA >= targetA;
+
+      // Calculate fulfillment for Contract B
+      double targetB = b['target_weight_kg'] ?? 1.0;
+      double pledgedB = 0;
+      for (var p in (b['pledges'] ?? [])) pledgedB += (p['pledged_weight_kg'] ?? 0);
+      bool isFulfilledB = pledgedB >= targetB;
+
+      // If they are the exact same status (both open or both fulfilled), keep original order
+      if (isFulfilledA == isFulfilledB) return 0;
+      
+      // If A is fulfilled but B is open, A sinks to the bottom (+1)
+      return isFulfilledA ? 1 : -1; 
+    });
+
+    return filteredList;
   }
 
   void _showPledgeBottomSheet(int contractId, String cropName, double targetWeight, double currentProgress) {
@@ -188,13 +230,12 @@ class _ContractsScreenState extends State<ContractsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      // 🔥 Removed AppBar since this is now likely inside the ContractsHubScreen TabBarView
       body: Column(
         children: [
-          // 🔥 Custom Header Section
+          // Custom Header Section
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.only(left: 20, right: 20, bottom: 20, top: 20),
+            padding: const EdgeInsets.only(left: 20, right: 20, bottom: 20, top: 40), // Added top padding for status bar clearance
             decoration: BoxDecoration(
               color: Colors.green.shade800,
               borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(30), bottomRight: Radius.circular(30)),
@@ -202,8 +243,35 @@ class _ContractsScreenState extends State<ContractsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text("Bulk Contracts", style: GoogleFonts.poppins(color: Colors.green.shade100, fontSize: 14)),
-                Text("Fulfill orders, maximize profit.", style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                // 🔥 FIX 3: Added Header Row with Navigation Icon
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text("Bulk Contracts", style: GoogleFonts.poppins(color: Colors.green.shade100, fontSize: 14)),
+                          Text("Fulfill orders, maximize profit.", style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: IconButton(
+                        icon: const Icon(LucideIcons.truck, color: Colors.white),
+                        tooltip: "My Delivery Squads",
+                        onPressed: () {
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => const MyDeliveriesScreen()));
+                        },
+                      ),
+                    )
+                  ],
+                ),
                 const SizedBox(height: 20),
                 
                 // Horizontal Filter Chips
@@ -250,7 +318,8 @@ class _ContractsScreenState extends State<ContractsScreen> {
                       color: Colors.green,
                       onRefresh: _fetchContracts,
                       child: ListView.builder(
-                        padding: const EdgeInsets.all(20),
+                        // 🔥 FIX 1: Increased bottom padding to 100 to clear the Nav Bar
+                        padding: const EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 100),
                         itemCount: _filteredContracts.length,
                         itemBuilder: (context, index) {
                           final contract = _filteredContracts[index];
@@ -266,7 +335,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
                           double progress = totalPledged / targetWeight;
                           if (progress > 1.0) progress = 1.0;
 
-                          // 🔥 CHECK IF THE USER ALREADY PLEDGED TO THIS CONTRACT
                           bool hasPledged = false;
                           if (_currentUserId != null) {
                             hasPledged = pledges.any((p) => p['farmer_id'] == _currentUserId);
@@ -285,7 +353,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
     );
   }
 
-  // 🔥 ADDED `hasPledged` PARAMETER HERE
   Widget _buildPremiumContractCard(Map<String, dynamic> contract, double totalPledged, double targetWeight, double progress, bool hasPledged) {
     bool isFulfilled = progress >= 1.0;
 
@@ -300,7 +367,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Top Section: Buyer & Price
           Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
@@ -334,7 +400,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
                 ),
                 const SizedBox(height: 20),
                 
-                // Big Crop Title
                 Text(contract['crop_name'] ?? 'Crop', style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black87)),
                 const SizedBox(height: 5),
                 Row(
@@ -348,7 +413,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
             ),
           ),
 
-          // Middle Section: Progress Bar (Gray Background)
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
             color: Colors.grey.shade50,
@@ -383,14 +447,12 @@ class _ContractsScreenState extends State<ContractsScreen> {
             ),
           ),
 
-          // Dashed Divider (Simulated using small containers)
           Row(
             children: List.generate(30, (index) => Expanded(
               child: Container(color: index % 2 == 0 ? Colors.transparent : Colors.grey.shade300, height: 1),
             )),
           ),
 
-          // Bottom Section: Action Button
           Padding(
             padding: const EdgeInsets.all(20),
             child: SizedBox(
@@ -403,13 +465,16 @@ class _ContractsScreenState extends State<ContractsScreen> {
     );
   }
 
-  // 🔥 THE NEW SMART BUTTON LOGIC
   Widget _buildDynamicActionButton(Map<String, dynamic> contract, bool hasPledged, bool isFulfilled, double targetWeight, double totalPledged) {
     if (hasPledged) {
       return ElevatedButton.icon(
         onPressed: () {
-          // Send them to their Delivery Squads!
-          Navigator.push(context, MaterialPageRoute(builder: (_) => const DeliverySquadsScreen()));
+          Navigator.push(
+            context, 
+            MaterialPageRoute(
+              builder: (_) => DeliverySquadsScreen(targetSquadId: contract['id'])
+            )
+          );
         },
         icon: const Icon(LucideIcons.users, size: 18, color: Colors.white),
         label: Text("View Delivery Squad", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white)),

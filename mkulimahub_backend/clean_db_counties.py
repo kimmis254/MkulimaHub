@@ -27,10 +27,10 @@ TOWN_TO_COUNTY = {
     "naivasha": "nakuru", "nakuru": "nakuru",
     "nyahururu": "laikipia",
     "taveta": "taita taveta",
-    "trans-nzoia": "trans_nzoia",
-    "uasin-gishu": "uasin_gishu",
+    "trans-nzoia": "trans nzoia", # Removed underscore for clean title
+    "uasin-gishu": "uasin gishu", # Removed underscore for clean title
     "homabay": "homa bay",
-    "makutano": "west_pokot"
+    "makutano": "west pokot"      # Removed underscore for clean title
 }
 
 def scrub_database():
@@ -38,7 +38,6 @@ def scrub_database():
     db = SessionLocal()
     
     try:
-        # 1. Get the EXACT raw values currently sitting in the DB
         distinct_markets = db.query(models.MarketPrice.county).distinct().all()
         
         updates_made = 0
@@ -48,22 +47,28 @@ def scrub_database():
             raw_name = market[0]
             if not raw_name: continue
             
-            # 2. Use Python to brutally strip invisible spaces and make it lowercase
+            # 1. Brutal strip and lowercase for dictionary matching
             clean_name = raw_name.lower().strip()
             
-            # 3. Check our dictionary. If it's not in the dictionary (like 'bomet'), 
-            # we just use the clean_name so it still fixes whitespace/capitalization!
-            target_county = TOWN_TO_COUNTY.get(clean_name, clean_name)
+            # 2. Check the dictionary map
+            if clean_name in TOWN_TO_COUNTY:
+                target_name = TOWN_TO_COUNTY[clean_name]
+            else:
+                # 🔥 THE FIX: If it's not in the dictionary, aggressively scrub the weird artifacts!
+                target_name = clean_name.replace("_", " ").replace(" copy", "").replace("-", " ").strip()
+                
+            # 3. 🔥 THE FIX: Force beautiful Title Case formatting (e.g., "Alango Arba", "Turkana")
+            final_clean_county = target_name.title()
                 
             # 4. If the raw DB name is different from the target, run the UPDATE
-            if raw_name != target_county:
+            if raw_name != final_clean_county:
                 updated_rows = db.query(models.MarketPrice)\
                     .filter(models.MarketPrice.county == raw_name)\
-                    .update({"county": target_county}, synchronize_session=False)
+                    .update({"county": final_clean_county}, synchronize_session=False)
                 
                 total_rows_changed += updated_rows
                 updates_made += 1
-                print(f"✅ Fixed {updated_rows} rows: '{raw_name}' -> '{target_county}'")
+                print(f"✅ Fixed {updated_rows} rows: '{raw_name}' -> '{final_clean_county}'")
                 
         db.commit()
         print(f"\n🎉 Scrub Complete! Fixed {updates_made} messy market names, updating {total_rows_changed} total rows.")

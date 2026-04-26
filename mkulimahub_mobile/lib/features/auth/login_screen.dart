@@ -9,8 +9,8 @@ import 'package:mkulimahub_mobile/features/home/profile_screen.dart';
 import 'package:mkulimahub_mobile/features/auth/otp_verification_screen.dart';
 import 'package:mkulimahub_mobile/features/auth/google_phone_link_screen.dart'; 
 import 'package:mkulimahub_mobile/features/buyer/buyer_dashboard.dart';
-// 🔥 IMPORT THE WELCOME SCREEN
 import 'package:mkulimahub_mobile/features/auth/welcome_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -132,14 +132,24 @@ class _LoginScreenState extends State<LoginScreen> {
   void _handleGoogleSignIn() async {
     setState(() => _isGoogleLoading = true);
     
-    final userCredential = await _authService.signInWithGoogle();
+    // 🔥 1. Call the updated service
+    final result = await _authService.signInWithGoogle();
 
-    if (userCredential != null && userCredential.user != null) {
-      final apiStatus = await _apiClient.googleLogin(
-        email: userCredential.user!.email ?? '',
-        name: userCredential.user!.displayName ?? 'Farmer',
-        uid: userCredential.user!.uid, 
-      );
+    if (result != null) {
+      final userCredential = result['firebase_user'] as UserCredential;
+      
+      // 🔥 2. Grab the raw Google Token from the Map!
+      final String? idToken = result['google_token'];
+      
+      if (idToken == null) {
+        setState(() => _isGoogleLoading = false);
+        // Use _showCustomSnackBar for register_screen and _showError for login_screen
+        if (mounted) _showError('Failed to retrieve secure Google Token.');
+        return;
+      }
+
+      // 🔥 3. Send the RAW Google token to FastAPI
+      final apiStatus = await _apiClient.googleLogin(idToken: idToken);
 
       if (apiStatus == 'success') {
         final profileData = await _apiClient.getProfile();
@@ -147,7 +157,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
         if (mounted) {
           String role = profileData?['role'] ?? 'farmer';
-          await _apiClient.saveUserRole(role); // 🔥 Cache role
+          await _apiClient.saveUserRole(role); 
           
           if (role == 'buyer') {
             Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const BuyerDashboard()), (route) => false);
@@ -167,9 +177,8 @@ class _LoginScreenState extends State<LoginScreen> {
             context,
             MaterialPageRoute(
               builder: (_) => GooglePhoneLinkScreen(
-                email: userCredential.user!.email ?? '',
+                idToken: idToken,
                 name: userCredential.user!.displayName ?? 'Farmer',
-                uid: userCredential.user!.uid,
               )
             )
           );
