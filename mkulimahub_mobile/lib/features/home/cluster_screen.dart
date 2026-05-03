@@ -5,8 +5,8 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/home/hub_chat_screen.dart';
 import 'package:mkulimahub_mobile/features/home/receiving_dashboard.dart'; 
-import 'package:mkulimahub_mobile/features/home/delivery_squads_screen.dart'; // 🔥 Import for View Squad
-import 'package:mkulimahub_mobile/features/home/contracts_screen.dart';       // 🔥 Import for Join Squad
+import 'package:mkulimahub_mobile/features/home/delivery_squads_screen.dart'; 
+import 'package:mkulimahub_mobile/features/home/contracts_screen.dart';       
 
 class ClusterScreen extends StatefulWidget {
   const ClusterScreen({super.key});
@@ -32,12 +32,15 @@ class _ClusterScreenState extends State<ClusterScreen> {
   // Current User & Hub State
   Map<String, dynamic>? _currentUser;
   bool _isCoordinator = false;
-  String? _myClusterId; 
+  String? _myClusterId;
+  int? _selectedSquadId;
 
   // Election State
   String? _electionStatus;
   bool _hasVoted = false;
   List<dynamic> _candidates = [];
+
+
 
   @override
   void initState() {
@@ -75,6 +78,14 @@ class _ClusterScreenState extends State<ClusterScreen> {
           _pendingRequests = pendingReqs ?? [];
           _currentUser = profileData;
 
+          if (_activeSquads.isNotEmpty) {
+            // Keep current selection if it still exists, otherwise pick the first one
+            if (_selectedSquadId == null || !_activeSquads.any((s) => s['id'] == _selectedSquadId)) {
+              _selectedSquadId = _activeSquads.first['id'];
+            }
+          } else {
+            _selectedSquadId = null;
+          }
           // Update Election State
           if (ballotData != null) {
             _electionStatus = ballotData['status'];
@@ -130,14 +141,13 @@ class _ClusterScreenState extends State<ClusterScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(LucideIcons.cpu, color: Colors.white70), // A stealthy AI chip icon
+            icon: const Icon(LucideIcons.cpu, color: Colors.white70), 
             tooltip: "Admin: Force AI Clustering",
             onPressed: () async {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text("Booting up DBSCAN AI..."), duration: Duration(seconds: 1))
               );
               
-              // Pass the currently selected crop (or default to Maize if 'All' is selected)
               final cropToCluster = _selectedCrop == 'All' ? 'Maize' : _selectedCrop;
               final error = await _apiClient.triggerAdminClustering(cropToCluster);
               
@@ -147,7 +157,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text("Clustering Complete!"), backgroundColor: Colors.green)
                 );
-                _fetchClusters(); // Refresh the screen instantly!
+                _fetchClusters(); 
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(content: Text(error), backgroundColor: Colors.red)
@@ -156,7 +166,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
             },
           )
         ],
-
       ),
       body: Column(
         children: [
@@ -220,92 +229,147 @@ class _ClusterScreenState extends State<ClusterScreen> {
                             const SizedBox(height: 25),
 
                             // 🔥 NEW: DISPLAY TEMPORARY DELIVERY SQUADS
-                            if (_activeSquads.isNotEmpty) ...[
-                              Row(
-                                children: [
-                                  const Icon(LucideIcons.zap, color: Colors.orange, size: 20),
-                                  const SizedBox(width: 8),
-                                  Text("Active Delivery Squads", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-                                ],
-                              ),
-                              Text("Temporary teams fulfilling corporate orders", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
-                              const SizedBox(height: 15),
-                              
-                              ..._activeSquads.map((squad) {
-                                // 🔥 1. THE SMART LOGIC: Check if the user is already in the squad
-                                final pledges = squad['pledges'] as List<dynamic>? ?? [];
-                                bool hasPledged = false;
+                            ...(() {
+                              final filteredSquads = _activeSquads.where((squad) {
+                                bool isInternalPool = squad['buyer_name'].toString().startsWith('Hub Pool:');
+                                String hubNameClean = squad['buyer_name'].toString().replaceFirst("Hub Pool: ", "").trim();
+                                bool isMyHubsPool = _myClusterId == hubNameClean;
                                 
-                                if (_currentUser != null) {
-                                  // Safely convert both to Strings to avoid Int vs String mismatch errors
-                                  hasPledged = pledges.any((p) => p['farmer_id'].toString() == _currentUser?['id'].toString());
-                                }
+                                // Hide internal pools if the user doesn't belong to that Hub!
+                                return !(isInternalPool && !isMyHubsPool);
+                              }).toList();
 
-                                return FadeInLeft(
-                                  child: Container(
-                                    margin: const EdgeInsets.only(bottom: 15),
-                                    padding: const EdgeInsets.all(16),
-                                    decoration: BoxDecoration(
-                                      color: hasPledged ? Colors.purple.shade50 : Colors.orange.shade50, 
-                                      border: Border.all(color: hasPledged ? Colors.purple.shade200 : Colors.orange.shade200),
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Container(
-                                          padding: const EdgeInsets.all(10),
-                                          decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                                          child: Icon(hasPledged ? LucideIcons.users : LucideIcons.truck, color: hasPledged ? Colors.purple : Colors.orange),
-                                        ),
-                                        const SizedBox(width: 15),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Text("${squad['target_weight_kg']}kg of ${squad['crop_name']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
-                                              Text("For ${squad['buyer_name']}", style: GoogleFonts.poppins(fontSize: 12, color: hasPledged ? Colors.purple.shade800 : Colors.orange.shade800)),
-                                            ],
+                              if (filteredSquads.isEmpty) {
+                                return [const SizedBox.shrink()]; // Show nothing if no public squads are available
+                              }
+
+                              // Ensure the selected ID is valid for this filtered list
+                              int currentSelection = filteredSquads.any((s) => s['id'] == _selectedSquadId) 
+                                  ? _selectedSquadId! 
+                                  : filteredSquads.first['id'];
+
+                              return [
+                                Row(
+                                  children: [
+                                    const Icon(LucideIcons.zap, color: Colors.orange, size: 20),
+                                    const SizedBox(width: 8),
+                                    Text("Active Delivery Squads", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                  ],
+                                ),
+                                Text("Select a team to view or join.", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
+                                const SizedBox(height: 15),
+
+                                // 1. The Dropdown Selector
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: Colors.orange.shade200),
+                                  ),
+                                  child: DropdownButtonHideUnderline(
+                                    child: DropdownButton<int>(
+                                      value: currentSelection,
+                                      isExpanded: true,
+                                      icon: const Icon(LucideIcons.chevronDown, color: Colors.orange),
+                                      items: filteredSquads.map<DropdownMenuItem<int>>((squad) {
+                                        bool isInternalPool = squad['buyer_name'].toString().startsWith('Hub Pool:');
+                                        String displayName = isInternalPool 
+                                            ? "${squad['target_weight_kg']}kg ${squad['crop_name']} (Internal Hub Pool)"
+                                            : "${squad['target_weight_kg']}kg ${squad['crop_name']} for ${squad['buyer_name']}";
+
+                                        return DropdownMenuItem<int>(
+                                          value: squad['id'],
+                                          child: Text(
+                                            displayName,
+                                            style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w600),
+                                            overflow: TextOverflow.ellipsis,
                                           ),
-                                        ),
-                                        
-                                        // 🔥 2. THE DYNAMIC BUTTON
-                                        hasPledged
-                                            ? ElevatedButton(
-                                                onPressed: () {
-                                                  // Send them straight to their active delivery!
-Navigator.push(
-    context, 
-    MaterialPageRoute(
-      builder: (_) => DeliverySquadsScreen(targetSquadId: squad['id']) // 🔥 Pass the specific contract ID!
-    )
-  );                                           },
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor: Colors.purple.shade600,
-                                                  elevation: 0,
-                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
-                                                ),
-                                                child: Text("View Squad", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-                                              )
-                                            : ElevatedButton(
-                                                onPressed: () {
-                                                  // Send them to the Contracts tab to pledge!
-                                                  Navigator.push(context, MaterialPageRoute(builder: (_) => const ContractsScreen()));
-                                                },
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor: Colors.orange.shade600,
-                                                  elevation: 0,
-                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
-                                                ),
-                                                child: Text("Join Squad", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-                                              )
-                                      ],
+                                        );
+                                      }).toList(),
+                                      onChanged: (int? newValue) {
+                                        if (newValue != null) {
+                                          setState(() => _selectedSquadId = newValue);
+                                        }
+                                      },
                                     ),
                                   ),
-                                );
-                              }),
-                              const SizedBox(height: 25),
-                            ],
+                                ),
+                                const SizedBox(height: 10),
 
+                                // 2. The Dynamic Action Card
+                                Builder(
+                                  builder: (context) {
+                                    // Grab the data for whichever squad is currently selected
+                                    final selectedSquad = filteredSquads.firstWhere((s) => s['id'] == currentSelection);
+                                    
+                                    bool isInternalPool = selectedSquad['buyer_name'].toString().startsWith('Hub Pool:');
+                                    String hubNameClean = selectedSquad['buyer_name'].toString().replaceFirst("Hub Pool: ", "").trim();
+
+                                    final pledges = selectedSquad['pledges'] as List<dynamic>? ?? [];
+                                    bool hasPledged = _currentUser != null && pledges.any((p) => p['farmer_id'].toString() == _currentUser?['id'].toString());
+
+                                    return FadeIn(
+                                      key: ValueKey(currentSelection), // 🔥 Animates smoothly when they pick a new squad!
+                                      child: Container(
+                                        padding: const EdgeInsets.all(16),
+                                        decoration: BoxDecoration(
+                                          color: hasPledged ? Colors.purple.shade50 : (isInternalPool ? Colors.blue.shade50 : Colors.orange.shade50), 
+                                          border: Border.all(color: hasPledged ? Colors.purple.shade200 : (isInternalPool ? Colors.blue.shade200 : Colors.orange.shade200)),
+                                          borderRadius: BorderRadius.circular(16),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Container(
+                                              padding: const EdgeInsets.all(10),
+                                              decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                                              child: Icon(hasPledged ? LucideIcons.users : (isInternalPool ? LucideIcons.shield : LucideIcons.truck), color: hasPledged ? Colors.purple : (isInternalPool ? Colors.blue.shade700 : Colors.orange)),
+                                            ),
+                                            const SizedBox(width: 15),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text("Target: ${selectedSquad['target_weight_kg']}kg", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
+                                                  Text(hasPledged ? "You are in this squad" : "Open for pledges", style: GoogleFonts.poppins(fontSize: 12, color: hasPledged ? Colors.purple.shade800 : (isInternalPool ? Colors.blue.shade800 : Colors.orange.shade800))),
+                                                ],
+                                              ),
+                                            ),
+                                            
+                                            // 🔥 SMART ROUTING RESTORED!
+                                            hasPledged
+                                                ? ElevatedButton(
+                                                    onPressed: () async {
+                                                      await Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: selectedSquad['id'])));
+                                                      if (mounted) _fetchClusters(); 
+                                                    },
+                                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade600, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                                                    child: Text("View", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                                                  )
+                                                : ElevatedButton(
+                                                    onPressed: () async {
+                                                      if (isInternalPool) {
+                                                        // Route straight to the Chat so they can tap the pool widget!
+                                                        await Navigator.push(context, MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubNameClean)));
+                                                      } else {
+                                                        // Route to public contracts
+                                                        await Navigator.push(context, MaterialPageRoute(builder: (_) => const ContractsScreen()));
+                                                      }
+                                                      if (mounted) _fetchClusters(); 
+                                                    },
+                                                    style: ElevatedButton.styleFrom(backgroundColor: isInternalPool ? Colors.blue.shade600 : Colors.orange.shade600, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                                                    child: Text(isInternalPool ? "Open Chat" : "Join", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                                                  )
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                ),
+                                const SizedBox(height: 25),
+                              ];
+                            }()),
                             // EXISTING: DISPLAY PERMANENT HUBS
                             if (_hubs.isNotEmpty) ...[
                               Text("Active Co-op Hubs", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
@@ -427,6 +491,11 @@ Navigator.push(
   Widget _buildHubCard(Map<String, dynamic> hub) {
     int farmerCount = hub['farmer_count'] ?? 0;
     String hubName = hub['hub_name'] ?? 'Regional Hub';
+    int hubId = hub['hub_id'];
+    
+    // 🔥 SECURITY CHECKS
+    bool isMyHub = _currentUser?['hub_id'] == hubId;
+    bool isIndependent = _currentUser?['hub_id'] == null;
     
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -442,30 +511,30 @@ Navigator.push(
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.green.shade50,
+              color: isMyHub ? Colors.green.shade50 : Colors.grey.shade50, // Grey out if not theirs
               borderRadius: const BorderRadius.only(topLeft: Radius.circular(20), topRight: Radius.circular(20)),
             ),
             child: Row(
               children: [
-                const Icon(LucideIcons.mapPin, color: Colors.green, size: 24),
+                Icon(isMyHub ? LucideIcons.mapPin : LucideIcons.shield, color: isMyHub ? Colors.green : Colors.grey, size: 24),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(hubName, style: GoogleFonts.poppins(color: Colors.green.shade900, fontSize: 16, fontWeight: FontWeight.bold)),
-                      Text("High Density Zone", style: GoogleFonts.poppins(color: Colors.green.shade700, fontSize: 11)),
+                      Text(hubName, style: GoogleFonts.poppins(color: isMyHub ? Colors.green.shade900 : Colors.grey.shade800, fontSize: 16, fontWeight: FontWeight.bold)),
+                      Text(isMyHub ? "Your Hub" : "High Density Zone", style: GoogleFonts.poppins(color: isMyHub ? Colors.green.shade700 : Colors.grey.shade500, fontSize: 11)),
                     ],
                   ),
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
                   child: Row(
                     children: [
-                      const Icon(LucideIcons.users, size: 14, color: Colors.green),
+                      Icon(LucideIcons.users, size: 14, color: isMyHub ? Colors.green : Colors.grey.shade600),
                       const SizedBox(width: 4),
-                      Text("$farmerCount", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.green.shade800)),
+                      Text("$farmerCount", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: isMyHub ? Colors.green.shade800 : Colors.grey.shade700)),
                     ],
                   ),
                 )
@@ -475,40 +544,74 @@ Navigator.push(
           
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _showFarmersBottomSheet(hub),
-                    icon: const Icon(LucideIcons.list, size: 16),
-                    label: Text("View Members", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.grey.shade700,
-                      side: BorderSide(color: Colors.grey.shade300),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            child: isMyHub 
+              ? Row(
+                  children: [
+                    // 🔥 UNLOCKED: View Members
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _showFarmersBottomSheet(hub),
+                        icon: const Icon(LucideIcons.list, size: 16),
+                        label: Text("View Members", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.grey.shade700,
+                          side: BorderSide(color: Colors.grey.shade300),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.push(
-                        context, 
-                        MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubName))
-                      );
-                    },
-                    icon: const Icon(LucideIcons.messageSquare, size: 16, color: Colors.white),
-                    label: Text("Co-op Chat", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green.shade700,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    const SizedBox(width: 10),
+                    // 🔥 UNLOCKED: Open Chat
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          await Navigator.push(context, MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubName)));
+                          if (mounted) _fetchClusters();
+                        },
+                        icon: const Icon(LucideIcons.messageSquare, size: 16, color: Colors.white),
+                        label: Text("Co-op Chat", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green.shade700,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    // 🔥 LOCKED: Private Hub
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: null, 
+                        icon: const Icon(LucideIcons.lock, size: 16),
+                        label: Text("Private Co-op", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600)),
+                        style: OutlinedButton.styleFrom(
+                          disabledForegroundColor: Colors.grey.shade400,
+                          side: BorderSide(color: Colors.grey.shade200),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ),
+                    // 🔥 INDEPENDENT PATH: Request to Join
+                    if (isIndependent) ...[
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () => _sendJoinRequest(hubId),
+                          icon: const Icon(LucideIcons.userPlus, size: 16, color: Colors.white),
+                          label: Text("Request to Join", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange.shade600,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                      ),
+                    ]
+                  ],
                 ),
-              ],
-            ),
           )
         ],
       ),

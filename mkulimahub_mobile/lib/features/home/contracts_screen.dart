@@ -375,22 +375,36 @@ class _ContractsScreenState extends State<ContractsScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 16,
-                          backgroundColor: Colors.blue.shade50,
-                          child: Icon(LucideIcons.building, size: 16, color: Colors.blue.shade700),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          contract['buyer_name'] ?? 'Corporate Buyer', 
-                          style: GoogleFonts.poppins(color: Colors.grey.shade800, fontSize: 14, fontWeight: FontWeight.w600)
-                        ),
-                        const SizedBox(width: 5),
-                        const Icon(LucideIcons.badgeCheck, color: Colors.blue, size: 16),
-                      ],
+                    // 🔥 1. First Expanded: Protects the Price Badge on the right
+                    Expanded(
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 16,
+                            backgroundColor: Colors.blue.shade50,
+                            child: Icon(LucideIcons.building, size: 16, color: Colors.blue.shade700),
+                          ),
+                          const SizedBox(width: 10),
+                          
+                          // 🔥 2. Second Expanded: Chops the long name with '...'
+                          Expanded(
+                            child: Text(
+                              contract['buyer_name'] ?? 'Corporate Buyer', 
+                              style: GoogleFonts.poppins(color: Colors.grey.shade800, fontSize: 14, fontWeight: FontWeight.w600),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis, // The magic cut-off!
+                            ),
+                          ),
+                          
+                          const SizedBox(width: 5),
+                          const Icon(LucideIcons.badgeCheck, color: Colors.blue, size: 16),
+                        ],
+                      ),
                     ),
+                    
+                    const SizedBox(width: 10), // Safe buffer zone
+                    
+                    // The Price Badge (Safe on the right!)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),

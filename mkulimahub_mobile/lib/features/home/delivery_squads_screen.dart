@@ -5,9 +5,11 @@ import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:mkulimahub_mobile/features/home/my_deliveries_screen.dart';
 import 'package:mkulimahub_mobile/features/home/squad_chat_screen.dart';
+import 'package:mkulimahub_mobile/features/home/unattended_dropoff_screen.dart';
+import 'dart:convert';
+
 
 class DeliverySquadsScreen extends StatefulWidget {
-  // 🔥 Accept the specific Contract ID!
   final int? targetSquadId;
   
   const DeliverySquadsScreen({super.key, this.targetSquadId});
@@ -261,6 +263,18 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
       }
     );
   }
+  Widget buildEvidenceImage(String? base64String) {
+    if (base64String == null || base64String.isEmpty) return const Center(child: Text("Image missing"));
+    try {
+      final pureBase64 = base64String.split(',').last; 
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.memory(base64Decode(pureBase64), fit: BoxFit.cover, width: double.infinity, height: 150),
+      );
+    } catch (e) {
+      return const Center(child: Text("Error loading image"));
+    }
+  }
   void _showEditPledgeSheet(int pledgeId, double currentWeight) {
     final TextEditingController weightController = TextEditingController(text: currentWeight.toStringAsFixed(0));
     bool isSubmitting = false;
@@ -403,10 +417,14 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
               children: [
                 Icon(icon, color: onTap == null ? Colors.grey.shade400 : Colors.white, size: 18),
                 const SizedBox(width: 10),
-                Text(
-                  title, 
-                  style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 15, color: onTap == null ? Colors.grey.shade500 : Colors.white)
+                Flexible( 
+                child: Text(
+                  title,
+                  style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis, // Adds '...' if it's too long
+                  maxLines: 1, // Forces it to stay on one line
                 ),
+              ),
               ],
             ),
           ),
@@ -477,6 +495,7 @@ return isPulsing ? Pulse(duration: const Duration(seconds: 2), child: button) : 
                         bool isCoordinator = bulkRequest['coordinator_id'] != null;
                         
                         String buyerName = bulkRequest['buyer_name'] ?? 'Unknown Buyer';
+                        bool isInternalPool = buyerName.toLowerCase().contains('hub pool');
                         String cropName = bulkRequest['crop_name'] ?? 'Crop';
                         String county = bulkRequest['county'] ?? 'Unknown Location';
                         
@@ -521,17 +540,32 @@ return isPulsing ? Pulse(duration: const Duration(seconds: 2), child: button) : 
                                   child: Row(
                                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: [
-                                      Row(
-                                        children: [
-                                          CircleAvatar(
-                                            radius: 14,
-                                            backgroundColor: Colors.orange.shade200,
-                                            child: Icon(LucideIcons.building, color: Colors.orange.shade800, size: 14),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Text(buyerName, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.orange.shade900)),
-                                        ],
+                                      // 1. 🔥 First Expanded: Protects the Status Badge from getting pushed off screen
+                                      Expanded(
+                                        child: Row(
+                                          children: [
+                                            CircleAvatar(
+                                              radius: 14,
+                                              backgroundColor: Colors.orange.shade200,
+                                              child: Icon(LucideIcons.building, color: Colors.orange.shade800, size: 14),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            // 2. 🔥 Second Expanded: Chops the long text with '...'
+                                            Expanded(
+                                              child: Text(
+                                                buyerName, 
+                                                style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.orange.shade900),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis, // The magic cut-off!
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
+                                      
+                                      const SizedBox(width: 10), // Safe buffer zone
+                                      
+                                      // The Status Badge (Safe and sound on the right!)
                                       Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                         decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
@@ -540,7 +574,6 @@ return isPulsing ? Pulse(duration: const Duration(seconds: 2), child: button) : 
                                     ],
                                   ),
                                 ),
-                                
                                 // 🔥 BODY
                                 Padding(
                                   padding: const EdgeInsets.all(20.0),
@@ -654,7 +687,9 @@ return isPulsing ? Pulse(duration: const Duration(seconds: 2), child: button) : 
                                                               children: [
                                                                 Text(
                                                                   isMe ? "You" : member['name'], 
-                                                                  style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: isMe ? Colors.green.shade900 : Colors.black87)
+                                                                  style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: isMe ? Colors.green.shade900 : Colors.black87),
+                                                                  maxLines: 1,
+                                                                  overflow: TextOverflow.ellipsis,
                                                                 ),
                                                                 if (isMe) ...[
                                                                   const SizedBox(width: 6),
@@ -675,16 +710,78 @@ return isPulsing ? Pulse(duration: const Duration(seconds: 2), child: button) : 
                                                         children: [
                                                           if (isMe) ...[
                                                             Text("Est. Payout", style: GoogleFonts.poppins(fontSize: 10, color: Colors.teal.shade600, fontWeight: FontWeight.w600)),
-                                                            Text(
-                                                              "KES ${member['payout_kes']}", 
-                                                              style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.green.shade800)
-                                                            ),
+                                                            Text("KES ${member['payout_kes']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.green.shade800)),
                                                           ] else ...[
-                                                            Text("Payout", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade400, fontWeight: FontWeight.w600)),
-                                                            Text(
-                                                              "Hidden", 
-                                                              style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.grey.shade300)
-                                                            ),
+                                                            // 🔥 THE COORDINATOR'S AUDIT BUTTON
+                                                            if (bulkRequest['coordinator_id'] == _currentUserId) ...[
+                                                              // We need to find this specific farmer's pledge status from the main array
+                                                              Builder(
+                                                                builder: (ctx) {
+                                                                  // Find the specific pledge dictionary for this member
+                                                                  final memberPledge = _myPledges.firstWhere((p) => p['bulk_request']['id'] == bulkRequest['id'] && p['farmer_id'] == member['farmer_id'], orElse: () => null);
+                                                                  final memberStatus = memberPledge != null ? memberPledge['status'] : 'unknown';
+                                                                  final notes = memberPledge != null ? memberPledge['notes'] : '';
+
+                                                                  if (memberStatus == 'pending_audit' && notes.toString().startsWith("EVIDENCE_LOG|")) {
+                                                                     return ElevatedButton.icon(
+                                                                       onPressed: () {
+                                                                         // Extract the photos
+                                                                         final parts = notes.split('|');
+                                                                         final scalePhoto = parts.length > 1 ? parts[1] : null;
+                                                                         final cropPhoto = parts.length > 2 ? parts[2] : null;
+                                                                         
+                                                                         // Launch a quick dialog to view and approve!
+                                                                         showDialog(
+                                                                           context: context,
+                                                                           builder: (ctx) => AlertDialog(
+                                                                             title: const Text("Verify Drop-off"),
+                                                                             content: Column(
+                                                                               mainAxisSize: MainAxisSize.min,
+                                                                               children: [
+                                                                                 Text("Did ${member['name']} drop this off at your location?"),
+                                                                                 const SizedBox(height: 10),
+                                                                                 Row(
+                                                                                   children: [
+                                                                                     Expanded(child: buildEvidenceImage(scalePhoto)),
+                                                                                     const SizedBox(width: 10),
+                                                                                     Expanded(child: buildEvidenceImage(cropPhoto)),
+                                                                                   ]
+                                                                                 )
+                                                                               ]
+                                                                             ),
+                                                                             actions: [
+                                                                               TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+                                                                               ElevatedButton(
+                                                                                 onPressed: () async {
+                                                                                   // Update their specific pledge to received!
+                                                                                   await _apiClient.updatePledgeStatus(memberPledge['id'], 'received');
+                                                                                   if (mounted) {
+                                                                                     Navigator.pop(ctx);
+                                                                                     _loadMyPledges();
+                                                                                   }
+                                                                                 }, 
+                                                                                 style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                                                                                 child: const Text("Approve Drop-off")
+                                                                               )
+                                                                             ]
+                                                                           )
+                                                                         );
+                                                                       },
+                                                                       icon: const Icon(LucideIcons.camera, size: 12),
+                                                                       label: const Text("Review Evidence", style: TextStyle(fontSize: 10)),
+                                                                       style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade600, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0), minimumSize: const Size(0, 30)),
+                                                                     );
+                                                                  } else if (memberStatus == 'received') {
+                                                                    return Text("Verified ✅", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade700));
+                                                                  } else {
+                                                                    return Text("Waiting Drop-off", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade500));
+                                                                  }
+                                                                }
+                                                              )
+                                                            ] else ...[
+                                                              Text("Payout", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade400, fontWeight: FontWeight.w600)),
+                                                              Text("Hidden", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.grey.shade300)),
+                                                            ]
                                                           ]
                                                         ],
                                                       ),
@@ -713,52 +810,123 @@ return isPulsing ? Pulse(duration: const Duration(seconds: 2), child: button) : 
                                       ),
                                       const SizedBox(height: 15),
                                       
-                                      // 🔥 DYNAMIC ACTION BUTTONS (Your existing logic)
-                                      if (squadStatus == 'fulfilled')
-                                        _buildPremiumButton(
-                                          title: "Order 100% Fulfilled",
-                                          icon: LucideIcons.checkCircle,
-                                          gradientColors: [Colors.green.shade400, Colors.green.shade700],
-                                          onTap: null, // Leaves it gracefully disabled
-                                        )
-                                        
-                                      else if (squadStatus == 'active')
-                                        if (bulkRequest['coordinator_id'] == _currentUserId)
-                                          _buildPremiumButton(
-                                            title: "👑 You are the Coordinator!",
-                                            icon: LucideIcons.crown,
-                                            gradientColors: [Colors.blue.shade400, Colors.blue.shade800],
-                                            onTap: () {
-                                              Navigator.push(context, MaterialPageRoute(builder: (_) => const MyDeliveriesScreen()));
-                                            }, 
-                                            isPulsing: true, 
-                                          )
-                                        else
-                                          _buildPremiumButton(
-                                            title: "Deliver to Coordinator",
-                                            icon: LucideIcons.truck,
-                                            gradientColors: [Colors.orange.shade400, Colors.deepOrange.shade600],
-                                            onTap: () {
-                                              Navigator.push(context, MaterialPageRoute(builder: (_) => const MyDeliveriesScreen()));
-                                            }, 
-                                          )
-                                          
-                                      else if (squadStatus == 'voting')
-                                        _buildPremiumButton(
-                                          title: "Elect Squad Coordinator",
-                                          icon: LucideIcons.vote,
-                                          gradientColors: [Colors.purple.shade400, Colors.deepPurple.shade700],
-                                          onTap: () => _showVotingSheet(bulkRequest),
-                                          isPulsing: true, // Pulses to remind them they need to vote!
-                                        )
-                                        
-                                      else
-                                        _buildPremiumButton(
-                                          title: "Waiting for more farmers...",
-                                          icon: LucideIcons.users,
-                                          gradientColors: [Colors.grey.shade300, Colors.grey.shade400],
-                                          onTap: null, 
-                                        )
+                                      // 🔥 DYNAMIC ACTION BUTTONS (Bulletproof Builder Pattern)
+                                      Container(
+                                        padding: const EdgeInsets.all(20),
+                                        child: Builder(
+                                          builder: (context) {
+                                            // 1. Contract is Done
+                                            if (squadStatus == 'fulfilled') {
+                                              return _buildPremiumButton(
+                                                title: "Contract Completed",
+                                                icon: LucideIcons.checkCircle,
+                                                gradientColors: [Colors.green.shade400, Colors.green.shade700],
+                                                onTap: null, 
+                                              );
+                                            } 
+                                            // 2. Squad is Driving
+                                            else if (squadStatus == 'active') {
+                                        // A. Are you the Coordinator / Hub Admin?
+                                        if (bulkRequest['coordinator_id'] == _currentUserId) {
+                                           if (pledge['status'] == 'pledged' || pledge['status'] == 'gathering') {
+                                             // They MUST wait for goods to be verified!
+                                             return Column(
+                                               children: [
+                                                 Container(
+                                                   width: double.infinity,
+                                                   padding: const EdgeInsets.symmetric(vertical: 14),
+                                                   decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)),
+                                                   child: Center(child: Text("⚠️ Goods must be Verified to Unlock Transit", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 11))),
+                                                 ),
+                                                 const SizedBox(height: 10),
+                                                 _buildPremiumButton(
+                                                   title: isInternalPool ? "Admin Absent? Digital Drop-off" : "Wait for Farmers to Arrive",
+                                                   icon: isInternalPool ? LucideIcons.camera : LucideIcons.clock,
+                                                   gradientColors: [Colors.red.shade400, Colors.red.shade700],
+                                                   onTap: isInternalPool ? () async {
+                                                     final didSubmit = await Navigator.push(context, MaterialPageRoute(builder: (_) => UnattendedDropoffScreen(squadId: bulkRequest['id'], cropName: cropName)));
+                                                     if (didSubmit == true && mounted) _loadMyPledges();
+                                                   } : null,
+                                                 )
+                                               ]
+                                             );
+                                           } else if (pledge['status'] == 'pending_audit') {
+                                             return _buildPremiumButton(title: "Awaiting Admin Audit...", icon: LucideIcons.shieldAlert, gradientColors: [Colors.grey.shade400, Colors.grey.shade600], onTap: null);
+                                           } else if (pledge['status'] == 'received') {
+                                             // 🔥 ISSUE 1 FIXED: When received, transit is UNLOCKED!
+                                             return _buildPremiumButton(
+                                               title: "Start Journey to Buyer", icon: LucideIcons.truck, gradientColors: [Colors.purple.shade400, Colors.purple.shade700], isPulsing: true,
+                                               onTap: () async { await _apiClient.updateSquadStatus(bulkRequest['id'], 'in_transit'); _loadMyPledges(); },
+                                             );
+                                           } else if (pledge['status'] == 'in_transit') {
+                                             return _buildPremiumButton(
+                                               title: "Confirm Arrival at Buyer", icon: LucideIcons.mapPin, gradientColors: [Colors.green.shade400, Colors.green.shade700],
+                                               onTap: () async { await _apiClient.updateSquadStatus(bulkRequest['id'], 'delivered'); _loadMyPledges(); },
+                                             );
+                                           } else if (pledge['status'] == 'delivered') {
+                                             return _buildPremiumButton(title: "Waiting for Buyer Verification...", icon: LucideIcons.clock, gradientColors: [Colors.grey.shade400, Colors.grey.shade600], onTap: null);
+                                           } else {
+                                             return _buildPremiumButton(title: "Contract Completed", icon: LucideIcons.checkCircle, gradientColors: [Colors.green.shade400, Colors.green.shade700], onTap: null);
+                                            }
+                                        }
+                                        // B. Normal Farmer View
+                                        else {
+                                           if (isInternalPool) {
+                                             return _buildPremiumButton(
+                                               title: "Message Driver to Coordinate", icon: LucideIcons.messageCircle, gradientColors: [Colors.teal.shade400, Colors.teal.shade600],
+                                               onTap: () => showModalBottomSheet(context: context, isScrollControlled: true, backgroundColor: Colors.transparent, builder: (context) => SquadChatSheet(bulkRequestId: bulkRequest['id'])), 
+                                             );
+                                           } else {
+                                             // Corporate Contract Normal Farmer
+                                             if (pledge['status'] == 'pledged' || pledge['status'] == 'gathering') {
+                                               return Column(
+                                                 children: [
+                                                   _buildPremiumButton(
+                                                     title: "Message Coordinator", icon: LucideIcons.messageCircle, gradientColors: [Colors.teal.shade400, Colors.teal.shade600],
+                                                     onTap: () => showModalBottomSheet(context: context, isScrollControlled: true, backgroundColor: Colors.transparent, builder: (context) => SquadChatSheet(bulkRequestId: bulkRequest['id'])), 
+                                                   ),
+                                                   const SizedBox(height: 10),
+                                                   _buildPremiumButton(
+                                                     title: "Coordinator Absent? Digital Drop-off", icon: LucideIcons.camera, gradientColors: [Colors.red.shade400, Colors.red.shade700],
+                                                     onTap: () async {
+                                                       final didSubmit = await Navigator.push(context, MaterialPageRoute(builder: (_) => UnattendedDropoffScreen(squadId: bulkRequest['id'], cropName: cropName)));
+                                                       if (didSubmit == true && mounted) _loadMyPledges();
+                                                     }, 
+                                                   ),
+                                                 ]
+                                               );
+                                             } else if (pledge['status'] == 'pending_audit') {
+                                               return _buildPremiumButton(title: "Waiting for Coordinator Audit...", icon: LucideIcons.clock, gradientColors: [Colors.grey.shade400, Colors.grey.shade600], onTap: null);
+                                             } else if (pledge['status'] == 'received') {
+                                               return _buildPremiumButton(title: "Verified by Coordinator ✅", icon: LucideIcons.checkCircle, gradientColors: [Colors.green.shade400, Colors.green.shade600], onTap: null);
+                                             } else {
+                                               return _buildPremiumButton(title: "Squad In Transit to Buyer", icon: LucideIcons.truck, gradientColors: [Colors.blue.shade400, Colors.blue.shade600], onTap: null);
+                                             }
+                                           }
+                                        }
+                                      }
+                                            // 3. Squad is Voting
+                                            else if (squadStatus == 'voting') {
+                                              return _buildPremiumButton(
+                                                title: "Elect Squad Coordinator",
+                                                icon: LucideIcons.vote,
+                                                gradientColors: [Colors.purple.shade400, Colors.deepPurple.shade700],
+                                                onTap: () => _showVotingSheet(bulkRequest),
+                                                isPulsing: true,
+                                              );
+                                            } 
+                                            // 4. Squad is Gathering
+                                            else {
+                                              return _buildPremiumButton(
+                                                title: "Waiting for more farmers...",
+                                                icon: LucideIcons.users,
+                                                gradientColors: [Colors.grey.shade300, Colors.grey.shade400],
+                                                onTap: null, 
+                                              );
+                                            }
+                                          }
+                                        ),
+                                      )
                                     ],
                                   ),
                                 )

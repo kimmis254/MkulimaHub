@@ -253,30 +253,20 @@ class _HubChatScreenState extends State<HubChatScreen> {
 
                               setDialogState(() => isSubmitting = true);
                               
-                              // Create a unique name to differentiate it from independent crops
-                              final specialCropName = "${cropController.text.trim()} (${widget.hubName} Pool)";
                               final data = {
-                                "crop_name": specialCropName,
-                                "weight_kg": double.tryParse(weightController.text) ?? 0.0,
+                                "crop_name": cropController.text.trim(),
+                                "target_weight_kg": double.tryParse(weightController.text) ?? 0.0,
                                 "price_per_kg": double.tryParse(priceController.text) ?? 0.0,
                               };
 
-                              final error = await _apiClient.addHarvest(data);
+                              // 🔥 USE THE NEW HUB POOL ENDPOINT!
+                              final error = await _apiClient.createHubPool(widget.hubName, data);
                               
                               if (error == null && context.mounted) {
                                 Navigator.pop(context); 
-                                
-                                await _apiClient.postHubMessage(
-                                  widget.hubName, 
-                                  "🎉 NEW JOINT LISTING\n\nWe just pooled ${weightController.text}kg of ${cropController.text} at KES ${priceController.text}/kg! It is now live on the marketplace."
-                                );
                                 await _fetchMessages(silent: true);
                                 _scrollToBottom();
-                                
                                 _showPremiumToast(context, "Joint Listing Published!");
-                                
-                                // Refresh the dashboard if the key is available
-                                dashboardKey.currentState?.loadHarvests();
                               } else if (context.mounted) {
                                 setDialogState(() => isSubmitting = false);
                                 _showPremiumToast(context, error ?? "Error saving listing.", isError: true);
@@ -330,6 +320,205 @@ class _HubChatScreenState extends State<HubChatScreen> {
     } catch (e) {
       return "";
     }
+  }
+  Widget _buildInteractivePoolCard(String payload, String? timestamp) {
+    // Payload format: POOL_REQ|contract_id|crop|target|price|total_pledged|status
+    final parts = payload.split('|');
+    if (parts.length < 5) return const SizedBox.shrink();
+
+    final contractId = int.tryParse(parts[1]) ?? 0;
+    final crop = parts[2];
+    final target = double.tryParse(parts[3]) ?? 1.0;
+    final price = parts[4];
+
+    // 🔥 Extract the dynamic data from Python (Default to 0 if it's an old message)
+    final currentPledged = parts.length > 5 ? (double.tryParse(parts[5]) ?? 0.0) : 0.0;
+    final status = parts.length > 6 ? parts[6] : "Open";
+
+    // Logic Checks
+    final isFulfilled = status.toLowerCase() == 'fulfilled' || currentPledged >= target;
+    double progress = currentPledged / target;
+    if (progress > 1.0) progress = 1.0;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 15, horizontal: 10),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: isFulfilled ? Colors.green.shade200 : Colors.orange.shade200, width: 2),
+        boxShadow: [BoxShadow(color: isFulfilled ? Colors.green.withOpacity(0.1) : Colors.orange.withOpacity(0.1), blurRadius: 15, offset: const Offset(0, 5))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(color: isFulfilled ? Colors.green.shade50 : Colors.orange.shade100, shape: BoxShape.circle),
+                    child: Icon(isFulfilled ? LucideIcons.checkCircle : LucideIcons.store, color: isFulfilled ? Colors.green.shade700 : Colors.orange.shade800, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text("Co-op Aggregation Goal", style: GoogleFonts.poppins(fontSize: 12, color: isFulfilled ? Colors.green.shade700 : Colors.orange.shade800, fontWeight: FontWeight.bold)),
+                      Text(crop, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.black87)),
+                    ],
+                  ),
+                ],
+              ),
+              // 🔥 DYNAMIC BADGE
+              if (isFulfilled)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(color: Colors.green.shade100, borderRadius: BorderRadius.circular(8)),
+                  child: Text("100% FULL", style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green.shade800)),
+                )
+            ],
+          ),
+          const SizedBox(height: 15),
+
+          // 🔥 LIVE PROGRESS BAR
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text("Pool Progress", style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade500)),
+                  Text("${currentPledged.toStringAsFixed(0)} / ${target.toStringAsFixed(0)} KG", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: isFulfilled ? Colors.green.shade700 : Colors.orange.shade700)),
+                ],
+              ),
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 8,
+                  backgroundColor: Colors.grey.shade100,
+                  color: isFulfilled ? Colors.green.shade500 : Colors.orange.shade400,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 15),
+
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(10)),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("Target Weight", style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade500)),
+                    Text("${target.toStringAsFixed(0)}kg", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
+                  ],
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text("Target Price", style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade500)),
+                    Text("KES $price / kg", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.green.shade700)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 15),
+          
+          // 🔥 DYNAMIC LOCKING BUTTON
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: isFulfilled ? null : () => _showPledgeDialog(contractId, crop, target - currentPledged),
+              icon: Icon(isFulfilled ? LucideIcons.lock : LucideIcons.plus, color: isFulfilled ? Colors.grey.shade500 : Colors.white, size: 18),
+              label: Text(isFulfilled ? "Goal Reached" : "Pledge Produce", style: GoogleFonts.poppins(color: isFulfilled ? Colors.grey.shade500 : Colors.white, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isFulfilled ? Colors.grey.shade200 : Colors.orange.shade600,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 0
+              ),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  void _showPledgeDialog(int contractId, String crop, double remainingAmount) {
+    final weightController = TextEditingController();
+    bool isSubmitting = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text("Pledge $crop", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("How many kilograms are you committing to this Hub Pool?", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
+                const SizedBox(height: 8),
+                Text("Maximum allowed: ${remainingAmount.toStringAsFixed(0)} KG", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.orange.shade700)),
+                const SizedBox(height: 15),
+                TextField(
+                  controller: weightController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    hintText: "E.g., 50",
+                    suffixText: "KG",
+                    filled: true,
+                    fillColor: Colors.grey.shade50,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+              ElevatedButton(
+                onPressed: isSubmitting ? null : () async {
+                  final weight = double.tryParse(weightController.text.trim());
+                  if (weight == null || weight <= 0) return;
+                  
+                  if (weight > remainingAmount) {
+                     _showPremiumToast(context, "Cannot exceed remaining amount of ${remainingAmount.toStringAsFixed(0)}kg", isError: true);
+                     return;
+                  }
+
+                  setDialogState(() => isSubmitting = true);
+                  
+                  final error = await _apiClient.createPledge(contractId, weight);
+                  
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx);
+                    if (error == null) {
+                      _showPremiumToast(context, "Pledge added successfully!");
+                      _fetchMessages(silent: true); // 🔥 Refresh the chat to update the progress bar instantly!
+                    } else {
+                      _showPremiumToast(context, error, isError: true);
+                    }
+                  }
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                child: isSubmitting ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Text("Confirm Pledge"),
+              )
+            ],
+          );
+        }
+      )
+    );
   }
 
   @override
@@ -456,6 +645,10 @@ class _HubChatScreenState extends State<HubChatScreen> {
   }
 
   Widget _buildMessageBubble(String senderName, String message, String? timestamp, bool isMe, bool showAvatar) {
+    if (message.startsWith("POOL_REQ|")) {
+      return _buildInteractivePoolCard(message, timestamp);
+    }
+
     bool isSystemMessage = message.startsWith("🎉 NEW JOINT LISTING");
     final timeString = _formatTime(timestamp);
 

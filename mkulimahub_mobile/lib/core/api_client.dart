@@ -19,21 +19,22 @@ class ApiClient {
   Future<String?> login(String phone, String password) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/login'), // Or whatever your login endpoint is
+        Uri.parse('$baseUrl/auth/login'), 
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: {'username': phone, 'password': password},
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        // 🔥 CRITICAL: Save the token immediately!
         await _saveToken(data['access_token']); 
-        return null; // Null means no error
+        return null; 
       } else {
-        return "Invalid phone or password.";
+        // 🔥 Catch the EXACT error FastAPI is sending!
+        final errorData = jsonDecode(response.body);
+        return errorData['detail'] ?? "Invalid phone or password.";
       }
     } catch (e) {
-      return "Network error. Please check your connection.";
+      return "Network error. Is your Python server running?";
     }
   }
 
@@ -441,10 +442,10 @@ class ApiClient {
     }
   }
 
-  Future<String?> processDelivery(int pledgeId, String action, double? actualWeight, String? notes) async {
+  Future<String?> processDelivery(int squadId, String action, double? actualWeight, String? notes) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/api/hubs/deliveries/$pledgeId/process'),
+        Uri.parse('$baseUrl/api/hubs/deliveries/$squadId/process'), // 🔥 Updated endpoint
         headers: {
           'Authorization': 'Bearer ${await _getToken()}',
           'Content-Type': 'application/json',
@@ -592,7 +593,26 @@ class ApiClient {
       return "Connection error: $e";
     }
   }
+  Future<String?> updatePledgeStatus(int pledgeId, String status) async {
+    final token = await getToken();
+    if (token == null) return "Please login first.";
 
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/pledges/$pledgeId/status'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode({"status": status}),
+      );
+      if (response.statusCode == 200) return null;
+      return "Failed to verify drop-off.";
+    } catch (e) {
+      return "Connection error.";
+    }
+  }
+  
   Future<String?> deletePledge(int pledgeId) async {
     final token = await getToken();
     if (token == null) return "Authentication required";
@@ -1047,6 +1067,75 @@ class ApiClient {
       }
     } catch (e) {
       return "Connection error: $e";
+    }
+  }
+  Future<String?> createHubPool(String hubName, Map<String, dynamic> data) async {
+    final token = await getToken();
+    if (token == null) return "Please login first.";
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/hubs/$hubName/pools'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode(data),
+      );
+
+      if (response.statusCode == 200) {
+        return null; 
+      } else {
+        return jsonDecode(response.body)['detail'] ?? "Failed to create pool.";
+      }
+    } catch (e) {
+      return "Connection error: $e";
+    }
+  }
+  Future<String?> submitUnattendedDropoff(int squadId, String scalePhotoBase64, String cropPhotoBase64) async {
+    final token = await getToken();
+    if (token == null) return "Please login first.";
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/squads/$squadId/unattended-dropoff'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode({
+          "scale_photo_url": scalePhotoBase64,
+          "crop_photo_url": cropPhotoBase64,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return null; // Success!
+      } else {
+        return jsonDecode(response.body)['detail'] ?? "Failed to submit drop-off.";
+      }
+    } catch (e) {
+      return "Connection error: $e";
+    }
+  }
+  Future<String?> updateSquadStatus(int squadId, String status) async {
+    final token = await getToken();
+    if (token == null) return "Please login first.";
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/squads/$squadId/status'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode({"status": status}),
+      );
+
+      if (response.statusCode == 200) return null;
+      return "Failed to update status.";
+    } catch (e) {
+      return "Connection error.";
     }
   }
 }

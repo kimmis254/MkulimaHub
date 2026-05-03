@@ -40,7 +40,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final rawPhone = _phoneController.text.trim();
     final password = _passwordController.text.trim();
 
-    // 🔥 FIX: Format the phone number FIRST, before we talk to the database!
+    // 🔥 Format the phone number FIRST
     String formattedPhone = rawPhone;
     if (formattedPhone.startsWith('0')) {
       formattedPhone = '+254${formattedPhone.substring(1)}';
@@ -48,39 +48,37 @@ class _LoginScreenState extends State<LoginScreen> {
       formattedPhone = '+254$formattedPhone';
     }
 
-    // 1. Ask FastAPI if the password is correct using the FORMATTED number
-    final error = await _apiClient.verifyCredentials(formattedPhone, password);
+    // 🔥 1. Use the full login function to get the token immediately!
+    // (Bypassing the forced SMS OTP for standard password logins)
+    final error = await _apiClient.login(formattedPhone, password);
 
     if (error == null) {
-      // 2. PASSWORD IS CORRECT! Now trigger the 2FA SMS.
-      await _authService.sendPhoneOTP(
-        phoneNumber: formattedPhone,
-        onCodeSent: (verificationId) {
-          setState(() => _isLoading = false);
-          
-          if (mounted) {
-            // 3. Send them to the OTP Screen
-            Navigator.push(
-              context, 
-              MaterialPageRoute(
-                builder: (_) => OtpVerificationScreen(
-                  verificationId: verificationId,
-                  phoneNumber: formattedPhone,
-                  is2FALogin: true, 
-                  // Make sure we pass the formatted phone here too!
-                  pendingLoginData: {'phone': formattedPhone, 'password': password}, 
-                )
-              )
-            );
-          }
-        },
-        onError: (errorMsg) {
-          setState(() => _isLoading = false);
-          if (mounted) _showError(errorMsg);
+      // 🔥 2. Fetch their profile to see if they are a Farmer or a Corporate Buyer
+      final profileData = await _apiClient.getProfile();
+      
+      if (mounted) {
+        setState(() => _isLoading = false);
+        
+        String role = profileData?['role'] ?? 'farmer';
+        await _apiClient.saveUserRole(role); 
+        
+        // 🔥 3. Route them perfectly based on their role!
+        if (role == 'buyer') {
+          Navigator.pushAndRemoveUntil(
+            context, 
+            MaterialPageRoute(builder: (_) => const BuyerDashboard()), 
+            (route) => false
+          );
+        } else {
+          Navigator.pushAndRemoveUntil(
+            context, 
+            MaterialPageRoute(builder: (_) => const HomeScreen()), 
+            (route) => false
+          );
         }
-      );
+      }
     } else {
-      // Password was wrong
+      // Password was wrong or network error
       setState(() => _isLoading = false);
       if (mounted) _showError(error);
     }

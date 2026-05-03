@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
+import 'package:mkulimahub_mobile/features/home/unattended_dropoff_screen.dart';
 
 class MyDeliveriesScreen extends StatefulWidget {
   const MyDeliveriesScreen({super.key});
@@ -232,7 +233,7 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text("${pledge['weight_kg'] ?? 0} kg of ${pledge['crop'] ?? 'Produce'}", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                          Text("${pledge['weight_kg'] ?? 0} ${pledge['unit'] ?? 'KG'} of ${pledge['crop'] ?? 'Produce'}", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
                           Text("Buyer: ${pledge['buyer'] ?? 'Unknown'}", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13)),
                         ],
                       ),
@@ -249,18 +250,68 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
                 // =========================================================
                 if (pledge['is_coordinator'] == true && !isRejected) ...[
                   const SizedBox(height: 25),
-                  
-                  // Logic to show the correct button based on where the truck currently is!
-                  if (status == 'pending' || status == 'received' || status == 'gathering' || status == 'pledged')
+
+                  if (status == 'pledged' || status == 'gathering')
+                    Column(
+                      children: [
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(LucideIcons.shieldAlert, size: 16, color: Colors.orange.shade700),
+                              const SizedBox(width: 8),
+                              Text("Awaiting Verification to Start Transit", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 12)),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        // 🔥 The Fallback for Hub Pools if the Admin is missing
+                        _buildCoordinatorButton(
+                          title: "Admin Absent? Digital Drop-off",
+                          icon: LucideIcons.camera,
+                          color: Colors.red,
+                          onTap: () async {
+                            // (Ensure you have imported unattended_dropoff_screen.dart at the top!)
+                            final didSubmit = await Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => UnattendedDropoffScreen(
+                                squadId: pledge['bulk_request_id'],
+                                cropName: pledge['crop'] ?? 'Produce',
+                              ))
+                            );
+                            if (didSubmit == true && mounted) _fetchMyDeliveries();
+                          },
+                        )
+                      ]
+                    )
+                  else if (status == 'pending_audit')
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(12)),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(LucideIcons.clock, size: 16, color: Colors.red.shade700),
+                          const SizedBox(width: 8),
+                          Text("Awaiting Hub Admin Audit", style: GoogleFonts.poppins(color: Colors.red.shade800, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    )
+                  else if (status == 'received')
+                    // 🔥 ISSUE 2 FIXED: Only when VERIFIED can they start the journey!
                     _buildCoordinatorButton(
-                      title: "Start Journey to Hub",
+                      title: "Start Journey to Buyer",
                       icon: LucideIcons.truck,
                       color: Colors.purple,
                       onTap: () => _handleStatusUpdate(pledge['bulk_request_id'], 'in_transit'),
                     )
                   else if (status == 'in_transit')
                     _buildCoordinatorButton(
-                      title: "Confirm Arrival at Hub",
+                      title: "Confirm Arrival at Buyer",
                       icon: LucideIcons.mapPin,
                       color: Colors.green,
                       onTap: () => _handleStatusUpdate(pledge['bulk_request_id'], 'delivered'),
@@ -275,11 +326,11 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
                         children: [
                           Icon(LucideIcons.clock, size: 16, color: Colors.grey.shade500),
                           const SizedBox(width: 8),
-                          Text("Waiting for Hub Admin Verification", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
+                          Text("Waiting for Buyer Verification", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
                         ],
                       ),
                     )
-                  else if (status == 'paid')
+                  else if (status == 'paid' || status == 'completed')
                      Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(vertical: 14),

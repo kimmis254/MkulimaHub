@@ -224,3 +224,53 @@ class SquadMessage(Base):
 
     # Relationship to easily grab the sender's name
     sender = relationship("User")
+
+class MarketListing(Base):
+    """A farmer's public listing on the marketplace."""
+    __tablename__ = "market_listings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    farmer_id = Column(Integer, ForeignKey("users.id"))
+    crop_name = Column(String, index=True)
+    
+    # 1. Master Inventory (Always tracked in KG to prevent math errors)
+    base_inventory_kg = Column(Float)
+    available_kg = Column(Float) 
+    
+    # 2. Option A: Selling by Weight
+    is_selling_by_weight = Column(Boolean, default=True)
+    price_per_kg = Column(Float, nullable=True)
+    
+    # 3. Option B: Selling by Unit/Piece/Bunch
+    is_selling_by_unit = Column(Boolean, default=False)
+    unit_name = Column(String, nullable=True) # e.g., "Piece", "Bunch", "Crate"
+    price_per_unit = Column(Float, nullable=True)
+    kg_per_unit = Column(Float, nullable=True) # The vital conversion rate! (e.g. 1 bunch = 0.5kg)
+    
+    status = Column(String, default="active") # active, sold_out
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    farmer = relationship("User")
+    orders = relationship("MarketOrder", back_populates="listing")
+
+class MarketOrder(Base):
+    """A consumer's specific purchase from a farmer's listing."""
+    __tablename__ = "market_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    listing_id = Column(Integer, ForeignKey("market_listings.id"))
+    buyer_id = Column(Integer, ForeignKey("users.id"))
+    
+    # What did the buyer actually click?
+    order_type = Column(String) # "weight" or "unit"
+    quantity_ordered = Column(Float) # E.g., 5 (kg) or 5 (bunches)
+    
+    # Financials & Inventory Math
+    kg_deducted = Column(Float) # How much physical weight this removed from the farm
+    total_price = Column(Float)
+    
+    status = Column(String, default="pending") 
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    listing = relationship("MarketListing", back_populates="orders")
+    buyer = relationship("User")

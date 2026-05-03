@@ -1,18 +1,28 @@
 from database import engine
 from sqlalchemy import text
-import models
 
 print("🚀 Connecting to PostgreSQL...")
 
-# 🔥 THE NUKE: Bypass SQLAlchemy sorting and force PostgreSQL to wipe everything instantly!
 with engine.connect() as conn:
-    print("🧨 Dropping the entire public schema...")
-    conn.execute(text("DROP SCHEMA public CASCADE;"))
-    conn.execute(text("CREATE SCHEMA public;"))
+    print("🧨 Surgically wiping transactional data (Keeping Users & Market Prices)...")
+    
+    # 🔥 TRUNCATE empties the tables instantly. 
+    # CASCADE ensures any linked foreign keys are also cleared out safely.
+    conn.execute(text("""
+        TRUNCATE 
+            harvests, 
+            bulk_requests, 
+            pledges, 
+            squad_messages, 
+            hub_messages, 
+            hub_requests, 
+            hub_candidates, 
+            hub_votes, 
+            squad_candidates, 
+            squad_votes, 
+            hubs
+        CASCADE;
+    """))
     conn.commit()
 
-# 🔥 THE PAVE: Rebuild all tables with your new strict CASCADE rules
-print("🏗️ Building fresh tables...")
-models.Base.metadata.create_all(bind=engine)
-
-print("✅ Database is 100% clean, empty, and rebuilt!")
+print("✅ Database cleaned! Users and Market Prices survived the wipe.")

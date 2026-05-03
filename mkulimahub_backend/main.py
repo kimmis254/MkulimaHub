@@ -292,12 +292,21 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 @limiter.limit("5/minute")
 def login_user(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     
-    # 🔥 THE FIX: Format the incoming phone number so it perfectly matches the database!
-    search_phone = form_data.username.strip()
-    if search_phone.startswith("+254"):
-        search_phone = "0" + search_phone[4:]
-        
-    user = db.query(models.User).filter(models.User.phone_number == search_phone).first()
+    raw_phone = form_data.username.strip()
+    
+    # 🔥 Create BOTH versions of the phone number!
+    phone_zero = raw_phone
+    phone_plus = raw_phone
+    
+    if raw_phone.startswith("+254"):
+        phone_zero = "0" + raw_phone[4:]
+    elif raw_phone.startswith("0"):
+        phone_plus = "+254" + raw_phone[1:]
+
+    # 🔥 Search the database for EITHER format. We will never miss a match again!
+    user = db.query(models.User).filter(
+        (models.User.phone_number == phone_zero) | (models.User.phone_number == phone_plus)
+    ).first()
     
     if not user or not security.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
@@ -461,7 +470,11 @@ def create_bulk_contract(contract: schemas.BulkRequestCreate, db: Session = Depe
 
 @app.get("/api/contracts", response_model=List[schemas.BulkRequestRead])
 def get_open_contracts(county: str = None, db: Session = Depends(get_db)):
-    query = db.query(models.BulkRequest).filter(models.BulkRequest.status == "Open")
+    """Fetches open Corporate Contracts for the Contracts Screen."""
+    query = db.query(models.BulkRequest).filter(
+        models.BulkRequest.status == "Open",
+        ~models.BulkRequest.buyer_name.like("Hub Pool:%") # 🔥 Hide Internal Hub Pools!
+    )
     if county:
         query = query.filter(models.BulkRequest.county == county)
     return query.all()
@@ -776,10 +789,18 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db), current
     ]
     
     # 🔥 1. Get the raw squads from the database
-    squads_db = db.query(models.BulkRequest).filter(
-        models.BulkRequest.status == "Open",
-        models.BulkRequest.squad_status.in_(["gathering", "voting"]) 
+    all_squads = db.query(models.BulkRequest).filter(
+        models.BulkRequest.squad_status.in_(["gathering", "voting", "active"]) 
     ).all()
+    
+    squads_db = []
+    for req in all_squads:
+        if req.squad_status in ["gathering", "voting"] and req.status == "Open":
+            squads_db.append(req)
+        elif req.squad_status == "active":
+            # Only keep it on the screen if the current user is actually in this squad!
+            if any(p.farmer_id == current_user.id for p in req.pledges):
+                squads_db.append(req)
     
     # 🔥 2. THE FIX: Explicitly format the data so FastAPI includes the pledges!
     active_squads_data = []
@@ -839,14 +860,29 @@ def leave_hub(db: Session = Depends(get_db), current_user: models.User = Depends
 def get_hub_messages(hub_name: str, db: Session = Depends(get_db)):
     messages = db.query(models.HubMessage).filter(models.HubMessage.hub_name == hub_name).order_by(models.HubMessage.created_at.asc()).all()
     result = []
+    
     for m in messages:
+        msg_text = m.message
+        
+        # 🔥 DYNAMIC POOL INJECTION
+        if msg_text.startswith("POOL_REQ|"):
+            parts = msg_text.split('|')
+            if len(parts) >= 2:
+                contract_id = int(parts[1])
+                contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == contract_id).first()
+                if contract:
+                    total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == contract_id).scalar() or 0.0
+                    # Append the live progress and status directly into the string!
+                    msg_text = f"{m.message}|{total_pledged}|{contract.status}"
+
         result.append({
             "id": m.id,
             "hub_name": m.hub_name,
-            "message": m.message,
+            "message": msg_text, # Pass the upgraded string to Flutter
             "created_at": m.created_at,
             "sender_name": m.sender.full_name if m.sender else "Unknown Farmer"
         })
+        
     return result
 
 @app.post("/api/hubs/{hub_name}/messages", response_model=schemas.HubMessageRead)
@@ -1189,59 +1225,127 @@ class ProcessDeliveryPayload(BaseModel):
     actual_weight_kg: Optional[float] = None
     notes: Optional[str] = None
 
+class HubPoolCreate(BaseModel):
+    crop_name: str
+    target_weight_kg: float
+    price_per_kg: float
+
+@app.post("/api/hubs/{hub_name}/pools")
+def create_hub_pool(hub_name: str, payload: HubPoolCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Creates an internal Hub aggregation pool and broadcasts an interactive widget to the chat."""
+    
+    # 1. Create a BulkRequest that acts as an Internal Hub Pool
+    new_pool = models.BulkRequest(
+        buyer_name=f"Hub Pool: {hub_name}", # 🔥 This is the secret flag!
+        crop_name=payload.crop_name,
+        target_weight_kg=payload.target_weight_kg,
+        price_per_kg=payload.price_per_kg,
+        county="Hub Internal",
+        status="Open",
+        squad_status="gathering",
+        coordinator_id=current_user.id # The Hub Admin is the coordinator!
+    )
+    db.add(new_pool)
+    db.commit()
+    db.refresh(new_pool)
+
+    # 2. Inject the Interactive Widget Payload into the Chat
+    chat_payload = f"POOL_REQ|{new_pool.id}|{payload.crop_name}|{payload.target_weight_kg}|{payload.price_per_kg}"
+    chat_msg = models.HubMessage(
+        hub_name=hub_name,
+        sender_id=current_user.id,
+        message=chat_payload
+    )
+    db.add(chat_msg)
+    db.commit()
+
+    return {"message": "Pool created and broadcasted!", "contract_id": new_pool.id}
+
 @app.get("/api/hubs/deliveries")
 def get_hub_deliveries(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Fetches all pledges destined for the Coordinator's Hub."""
-    # Ensure they are actually a coordinator
+    """Fetches ONLY internal Hub Pools for the Hub Admin's Weighbridge."""
+    
     hub = db.query(models.Hub).filter(models.Hub.coordinator_id == current_user.id).first()
     if not hub:
-        raise HTTPException(status_code=403, detail="Only Hub Coordinators can view this dashboard.")
+        raise HTTPException(status_code=403, detail="Only Hub Admins can view the receiving weighbridge.")
 
-    # Get all pledges made by farmers who belong to this specific Hub
-    hub_farmer_ids = [f.id for f in db.query(models.User).filter(models.User.hub_id == hub.id).all()]
-    pledges = db.query(models.Pledge).filter(models.Pledge.farmer_id.in_(hub_farmer_ids)).all()
-    
     results = []
-    for p in pledges:
-        farmer = db.query(models.User).filter(models.User.id == p.farmer_id).first()
+
+    # ==========================================
+    # ONLY FETCH INTERNAL HUB POOLS!
+    # Corporate contracts go straight to the buyer.
+    # ==========================================
+    hub_pools = db.query(models.BulkRequest).filter(
+        models.BulkRequest.buyer_name == f"Hub Pool: {hub.name}"
+    ).all()
+
+    for pool in hub_pools:
+        pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == pool.id).all()
+        if not pledges: continue
         
-        # 🔥 THE FIX 1: Use models.BulkRequest and p.bulk_request_id
-        contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == p.bulk_request_id).first()
-        
-        if not contract or not farmer:
-            continue
-            
+        total_pledged = sum(p.pledged_weight_kg for p in pledges)
+        total_actual = sum((p.actual_weight_kg or 0) for p in pledges)
+
+        ui_status = "delivered" if total_pledged >= pool.target_weight_kg else "in_transit"
+        if total_actual > 0: ui_status = "received"
+
+        evidence_scale = None
+        evidence_crop = None
+        if ui_status == "pending_audit":
+            for p in pledges:
+                if p.notes and str(p.notes).startswith("EVIDENCE_LOG|"):
+                    parts = p.notes.split("|")
+                    if len(parts) >= 3:
+                        evidence_scale = parts[1]
+                        evidence_crop = parts[2]
+                    break
+
         results.append({
-            "pledge_id": p.id,
-            "farmer_name": farmer.full_name,
-            "crop_name": contract.crop_name,
-            # 🔥 THE FIX 2: Use p.pledged_weight_kg instead of p.weight_kg
-            "pledged_weight": p.pledged_weight_kg,
-            "actual_weight": p.actual_weight_kg,
-            "status": p.status,
-            "notes": p.notes
+            "squad_id": pool.id,
+            "crop_name": pool.crop_name,
+            "buyer_name": "Internal Co-op Pool",
+            "coordinator_name": "Hub Drop-off", 
+            "total_pledged": total_pledged,
+            "target_weight": pool.target_weight_kg,
+            "total_actual": total_actual,
+            "status": ui_status,
+            "evidence_scale": evidence_scale,
+            "evidence_crop": evidence_crop,
+            "farmer_count": len(pledges)
         })
-        
+
     return results
 
-@app.post("/api/hubs/deliveries/{pledge_id}/process")
-def process_hub_delivery(pledge_id: int, payload: ProcessDeliveryPayload, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows Coordinator to accept or reject a physical drop-off."""
-    pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
-    if not pledge:
-        raise HTTPException(status_code=404, detail="Pledge not found.")
+@app.post("/api/hubs/deliveries/{squad_id}/process")
+def process_hub_delivery(squad_id: int, payload: ProcessDeliveryPayload, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Allows Coordinator to accept or reject an ENTIRE Squad's truck at once."""
+    squad = db.query(models.BulkRequest).filter(models.BulkRequest.id == squad_id).first()
+    if not squad:
+        raise HTTPException(status_code=404, detail="Squad not found.")
+
+    pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == squad_id).all()
 
     if payload.action == "receive":
-        pledge.status = "received"
-        pledge.actual_weight_kg = payload.actual_weight_kg or pledge.weight_kg
-        pledge.notes = payload.notes or "Verified and stored at Hub."
+        # 🔥 THE PRO-RATA ALGORITHM
+        # If the scale reads 490kg, but they pledged 500kg, we divide the loss fairly.
+        actual_total = payload.actual_weight_kg or sum(p.pledged_weight_kg for p in pledges)
+        pledged_total = sum(p.pledged_weight_kg for p in pledges)
+        
+        ratio = actual_total / pledged_total if pledged_total > 0 else 1.0
+
+        for pledge in pledges:
+            pledge.status = "received"
+            # Calculate their exact physical contribution
+            pledge.actual_weight_kg = round(pledge.pledged_weight_kg * ratio, 2)
+            pledge.notes = payload.notes or "Verified and stored at Hub."
+
     elif payload.action == "reject":
-        pledge.status = "rejected"
-        pledge.notes = payload.notes or "Rejected at Hub."
-        # Optionally, you could deduct this from the contract's total here!
-    
+        for pledge in pledges:
+            pledge.status = "rejected"
+            pledge.notes = payload.notes or "Entire squad rejected at Hub Quality Control."
+
     db.commit()
-    return {"message": f"Delivery marked as {pledge.status}"}
+    return {"message": "Squad Delivery Processed!"}
 
 @app.get("/api/my-deliveries")
 def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -1259,64 +1363,73 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
         contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == p.bulk_request_id).first()
         if not contract:
             continue
-        if contract.squad_status not in ["active", "voting", "fulfilled"]:
-            total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == contract.id).scalar() or 0.0
+        
+        # ... (keep your existing self-healing logic here) ...
             
-            if total_pledged >= contract.target_weight_kg:
-                unique_farmers = db.query(models.Pledge.farmer_id).filter(models.Pledge.bulk_request_id == contract.id).distinct().count()
-                
-                if unique_farmers == 1:
-                    contract.coordinator_id = p.farmer_id
-                    contract.squad_status = "active"
-                else:
-                    contract.squad_status = "voting"
-                
-                db_needs_commit = True
-            
+        is_internal_pool = contract.buyer_name.startswith("Hub Pool:")
+
+        # 🔥 Mask the Base64 String!
+        display_notes = p.notes
+        if display_notes and str(display_notes).startswith("EVIDENCE_LOG|"):
+            display_notes = "📷 Digital Evidence Submitted. Awaiting Hub Audit."
+        elif not display_notes:
+            display_notes = "Deliver to Coordinator Hub."
+
         unified_deliveries.append({
             "id": f"BLK-{p.id:04d}", 
-            "type": "Bulk Contract",
+            "type": "Co-op Pool" if is_internal_pool else "Bulk Contract",
             "crop": contract.crop_name, 
             "weight_kg": p.pledged_weight_kg,
+            "unit": "KG", # 🔥 Bulk contracts are always in KG
             "expected_payout": p.pledged_weight_kg * contract.price_per_kg,
             "status": p.status, 
-            "buyer": contract.buyer_name, 
-            "notes": p.notes or "Deliver to Coordinator Hub.",
-            "is_coordinator": contract.coordinator_id == current_user.id, # 🔥 MUST BE HERE
-            "bulk_request_id": contract.id # 🔥 MUST BE HERE
+            "buyer": "Your Local Co-op" if is_internal_pool else contract.buyer_name, 
+            "notes": display_notes,
+            "is_coordinator": contract.coordinator_id == current_user.id, 
+            "bulk_request_id": contract.id 
         })
 
     # ==========================================
-    # 2. FETCH INDIVIDUAL DIRECT SALES (Harvest Table)
+    # 2. FETCH INDIVIDUAL DIRECT SALES (MarketListings & Orders)
     # ==========================================
-    # Note: Check if your columns are named slightly differently (e.g., quantity_kg vs weight_kg)
-    # This assumes you only want to track harvests that have actually been purchased (not just sitting available)
     try:
-        # Fetching all harvests since there is no 'is_sold' column yet
-        direct_sales = db.query(models.Harvest).filter(
-            models.Harvest.farmer_id == current_user.id
-        ).all()
+        my_listings = db.query(models.MarketListing).filter(models.MarketListing.farmer_id == current_user.id).all()
         
-        for sale in direct_sales:
-            # Calculate the payout using your exact column names
-            expected_payout = (sale.weight_kg or 0) * (sale.price_per_kg or 0)
+        for listing in my_listings:
+            orders = db.query(models.MarketOrder).filter(models.MarketOrder.listing_id == listing.id).all()
             
-            # Determine status based on whether it is pooled at a Hub
-            ui_status = "received" if sale.is_pooled else "pending"
-            notes = "Pooled at Hub awaiting buyer." if sale.is_pooled else "Available in the marketplace."
+            if not orders:
+                 unified_deliveries.append({
+                    "id": f"LST-{listing.id:04d}",
+                    "type": "Market Listing",
+                    "crop": listing.crop_name,
+                    "weight_kg": listing.available_kg, 
+                    "unit": "KG", 
+                    "expected_payout": 0, # Hasn't sold yet
+                    "status": "pending", 
+                    "buyer": "Awaiting Buyers", 
+                    "notes": f"Inventory: {listing.available_kg} / {listing.base_inventory_kg} KG remaining.",
+                    "is_coordinator": True, 
+                    "bulk_request_id": None
+                })
+            else:
+                for order in orders:
+                    # Look how we dynamically format the display text based on what they bought!
+                    display_unit = "KG" if order.order_type == "weight" else listing.unit_name
 
-            unified_deliveries.append({
-                "id": f"DIR-{sale.id:04d}",
-                "type": "Market Listing", # 🔥 Updated badge name
-                "crop": sale.crop_name,
-                "weight_kg": sale.weight_kg, 
-                "expected_payout": expected_payout, 
-                "status": ui_status, # Hardcoded fallback since your table doesn't have a status
-                "buyer": "Pending Buyer", # Hardcoded fallback
-                "notes": notes,
-                "is_coordinator": False, 
-                "bulk_request_id": None
-            })
+                    unified_deliveries.append({
+                        "id": f"ORD-{order.id:04d}",
+                        "type": "Direct Sale",
+                        "crop": listing.crop_name,
+                        "weight_kg": order.quantity_ordered, 
+                        "unit": display_unit, # e.g., "Pieces" or "KG"
+                        "expected_payout": order.total_price, 
+                        "status": order.status, 
+                        "buyer": order.buyer.full_name if order.buyer else "Local Consumer", 
+                        "notes": f"Order for {order.quantity_ordered} {display_unit}.",
+                        "is_coordinator": True, 
+                        "bulk_request_id": None 
+                    })
     except Exception as e:
         print(f"Direct Sales fetch error: {e}")
 
@@ -1478,8 +1591,11 @@ def create_bulk_request(
 
 @app.get("/bulk-requests/", response_model=List[schemas.BulkRequestRead])
 def get_active_bulk_requests(db: Session = Depends(get_db)):
-    # Fetch all bulk requests that haven't been fully fulfilled yet
-    requests = db.query(models.BulkRequest).filter(models.BulkRequest.status == "Open").all()
+    """Fetches open Corporate Contracts for the Home Screen Slider."""
+    requests = db.query(models.BulkRequest).filter(
+        models.BulkRequest.status == "Open",
+        ~models.BulkRequest.buyer_name.like("Hub Pool:%") # 🔥 Hide Internal Hub Pools!
+    ).all()
     return requests
 
 @app.get("/harvests/me", response_model=List[HarvestRead])
@@ -1509,9 +1625,19 @@ def create_pledge(
     ).first()
     
     if existing_pledge:
-        raise HTTPException(status_code=400, detail="You have already pledged to this request. You can update your drop-off later.")
+        raise HTTPException(status_code=400, detail="You have already pledged to this request.")
 
-    # 2. Create the Pledge
+    # 🔥 2. NEW: THE OVER-PLEDGE FIREWALL
+    current_total = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == request_id).scalar() or 0.0
+
+    if current_total >= bulk_req.target_weight_kg:
+        raise HTTPException(status_code=400, detail="This Hub Pool is already 100% full!")
+
+    if current_total + pledge.pledged_weight_kg > bulk_req.target_weight_kg:
+        remaining = bulk_req.target_weight_kg - current_total
+        raise HTTPException(status_code=400, detail=f"Cannot over-pledge. Only {remaining}kg remaining to fill the pool.")
+
+    # 3. Create the Pledge
     new_pledge = models.Pledge(
         bulk_request_id=request_id,
         farmer_id=current_user.id,
@@ -1523,22 +1649,24 @@ def create_pledge(
         db.add(new_pledge)
         db.flush() # Save it temporarily to calculate math
 
-        # 🔥 THE SOLO FULFILLMENT CHECK
-        # Calculate the new total weight
+        # 🔥 THE SOLO FULFILLMENT & ELECTION CHECK
         total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == request_id).scalar() or 0.0
         
-        # If the contract is 100% full...
+        # If the pool is 100% full...
         if total_pledged >= bulk_req.target_weight_kg:
-            # Count how many unique farmers are in this squad
-            unique_farmers = db.query(models.Pledge.farmer_id).filter(models.Pledge.bulk_request_id == request_id).distinct().count()
+            bulk_req.status = "fulfilled" # Lock it so no one else can join
             
-            if unique_farmers == 1:
-                # Solo fulfillment! Auto-assign them as coordinator and unlock delivery.
-                bulk_req.coordinator_id = current_user.id
+            # 🔥 FIX 1: Hub Pools NEVER hold elections! The Admin is already the boss.
+            if bulk_req.buyer_name.startswith("Hub Pool:"):
                 bulk_req.squad_status = "active"
             else:
-                # Multiple people hit 100% together, trigger the election!
-                bulk_req.squad_status = "voting"
+                # Corporate Contracts logic
+                unique_farmers = db.query(models.Pledge.farmer_id).filter(models.Pledge.bulk_request_id == request_id).distinct().count()
+                if unique_farmers == 1:
+                    bulk_req.coordinator_id = current_user.id
+                    bulk_req.squad_status = "active"
+                else:
+                    bulk_req.squad_status = "voting"
 
         db.commit()
         db.refresh(new_pledge)
@@ -1633,7 +1761,9 @@ def cast_squad_vote(
     
     # 5. 🔥 THE MAGIC HANDOVER LOGIC (Check if they won!)
     total_members = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == squad_id).count()
-    majority_threshold = total_members / 2
+    
+    # 🔥 THE FIX: If there are exactly 2 members, 1 vote is enough to win!
+    majority_threshold = (total_members / 2) if total_members > 2 else 0
 
     if candidate.votes > majority_threshold:
         # We have a winner!
@@ -1641,8 +1771,6 @@ def cast_squad_vote(
         squad.coordinator_id = candidate.farmer_id
         squad.squad_status = "active" # Lock the election, it's time to deliver!
         
-
-    # Now the commit will succeed because the candidate still exists!
     db.commit()
     return {"message": "Vote cast successfully!"}
 
@@ -1736,3 +1864,201 @@ def send_squad_message(bulk_request_id: int, payload: MessageCreate, db: Session
     db.commit()
     
     return {"status": "success", "message": "Message sent!"}
+
+@app.get("/api/buyer/marketplace")
+def get_hub_marketplace(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Allows Corporate Buyers to browse fully aggregated Hub Pools ready for purchase."""
+    if current_user.role != "buyer":
+        raise HTTPException(status_code=403, detail="Only buyers can browse the enterprise marketplace.")
+
+    # 1. Find all Internal Hub Pools
+    hub_pools = db.query(models.BulkRequest).filter(
+        models.BulkRequest.buyer_name.like("Hub Pool:%")
+    ).all()
+
+    available_inventory = []
+    
+    for pool in hub_pools:
+        # 2. Only show pools that have actually gathered enough crops!
+        total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == pool.id).scalar() or 0.0
+        
+        # Extract the real Hub Name from the buyer_name string
+        hub_name_clean = pool.buyer_name.replace("Hub Pool: ", "")
+
+        available_inventory.append({
+            "pool_id": pool.id,
+            "hub_name": hub_name_clean,
+            "crop": pool.crop_name,
+            "available_weight_kg": total_pledged,
+            "asking_price_per_kg": pool.price_per_kg,
+            "total_value_kes": total_pledged * pool.price_per_kg,
+            "status": "Ready for Pickup" if total_pledged >= pool.target_weight_kg else "Still Gathering"
+        })
+
+    return available_inventory
+
+class UnattendedDropoffPayload(BaseModel):
+    scale_photo_url: str
+    crop_photo_url: str
+
+@app.post("/api/squads/{squad_id}/unattended-dropoff")
+def unattended_dropoff(
+    squad_id: int, 
+    payload: UnattendedDropoffPayload, 
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    """Handles asynchronous photo drop-offs for BOTH Hub Pools and Corporate Squads."""
+    
+    squad = db.query(models.BulkRequest).filter(models.BulkRequest.id == squad_id).first()
+    if not squad:
+        raise HTTPException(status_code=404, detail="Squad not found.")
+
+    is_hub_pool = squad.buyer_name.startswith("Hub Pool:")
+
+    if is_hub_pool:
+        # ==========================================
+        # SCENARIO A: THE HUB POOL
+        # The Elected Driver uploads the photo for EVERYONE at the Hub Gate.
+        # ==========================================
+        if squad.coordinator_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Only the elected Squad Driver can do a Hub drop-off.")
+            
+        pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == squad_id).all()
+        for pledge in pledges:
+            pledge.status = "pending_audit"
+            pledge.notes = f"EVIDENCE_LOG|{payload.scale_photo_url}|{payload.crop_photo_url}"
+            
+    else:
+        # ==========================================
+        # SCENARIO B: THE CORPORATE CONTRACT
+        # The Individual Farmer uploads a photo just for THEMSELVES on the Coordinator's porch.
+        # ==========================================
+        if squad.coordinator_id == current_user.id:
+            raise HTTPException(status_code=403, detail="The Coordinator cannot do an unattended drop-off to themselves.")
+            
+        # Only update THIS SPECIFIC farmer's pledge!
+        my_pledge = db.query(models.Pledge).filter(
+            models.Pledge.bulk_request_id == squad_id,
+            models.Pledge.farmer_id == current_user.id
+        ).first()
+        
+        if not my_pledge:
+            raise HTTPException(status_code=404, detail="You do not have a pledge in this squad.")
+            
+        my_pledge.status = "pending_audit"
+        my_pledge.notes = f"EVIDENCE_LOG|{payload.scale_photo_url}|{payload.crop_photo_url}"
+    
+    db.commit()
+    return {"message": "Drop-off submitted for Audit!"}
+
+class SquadStatusUpdate(BaseModel):
+    status: str
+
+@app.post("/api/squads/{squad_id}/status")
+def update_squad_status(squad_id: int, payload: SquadStatusUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Allows the Squad Driver to update the physical location of the truck."""
+    squad = db.query(models.BulkRequest).filter(models.BulkRequest.id == squad_id).first()
+    if not squad or squad.coordinator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the driver can update the physical status.")
+    
+    pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == squad_id).all()
+    for pledge in pledges:
+        pledge.status = payload.status # e.g., 'in_transit' or 'delivered'
+        
+    db.commit()
+    return {"message": f"Squad successfully moved to {payload.status}"}
+
+@app.put("/api/pledges/{pledge_id}/status")
+def update_individual_pledge_status(pledge_id: int, payload: SquadStatusUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Allows a Coordinator to verify an individual farmer's drop-off."""
+    pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
+    if not pledge:
+        raise HTTPException(status_code=404, detail="Pledge not found.")
+        
+    contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == pledge.bulk_request_id).first()
+    if contract.coordinator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the Coordinator can verify drop-offs.")
+        
+    pledge.status = payload.status
+    db.commit()
+    return {"message": "Drop-off Verified!"}
+
+class MarketListingCreate(BaseModel):
+    crop_name: str
+    base_inventory_kg: float
+    
+    is_selling_by_weight: bool
+    price_per_kg: Optional[float] = None
+    
+    is_selling_by_unit: bool
+    unit_name: Optional[str] = None
+    price_per_unit: Optional[float] = None
+    kg_per_unit: Optional[float] = None
+
+@app.post("/api/market/listings")
+def create_market_listing(payload: MarketListingCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    new_listing = models.MarketListing(
+        farmer_id=current_user.id,
+        crop_name=payload.crop_name,
+        base_inventory_kg=payload.base_inventory_kg,
+        available_kg=payload.base_inventory_kg,
+        is_selling_by_weight=payload.is_selling_by_weight,
+        price_per_kg=payload.price_per_kg,
+        is_selling_by_unit=payload.is_selling_by_unit,
+        unit_name=payload.unit_name,
+        price_per_unit=payload.price_per_unit,
+        kg_per_unit=payload.kg_per_unit
+    )
+    db.add(new_listing)
+    db.commit()
+    return {"message": "Listing published to marketplace!"}
+
+class MarketOrderCreate(BaseModel):
+    order_type: str # "weight" or "unit"
+    quantity: float
+
+@app.post("/api/market/listings/{listing_id}/order")
+def create_market_order(listing_id: int, payload: MarketOrderCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    listing = db.query(models.MarketListing).filter(models.MarketListing.id == listing_id).first()
+    
+    if not listing or listing.status == "sold_out":
+        raise HTTPException(status_code=400, detail="Listing unavailable.")
+
+    # 1. THE MATH ENGINE
+    cost = 0.0
+    weight_to_deduct = 0.0
+
+    if payload.order_type == "weight":
+        if not listing.is_selling_by_weight:
+            raise HTTPException(status_code=400, detail="This item is not sold by weight.")
+        weight_to_deduct = payload.quantity
+        cost = payload.quantity * listing.price_per_kg
+
+    elif payload.order_type == "unit":
+        if not listing.is_selling_by_unit:
+            raise HTTPException(status_code=400, detail="This item is not sold by units.")
+        weight_to_deduct = payload.quantity * listing.kg_per_unit
+        cost = payload.quantity * listing.price_per_unit
+
+    # 2. INVENTORY CHECK
+    if weight_to_deduct > listing.available_kg:
+        raise HTTPException(status_code=400, detail=f"Not enough inventory. Only {listing.available_kg} KG remaining.")
+
+    # 3. CREATE ORDER & DEDUCT INVENTORY
+    new_order = models.MarketOrder(
+        listing_id=listing.id,
+        buyer_id=current_user.id,
+        order_type=payload.order_type,
+        quantity_ordered=payload.quantity,
+        kg_deducted=weight_to_deduct,
+        total_price=cost
+    )
+    db.add(new_order)
+    
+    listing.available_kg -= weight_to_deduct
+    if listing.available_kg <= 0:
+        listing.status = "sold_out"
+        
+    db.commit()
+    return {"message": "Order placed successfully!"}
