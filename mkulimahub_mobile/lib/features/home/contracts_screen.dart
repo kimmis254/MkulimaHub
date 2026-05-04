@@ -21,7 +21,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
   int? _currentUserId; 
   String _selectedFilter = 'All';
   
-  // 🔥 FIX 2: Start with just 'All', we will populate the rest dynamically
   List<String> _filters = ['All']; 
 
   @override
@@ -46,8 +45,7 @@ class _ContractsScreenState extends State<ContractsScreen> {
           _currentUserId = profile['id']; 
         }
 
-        // 🔥 FIX 2: Dynamically build the filter list based on available contracts
-        Set<String> uniqueCrops = {'All'}; // Set prevents duplicates automatically
+        Set<String> uniqueCrops = {'All'}; 
         for (var contract in _contracts) {
           if (contract['crop_name'] != null) {
             uniqueCrops.add(contract['crop_name'].toString());
@@ -55,7 +53,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
         }
         _filters = uniqueCrops.toList();
         
-        // Safety check: if the selected filter no longer exists in the new data, reset to 'All'
         if (!_filters.contains(_selectedFilter)) {
           _selectedFilter = 'All';
         }
@@ -74,22 +71,25 @@ class _ContractsScreenState extends State<ContractsScreen> {
 
     // 2. Now, sort the list: Active contracts bubble up, Fulfilled sink down!
     filteredList.sort((a, b) {
-      // Calculate fulfillment for Contract A
-      double targetA = a['target_weight_kg'] ?? 1.0;
-      double pledgedA = 0;
-      for (var p in (a['pledges'] ?? [])) pledgedA += (p['pledged_weight_kg'] ?? 0);
+      double targetA = (a['target_weight_kg'] ?? 1.0).toDouble();
+      
+      // 🔥 BULLETPROOF MATH: Read from the new backend, or fallback to the old array!
+      double pledgedA = (a['total_pledged'] ?? 0).toDouble();
+      if (a['pledges'] != null) {
+        pledgedA = 0;
+        for (var p in a['pledges']) pledgedA += (p['pledged_weight_kg'] ?? 0).toDouble();
+      }
       bool isFulfilledA = pledgedA >= targetA;
 
-      // Calculate fulfillment for Contract B
-      double targetB = b['target_weight_kg'] ?? 1.0;
-      double pledgedB = 0;
-      for (var p in (b['pledges'] ?? [])) pledgedB += (p['pledged_weight_kg'] ?? 0);
+      double targetB = (b['target_weight_kg'] ?? 1.0).toDouble();
+      double pledgedB = (b['total_pledged'] ?? 0).toDouble();
+      if (b['pledges'] != null) {
+        pledgedB = 0;
+        for (var p in b['pledges']) pledgedB += (p['pledged_weight_kg'] ?? 0).toDouble();
+      }
       bool isFulfilledB = pledgedB >= targetB;
 
-      // If they are the exact same status (both open or both fulfilled), keep original order
       if (isFulfilledA == isFulfilledB) return 0;
-      
-      // If A is fulfilled but B is open, A sinks to the bottom (+1)
       return isFulfilledA ? 1 : -1; 
     });
 
@@ -159,7 +159,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
                     ),
                     const SizedBox(height: 15),
                     
-                    // Quick-add chips
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
@@ -198,7 +197,7 @@ class _ContractsScreenState extends State<ContractsScreen> {
                           
                           if (error == null && context.mounted) {
                             Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pledge added to contract! 🎉"), backgroundColor: Colors.green));
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pledge added to contract!"), backgroundColor: Colors.green));
                             _fetchContracts(); 
                           } else if (context.mounted) {
                             setSheetState(() => isSubmitting = false);
@@ -232,10 +231,9 @@ class _ContractsScreenState extends State<ContractsScreen> {
       backgroundColor: Colors.grey[50],
       body: Column(
         children: [
-          // Custom Header Section
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.only(left: 20, right: 20, bottom: 20, top: 40), // Added top padding for status bar clearance
+            padding: const EdgeInsets.only(left: 20, right: 20, bottom: 20, top: 40), 
             decoration: BoxDecoration(
               color: Colors.green.shade800,
               borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(30), bottomRight: Radius.circular(30)),
@@ -243,7 +241,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 🔥 FIX 3: Added Header Row with Navigation Icon
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -274,7 +271,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
                 ),
                 const SizedBox(height: 20),
                 
-                // Horizontal Filter Chips
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -308,7 +304,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
             ),
           ),
 
-          // Main List Content
           Expanded(
             child: _isLoading 
                 ? const Center(child: CircularProgressIndicator(color: Colors.green))
@@ -318,26 +313,29 @@ class _ContractsScreenState extends State<ContractsScreen> {
                       color: Colors.green,
                       onRefresh: _fetchContracts,
                       child: ListView.builder(
-                        // 🔥 FIX 1: Increased bottom padding to 100 to clear the Nav Bar
                         padding: const EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 100),
                         itemCount: _filteredContracts.length,
                         itemBuilder: (context, index) {
                           final contract = _filteredContracts[index];
                           
-                          final targetWeight = contract['target_weight_kg'] ?? 1.0;
-                          final pledges = contract['pledges'] as List<dynamic>? ?? [];
+                          final targetWeight = (contract['target_weight_kg'] ?? 1.0).toDouble();
                           
-                          double totalPledged = 0;
-                          for (var p in pledges) {
-                            totalPledged += (p['pledged_weight_kg'] ?? 0);
+                          // 🔥 Read the math directly from the backend!
+                          double totalPledged = (contract['total_pledged'] ?? 0).toDouble();
+                          if (contract['pledges'] != null) {
+                            totalPledged = 0;
+                            for (var p in contract['pledges']) {
+                              totalPledged += (p['pledged_weight_kg'] ?? 0).toDouble();
+                            }
                           }
                           
                           double progress = totalPledged / targetWeight;
                           if (progress > 1.0) progress = 1.0;
 
-                          bool hasPledged = false;
-                          if (_currentUserId != null) {
-                            hasPledged = pledges.any((p) => p['farmer_id'] == _currentUserId);
+                          // 🔥 Sync directly with the flag from Python!
+                          bool hasPledged = contract['has_pledged'] == true;
+                          if (contract['pledges'] != null && _currentUserId != null) {
+                            hasPledged = (contract['pledges'] as List<dynamic>).any((p) => p['farmer_id'] == _currentUserId);
                           }
 
                           return FadeInUp(
@@ -375,7 +373,6 @@ class _ContractsScreenState extends State<ContractsScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // 🔥 1. First Expanded: Protects the Price Badge on the right
                     Expanded(
                       child: Row(
                         children: [
@@ -385,26 +382,20 @@ class _ContractsScreenState extends State<ContractsScreen> {
                             child: Icon(LucideIcons.building, size: 16, color: Colors.blue.shade700),
                           ),
                           const SizedBox(width: 10),
-                          
-                          // 🔥 2. Second Expanded: Chops the long name with '...'
                           Expanded(
                             child: Text(
                               contract['buyer_name'] ?? 'Corporate Buyer', 
                               style: GoogleFonts.poppins(color: Colors.grey.shade800, fontSize: 14, fontWeight: FontWeight.w600),
                               maxLines: 1,
-                              overflow: TextOverflow.ellipsis, // The magic cut-off!
+                              overflow: TextOverflow.ellipsis, 
                             ),
                           ),
-                          
                           const SizedBox(width: 5),
                           const Icon(LucideIcons.badgeCheck, color: Colors.blue, size: 16),
                         ],
                       ),
                     ),
-                    
-                    const SizedBox(width: 10), // Safe buffer zone
-                    
-                    // The Price Badge (Safe on the right!)
+                    const SizedBox(width: 10),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),

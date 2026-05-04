@@ -6,7 +6,8 @@ import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/home/unattended_dropoff_screen.dart';
 
 class MyDeliveriesScreen extends StatefulWidget {
-  const MyDeliveriesScreen({super.key});
+  final String? targetOrderId; 
+  const MyDeliveriesScreen({super.key, this.targetOrderId});
 
   @override
   State<MyDeliveriesScreen> createState() => _MyDeliveriesScreenState();

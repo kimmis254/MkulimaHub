@@ -179,48 +179,47 @@ class ApiClient {
     return [];
   }
 
-  // 🔥 NEW: Gets only the logged in Farmer's specific crops
-  Future<List<Harvest>> getMyHarvests() async {
+  Future<List<dynamic>> getMyHarvests() async {
     final token = await getToken();
     if (token == null) return [];
 
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/harvests/me'),
-        headers: {"Authorization": "Bearer $token"},
-      );
-      
-      if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
-        return data.map((json) => Harvest.fromJson(json)).toList();
-      }
-    } catch (e) {
-      print("Error fetching my harvests: $e");
-    }
-    return [];
-  }
-
-  Future<String?> addHarvest(Map<String, dynamic> harvestData) async {
-    final token = await getToken();
-    if (token == null) return "Please login first";
-
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/harvests'),
         headers: {
           "Content-Type": "application/json",
           "Authorization": "Bearer $token",
         },
-        body: jsonEncode(harvestData),
       );
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        return null;
-      } else {
-        return "Failed to post: ${response.body}";
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body); 
       }
+      return [];
     } catch (e) {
-      return "Connection error: $e";
+      print("Error fetching harvests: $e");
+      return [];
+    }
+  }
+
+  Future<String?> addHarvest(Map<String, dynamic> data) async {
+    final token = await getToken();
+    if (token == null) return "Please login first.";
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/market/listings'), // 🔥 THE FIX: New Endpoint!
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode(data),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) return null;
+      return "Failed to post listing. Please try again.";
+    } catch (e) {
+      return "Connection error.";
     }
   }
 
@@ -524,24 +523,27 @@ class ApiClient {
   // PLEDGES AND CONTRACTS LOGIC
   // ==========================================
 
-  Future<List<dynamic>> getContracts({String? county}) async {
-    try {
-      String url = '$baseUrl/api/contracts';
-      if (county != null && county.isNotEmpty) {
-        url += '?county=$county';
-      }
+  Future<List<dynamic>> getContracts() async {
+    final token = await getToken();
+    if (token == null) return []; 
 
-      final response = await http.get(Uri.parse(url));
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/contracts'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token", // 🔥 THE MISSING KEY!
+        },
+      );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
-      } else {
-        print("Failed to fetch contracts: ${response.statusCode}");
       }
+      return [];
     } catch (e) {
       print("Error fetching contracts: $e");
+      return [];
     }
-    return [];
   }
 
   Future<String?> createPledge(int contractId, double weightKg) async {
@@ -612,7 +614,7 @@ class ApiClient {
       return "Connection error.";
     }
   }
-  
+
   Future<String?> deletePledge(int pledgeId) async {
     final token = await getToken();
     if (token == null) return "Authentication required";
@@ -749,15 +751,26 @@ class ApiClient {
 
   // 🔥 NEW: FETCH ACTIVE BULK REQUESTS
   Future<List<dynamic>> getActiveBulkRequests() async {
+    final token = await getToken();
+    if (token == null) return []; // Fail gracefully if not logged in
+
     try {
-      final response = await http.get(Uri.parse('$baseUrl/bulk-requests/'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/bulk-requests/'),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token", // 🔥 THE MISSING KEY!
+        },
+      );
+
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
       }
+      return [];
     } catch (e) {
-      print("Error fetching bulk requests: $e");
+      print("Error fetching active bulk requests: $e");
+      return [];
     }
-    return [];
   }
 
   // 🔥 NEW: BUYER RELEASES ESCROW / COMPLETES ORDER

@@ -8,7 +8,7 @@ import random
 from database import engine, SessionLocal
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 import requests 
@@ -468,16 +468,35 @@ def create_bulk_contract(contract: schemas.BulkRequestCreate, db: Session = Depe
     db.refresh(new_contract)
     return new_contract
 
-@app.get("/api/contracts", response_model=List[schemas.BulkRequestRead])
-def get_open_contracts(county: str = None, db: Session = Depends(get_db)):
+@app.get("/api/contracts")
+def get_open_contracts(county: str = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """Fetches open Corporate Contracts for the Contracts Screen."""
     query = db.query(models.BulkRequest).filter(
         models.BulkRequest.status == "Open",
-        ~models.BulkRequest.buyer_name.like("Hub Pool:%") # 🔥 Hide Internal Hub Pools!
+        ~models.BulkRequest.buyer_name.like("Hub Pool:%") # Hide Internal Hub Pools
     )
     if county:
         query = query.filter(models.BulkRequest.county == county)
-    return query.all()
+        
+    contracts = query.all()
+    results = []
+    
+    for req in contracts:
+        has_pledged = any(p.farmer_id == current_user.id for p in req.pledges)
+        total_pledged = sum((p.pledged_weight_kg or 0) for p in req.pledges) # 🔥 Calculate progress!
+        
+        results.append({
+            "id": req.id,
+            "crop_name": req.crop_name,
+            "target_weight_kg": req.target_weight_kg,
+            "total_pledged": total_pledged, # 🔥 Send the math to Flutter!
+            "price_per_kg": req.price_per_kg,
+            "buyer_name": req.buyer_name,
+            "county": req.county,
+            "ward": req.ward,
+            "has_pledged": has_pledged # 🔥 Tell Flutter if they are in the squad!
+        })
+    return results
 
 
 @app.get("/api/my-pledges")
@@ -1589,20 +1608,81 @@ def create_bulk_request(
         print(f"❌ DB Error creating bulk request: {e}")
         raise HTTPException(status_code=500, detail="Failed to broadcast contract to the network.")
 
-@app.get("/bulk-requests/", response_model=List[schemas.BulkRequestRead])
-def get_active_bulk_requests(db: Session = Depends(get_db)):
+@app.get("/bulk-requests/")
+def get_active_bulk_requests(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """Fetches open Corporate Contracts for the Home Screen Slider."""
     requests = db.query(models.BulkRequest).filter(
         models.BulkRequest.status == "Open",
-        ~models.BulkRequest.buyer_name.like("Hub Pool:%") # 🔥 Hide Internal Hub Pools!
+        ~models.BulkRequest.buyer_name.like("Hub Pool:%") # Hide Internal Hub Pools
     ).all()
-    return requests
 
-@app.get("/harvests/me", response_model=List[HarvestRead])
-def get_my_harvests(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    # Safely fetch only the harvests belonging to the logged-in user
-    harvests = db.query(models.Harvest).filter(models.Harvest.farmer_id == current_user.id).all()
-    return harvests
+    results = []
+    for req in requests:
+        has_pledged = any(p.farmer_id == current_user.id for p in req.pledges)
+        total_pledged = sum((p.pledged_weight_kg or 0) for p in req.pledges) # 🔥 Calculate progress!
+        
+        results.append({
+            "id": req.id,
+            "crop_name": req.crop_name,
+            "target_weight_kg": req.target_weight_kg,
+            "total_pledged": total_pledged, # 🔥 Send the math to Flutter!
+            "price_per_kg": req.price_per_kg,
+            "buyer_name": req.buyer_name,
+            "county": req.county,
+            "ward": req.ward,
+            "has_pledged": has_pledged 
+        })
+    return results
+
+@app.get("/harvests/me")
+def get_my_market_listings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Fetches the farmer's active listings for the Home Screen."""
+    
+    listings = db.query(models.MarketListing).filter(
+        models.MarketListing.farmer_id == current_user.id,
+        models.MarketListing.status == "active"
+    ).order_by(models.MarketListing.created_at.desc()).all()
+    
+    results = []
+    for listing in listings:
+        # Fetch pending orders specifically for THIS listing
+        orders_query = db.query(models.MarketOrder).filter(
+            models.MarketOrder.listing_id == listing.id, 
+            models.MarketOrder.status == "pending"
+        ).all()
+        
+        # Package the orders into a neat list for the Flutter pop-up!
+        orders_list = [{
+            "id": o.id,
+            "buyer_name": o.buyer.full_name if o.buyer else "Local Buyer",
+            "quantity": o.quantity_ordered,
+            "type": o.order_type,
+            "total_price": o.total_price,
+            "status": o.status
+        } for o in orders_query]
+
+        display_price = listing.price_per_kg
+        display_unit = "KG"
+        if not listing.is_selling_by_weight and listing.unit_pricing:
+            display_price = listing.unit_pricing[0].get("price", 0)
+            display_unit = listing.unit_pricing[0].get("unit_name", "Unit")
+
+        results.append({
+            "id": listing.id,
+            "crop_name": listing.crop_name,
+            "available_kg": listing.available_kg,
+            "price_per_kg": display_price, 
+            "unit_type": display_unit,
+            
+            # 🔥 THE NEW DATA WE NEED FOR THE COMPREHENSIVE POP-UP
+            "is_selling_by_weight": listing.is_selling_by_weight,
+            "unit_pricing": listing.unit_pricing, 
+            "image_base64": getattr(listing, 'image_base64', None), # Safely grab the uploaded image
+            "orders": orders_list, 
+            "orders_count": len(orders_list)
+        })
+        
+    return results
 
 @app.post("/bulk-requests/{request_id}/pledge", response_model=schemas.PledgeRead)
 def create_pledge(
@@ -1987,14 +2067,10 @@ def update_individual_pledge_status(pledge_id: int, payload: SquadStatusUpdate, 
 class MarketListingCreate(BaseModel):
     crop_name: str
     base_inventory_kg: float
-    
     is_selling_by_weight: bool
     price_per_kg: Optional[float] = None
-    
-    is_selling_by_unit: bool
-    unit_name: Optional[str] = None
-    price_per_unit: Optional[float] = None
-    kg_per_unit: Optional[float] = None
+    unit_pricing: List[Dict[str, Any]] = [] # 🔥 Accepts the array from Flutter!
+    image_base64: Optional[str] = None
 
 @app.post("/api/market/listings")
 def create_market_listing(payload: MarketListingCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -2005,47 +2081,49 @@ def create_market_listing(payload: MarketListingCreate, db: Session = Depends(ge
         available_kg=payload.base_inventory_kg,
         is_selling_by_weight=payload.is_selling_by_weight,
         price_per_kg=payload.price_per_kg,
-        is_selling_by_unit=payload.is_selling_by_unit,
-        unit_name=payload.unit_name,
-        price_per_unit=payload.price_per_unit,
-        kg_per_unit=payload.kg_per_unit
+        unit_pricing=payload.unit_pricing,
+        
+        # 🔥 ADD THIS LINE SO IT ACTUALLY SAVES!
+        image_base64=payload.image_base64 
     )
     db.add(new_listing)
     db.commit()
     return {"message": "Listing published to marketplace!"}
 
 class MarketOrderCreate(BaseModel):
-    order_type: str # "weight" or "unit"
+    order_type: str # "weight" OR the specific unit_name (e.g., "Bucket")
     quantity: float
 
 @app.post("/api/market/listings/{listing_id}/order")
 def create_market_order(listing_id: int, payload: MarketOrderCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     listing = db.query(models.MarketListing).filter(models.MarketListing.id == listing_id).first()
-    
     if not listing or listing.status == "sold_out":
         raise HTTPException(status_code=400, detail="Listing unavailable.")
 
-    # 1. THE MATH ENGINE
     cost = 0.0
     weight_to_deduct = 0.0
 
+    # SCENARIO A: Buying by the KG
     if payload.order_type == "weight":
         if not listing.is_selling_by_weight:
-            raise HTTPException(status_code=400, detail="This item is not sold by weight.")
+            raise HTTPException(status_code=400, detail="Not sold by weight.")
         weight_to_deduct = payload.quantity
         cost = payload.quantity * listing.price_per_kg
 
-    elif payload.order_type == "unit":
-        if not listing.is_selling_by_unit:
-            raise HTTPException(status_code=400, detail="This item is not sold by units.")
-        weight_to_deduct = payload.quantity * listing.kg_per_unit
-        cost = payload.quantity * listing.price_per_unit
+    # SCENARIO B: Buying by a Custom Unit
+    else:
+        # Search the JSON array for the unit the buyer clicked
+        selected_unit = next((u for u in listing.unit_pricing if u["unit_name"] == payload.order_type), None)
+        
+        if not selected_unit:
+            raise HTTPException(status_code=400, detail=f"Unit '{payload.order_type}' not found.")
+            
+        weight_to_deduct = payload.quantity * selected_unit["kg"]
+        cost = payload.quantity * selected_unit["price"]
 
-    # 2. INVENTORY CHECK
     if weight_to_deduct > listing.available_kg:
-        raise HTTPException(status_code=400, detail=f"Not enough inventory. Only {listing.available_kg} KG remaining.")
+        raise HTTPException(status_code=400, detail=f"Only {listing.available_kg} KG remaining.")
 
-    # 3. CREATE ORDER & DEDUCT INVENTORY
     new_order = models.MarketOrder(
         listing_id=listing.id,
         buyer_id=current_user.id,
