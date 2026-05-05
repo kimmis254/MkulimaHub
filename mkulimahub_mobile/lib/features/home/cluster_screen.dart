@@ -301,7 +301,6 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                 // 2. The Dynamic Action Card
                                 Builder(
                                   builder: (context) {
-                                    // Grab the data for whichever squad is currently selected
                                     final selectedSquad = filteredSquads.firstWhere((s) => s['id'] == currentSelection);
                                     
                                     bool isInternalPool = selectedSquad['buyer_name'].toString().startsWith('Hub Pool:');
@@ -309,14 +308,18 @@ class _ClusterScreenState extends State<ClusterScreen> {
 
                                     final pledges = selectedSquad['pledges'] as List<dynamic>? ?? [];
                                     bool hasPledged = _currentUser != null && pledges.any((p) => p['farmer_id'].toString() == _currentUser?['id'].toString());
+                                    
+                                    // 🔥 THE FIX: Hub Admins get VIP Access!
+                                    bool isSquadCoordinator = selectedSquad['coordinator_id']?.toString() == _currentUser?['id']?.toString();
+                                    bool canViewSquad = hasPledged || isSquadCoordinator;
 
                                     return FadeIn(
-                                      key: ValueKey(currentSelection), // 🔥 Animates smoothly when they pick a new squad!
+                                      key: ValueKey(currentSelection), 
                                       child: Container(
                                         padding: const EdgeInsets.all(16),
                                         decoration: BoxDecoration(
-                                          color: hasPledged ? Colors.purple.shade50 : (isInternalPool ? Colors.blue.shade50 : Colors.orange.shade50), 
-                                          border: Border.all(color: hasPledged ? Colors.purple.shade200 : (isInternalPool ? Colors.blue.shade200 : Colors.orange.shade200)),
+                                          color: canViewSquad ? Colors.purple.shade50 : (isInternalPool ? Colors.blue.shade50 : Colors.orange.shade50), 
+                                          border: Border.all(color: canViewSquad ? Colors.purple.shade200 : (isInternalPool ? Colors.blue.shade200 : Colors.orange.shade200)),
                                           borderRadius: BorderRadius.circular(16),
                                         ),
                                         child: Row(
@@ -324,7 +327,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                             Container(
                                               padding: const EdgeInsets.all(10),
                                               decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                                              child: Icon(hasPledged ? LucideIcons.users : (isInternalPool ? LucideIcons.shield : LucideIcons.truck), color: hasPledged ? Colors.purple : (isInternalPool ? Colors.blue.shade700 : Colors.orange)),
+                                              child: Icon(canViewSquad ? LucideIcons.users : (isInternalPool ? LucideIcons.shield : LucideIcons.truck), color: canViewSquad ? Colors.purple : (isInternalPool ? Colors.blue.shade700 : Colors.orange)),
                                             ),
                                             const SizedBox(width: 15),
                                             Expanded(
@@ -332,13 +335,15 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                                 crossAxisAlignment: CrossAxisAlignment.start,
                                                 children: [
                                                   Text("Target: ${selectedSquad['target_weight_kg']}kg", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
-                                                  Text(hasPledged ? "You are in this squad" : "Open for pledges", style: GoogleFonts.poppins(fontSize: 12, color: hasPledged ? Colors.purple.shade800 : (isInternalPool ? Colors.blue.shade800 : Colors.orange.shade800))),
+                                                  Text(
+                                                    canViewSquad ? (isSquadCoordinator ? "You manage this squad" : "You are in this squad") : "Open for pledges", 
+                                                    style: GoogleFonts.poppins(fontSize: 12, color: canViewSquad ? Colors.purple.shade800 : (isInternalPool ? Colors.blue.shade800 : Colors.orange.shade800))
+                                                  ),
                                                 ],
                                               ),
                                             ),
                                             
-                                            // 🔥 SMART ROUTING RESTORED!
-                                            hasPledged
+                                            canViewSquad
                                                 ? ElevatedButton(
                                                     onPressed: () async {
                                                       await Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: selectedSquad['id'])));
@@ -350,10 +355,8 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                                 : ElevatedButton(
                                                     onPressed: () async {
                                                       if (isInternalPool) {
-                                                        // Route straight to the Chat so they can tap the pool widget!
                                                         await Navigator.push(context, MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubNameClean)));
                                                       } else {
-                                                        // Route to public contracts
                                                         await Navigator.push(context, MaterialPageRoute(builder: (_) => const ContractsScreen()));
                                                       }
                                                       if (mounted) _fetchClusters(); 

@@ -472,8 +472,8 @@ def create_bulk_contract(contract: schemas.BulkRequestCreate, db: Session = Depe
 def get_open_contracts(county: str = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """Fetches open Corporate Contracts for the Contracts Screen."""
     query = db.query(models.BulkRequest).filter(
-        models.BulkRequest.status == "Open",
-        ~models.BulkRequest.buyer_name.like("Hub Pool:%") # Hide Internal Hub Pools
+        models.BulkRequest.status.in_(["Open", "fulfilled"]), # 🔥 THE FIX
+        ~models.BulkRequest.buyer_name.like("Hub Pool:%") 
     )
     if county:
         query = query.filter(models.BulkRequest.county == county)
@@ -544,12 +544,14 @@ def get_my_pledges(db: Session = Depends(get_db), current_user: models.User = De
             farmer = db.query(models.User).filter(models.User.id == sp.farmer_id).first()
             if farmer:
                 squad_roster.append({
+                    "pledge_id": sp.id,              
                     "farmer_id": farmer.id,
                     "name": farmer.full_name,
                     "pledge_kg": sp.pledged_weight_kg,
-                    "payout_kes": sp.pledged_weight_kg * req.price_per_kg
+                    "payout_kes": sp.pledged_weight_kg * req.price_per_kg,
+                    "status": sp.status,             
+                    "notes": sp.notes                
                 })
-
         candidates_db = db.query(models.SquadCandidate).filter(models.SquadCandidate.bulk_request_id == req.id).all()
         candidates_list = []
         for c in candidates_db:
@@ -1399,13 +1401,14 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
             "type": "Co-op Pool" if is_internal_pool else "Bulk Contract",
             "crop": contract.crop_name, 
             "weight_kg": p.pledged_weight_kg,
-            "unit": "KG", # 🔥 Bulk contracts are always in KG
+            "unit": "KG", 
             "expected_payout": p.pledged_weight_kg * contract.price_per_kg,
             "status": p.status, 
             "buyer": "Your Local Co-op" if is_internal_pool else contract.buyer_name, 
             "notes": display_notes,
             "is_coordinator": contract.coordinator_id == current_user.id, 
-            "bulk_request_id": contract.id 
+            "bulk_request_id": contract.id, 
+            "squad_status": contract.squad_status # 🔥 THE FIX: Tell Flutter about the election!
         })
 
     # ==========================================
@@ -1447,7 +1450,8 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
                         "buyer": order.buyer.full_name if order.buyer else "Local Consumer", 
                         "notes": f"Order for {order.quantity_ordered} {display_unit}.",
                         "is_coordinator": True, 
-                        "bulk_request_id": None 
+                        "bulk_request_id": None,
+                        "squad_status": None
                     })
     except Exception as e:
         print(f"Direct Sales fetch error: {e}")
@@ -1612,8 +1616,8 @@ def create_bulk_request(
 def get_active_bulk_requests(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """Fetches open Corporate Contracts for the Home Screen Slider."""
     requests = db.query(models.BulkRequest).filter(
-        models.BulkRequest.status == "Open",
-        ~models.BulkRequest.buyer_name.like("Hub Pool:%") # Hide Internal Hub Pools
+        models.BulkRequest.status.in_(["Open", "fulfilled"]), # 🔥 THE FIX
+        ~models.BulkRequest.buyer_name.like("Hub Pool:%") 
     ).all()
 
     results = []

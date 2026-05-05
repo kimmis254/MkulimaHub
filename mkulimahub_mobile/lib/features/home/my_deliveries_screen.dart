@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/home/unattended_dropoff_screen.dart';
+import 'package:mkulimahub_mobile/features/home/delivery_squads_screen.dart'; 
 
 class MyDeliveriesScreen extends StatefulWidget {
   final String? targetOrderId; 
@@ -34,12 +35,12 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
     }
   }
   Future<void> _handleStatusUpdate(int bulkRequestId, String newStatus) async {
-    setState(() => _isLoading = true); // Show loading spinner
+    setState(() => _isLoading = true); 
     final error = await _apiClient.updateSquadDeliveryStatus(bulkRequestId, newStatus);
     
     if (mounted) {
       if (error == null) {
-        _fetchMyDeliveries(); // Refresh the screen to animate the timeline!
+        _fetchMyDeliveries(); 
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Delivery status updated successfully!"), backgroundColor: Colors.green));
       } else {
         setState(() => _isLoading = false);
@@ -48,7 +49,6 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
     }
   }
 
-  // Premium Button Builder for the Coordinator
   Widget _buildCoordinatorButton({required String title, required IconData icon, required MaterialColor color, required VoidCallback onTap}) {
     return SizedBox(
       width: double.infinity,
@@ -71,7 +71,6 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      // 🔥 Removed default AppBar in favor of a Custom Curved Header
       body: Column(
         children: [
           // 🔥 PREMIUM HEADER
@@ -79,7 +78,7 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
             width: double.infinity,
             padding: EdgeInsets.only(
               left: 20, right: 20, bottom: 25, 
-              top: MediaQuery.of(context).padding.top + 10 // Safe area clearance
+              top: MediaQuery.of(context).padding.top + 10 
             ),
             decoration: BoxDecoration(
               color: Colors.green.shade800,
@@ -149,16 +148,14 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
     final status = pledge['status'] ?? 'pending';
     final isRejected = status == 'rejected';
     
-    // 🔥 NEW: Check if it's a Bulk or Individual order (Assuming your backend sends a 'type' field, defaulting to Bulk)
     final String orderType = pledge['type'] ?? 'Bulk Contract'; 
-    final bool isBulk = orderType.toLowerCase().contains('bulk');
+    final bool isBulk = orderType.toLowerCase().contains('bulk') || orderType.toLowerCase().contains('pool');
 
-    // Status Colors & Gradients
     Color primaryColor = Colors.orange;
     Color lightColor = Colors.orange.shade50;
     if (status == 'received') { primaryColor = Colors.blue; lightColor = Colors.blue.shade50; }
     if (status == 'in_transit') { primaryColor = Colors.purple; lightColor = Colors.purple.shade50; }
-    if (status == 'delivered' || status == 'paid') { primaryColor = Colors.green; lightColor = Colors.green.shade50; }
+    if (status == 'delivered' || status == 'paid' || status == 'completed') { primaryColor = Colors.green; lightColor = Colors.green.shade50; }
     if (isRejected) { primaryColor = Colors.red; lightColor = Colors.red.shade50; }
 
     return Container(
@@ -172,7 +169,6 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 🔥 Premium Header with Order Type Badge
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -186,7 +182,6 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 🔥 NEW: Dynamic Badge separating Bulk vs Direct Sales
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       margin: const EdgeInsets.only(bottom: 8),
@@ -216,7 +211,6 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
             ),
           ),
 
-          // 🔥 Body: Crop Details
           Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
@@ -246,47 +240,48 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
                 // 🔥 Upgraded Timeline
                 if (!isRejected) _buildModernTimeline(status),
                 
-                // =========================================================
-                // 🔥 MOVED: SQUAD COORDINATOR CONTROLS (Right under timeline!)
-                // =========================================================
-                if (pledge['is_coordinator'] == true && !isRejected) ...[
-                  const SizedBox(height: 25),
+                const SizedBox(height: 25),
 
+                // =========================================================
+                // 1. SQUAD DASHBOARD LINK (FOR EVERYONE)
+                // =========================================================
+                if (isBulk && pledge['bulk_request_id'] != null) ...[
+                  if (pledge['squad_status'] == 'voting')
+                    _buildCoordinatorButton(
+                      title: "Squad Election Active! Vote Now",
+                      icon: LucideIcons.vote,
+                      color: Colors.blue,
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: pledge['bulk_request_id']))),
+                    )
+                  else
+                    _buildCoordinatorButton(
+                      title: "Open Squad Dashboard",
+                      icon: LucideIcons.users,
+                      color: Colors.teal,
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: pledge['bulk_request_id']))),
+                    ),
+                  const SizedBox(height: 15),
+                ],
+
+                // =========================================================
+                // 2. NON-COORDINATOR VIEW (The Regular Farmer)
+                // =========================================================
+                if (pledge['is_coordinator'] != true && !isRejected) ...[
                   if (status == 'pledged' || status == 'gathering')
-                    Column(
-                      children: [
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(LucideIcons.shieldAlert, size: 16, color: Colors.orange.shade700),
-                              const SizedBox(width: 8),
-                              Text("Awaiting Verification to Start Transit", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 12)),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        // 🔥 The Fallback for Hub Pools if the Admin is missing
-                        _buildCoordinatorButton(
-                          title: "Admin Absent? Digital Drop-off",
-                          icon: LucideIcons.camera,
-                          color: Colors.red,
-                          onTap: () async {
-                            // (Ensure you have imported unattended_dropoff_screen.dart at the top!)
-                            final didSubmit = await Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => UnattendedDropoffScreen(
-                                squadId: pledge['bulk_request_id'],
-                                cropName: pledge['crop'] ?? 'Produce',
-                              ))
-                            );
-                            if (didSubmit == true && mounted) _fetchMyDeliveries();
-                          },
-                        )
-                      ]
+                    _buildCoordinatorButton(
+                      title: "Coordinator Absent? Digital Drop-off",
+                      icon: LucideIcons.camera,
+                      color: Colors.red,
+                      onTap: () async {
+                        final didSubmit = await Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => UnattendedDropoffScreen(
+                            squadId: pledge['bulk_request_id'],
+                            cropName: pledge['crop'] ?? 'Produce',
+                          ))
+                        );
+                        if (didSubmit == true && mounted) _fetchMyDeliveries();
+                      },
                     )
                   else if (status == 'pending_audit')
                     Container(
@@ -298,17 +293,59 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
                         children: [
                           Icon(LucideIcons.clock, size: 16, color: Colors.red.shade700),
                           const SizedBox(width: 8),
-                          Text("Awaiting Hub Admin Audit", style: GoogleFonts.poppins(color: Colors.red.shade800, fontWeight: FontWeight.w600)),
+                          Text("Awaiting Coordinator Verification", style: GoogleFonts.poppins(color: Colors.red.shade800, fontWeight: FontWeight.w600)),
                         ],
                       ),
                     )
-                  else if (status == 'received')
-                    // 🔥 ISSUE 2 FIXED: Only when VERIFIED can they start the journey!
-                    _buildCoordinatorButton(
-                      title: "Start Journey to Buyer",
-                      icon: LucideIcons.truck,
-                      color: Colors.purple,
-                      onTap: () => _handleStatusUpdate(pledge['bulk_request_id'], 'in_transit'),
+                ],
+
+                // =========================================================
+                // 3. COORDINATOR VIEW (The Elected Driver / Hub Admin)
+                // =========================================================
+                if (pledge['is_coordinator'] == true && !isRejected) ...[
+                  
+                  // 🔥 THE CROWN BADGE
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    margin: const EdgeInsets.only(bottom: 15),
+                    decoration: BoxDecoration(color: Colors.purple.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.purple.shade200)),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(LucideIcons.crown, size: 18, color: Colors.purple.shade700),
+                        const SizedBox(width: 8),
+                        Text("You are the Squad Coordinator", style: GoogleFonts.poppins(color: Colors.purple.shade800, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+
+                  // Transit Controls
+                  if (status == 'pledged' || status == 'gathering' || status == 'pending_audit' || status == 'received')
+                    Column(
+                      children: [
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(LucideIcons.shieldAlert, size: 16, color: Colors.orange.shade700),
+                              const SizedBox(width: 8),
+                              Text("Verify goods before starting transit", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 12)),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        // 🔥 THE FIX: The button is always available now!
+                        _buildCoordinatorButton(
+                          title: "Start Journey to Buyer",
+                          icon: LucideIcons.truck,
+                          color: Colors.purple,
+                          onTap: () => _handleStatusUpdate(pledge['bulk_request_id'], 'in_transit'),
+                        )
+                      ],
                     )
                   else if (status == 'in_transit')
                     _buildCoordinatorButton(
@@ -346,9 +383,8 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
                       ),
                     )
                 ],
-                // =========================================================
-                
-                // Notes Section (This now sits safely BELOW the buttons!)
+
+                // Notes Section 
                 if (pledge['notes'] != null && pledge['notes'].toString().isNotEmpty) ...[
                   if (!isRejected) const SizedBox(height: 20),
                   Container(
@@ -380,11 +416,11 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
   }
 
   Widget _buildModernTimeline(String currentStatus) {
-    int currentIndex = 0; // Default to pending/drop-off
+    int currentIndex = 0; 
     if (currentStatus == 'received') currentIndex = 1;
     if (currentStatus == 'in_transit') currentIndex = 2;
     if (currentStatus == 'delivered' || currentStatus == 'fulfilled') currentIndex = 3;
-    if (currentStatus == 'paid') currentIndex = 4;
+    if (currentStatus == 'paid' || currentStatus == 'completed') currentIndex = 4;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -411,13 +447,12 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
         boxShadow: isActive ? [BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 8, offset: const Offset(0, 3))] : [],
       ),
       child: Icon(
-        isPassed && !isActive ? LucideIcons.check : icon, // Show a checkmark if passed!
+        isPassed && !isActive ? LucideIcons.check : icon, 
         size: 14, 
         color: isActive || isPassed ? Colors.white : Colors.grey.shade400
       ),
     );
 
-    // Make the active step pulse slightly!
     if (isActive) {
       nodeIcon = Pulse(infinite: true, child: nodeIcon);
     }
@@ -427,12 +462,8 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
         children: [
           Row(
             children: [
-              // Left Line
               Expanded(child: Container(height: 3, color: isPassed ? Colors.green.shade400 : Colors.transparent)),
-              
               nodeIcon,
-              
-              // Right Line
               Expanded(child: Container(height: 3, color: showLine ? (isPassed && !isActive ? Colors.green.shade400 : Colors.grey.shade200) : Colors.transparent)),
             ],
           ),

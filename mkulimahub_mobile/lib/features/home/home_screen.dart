@@ -160,9 +160,15 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
 
   String _getGreeting() {
     final hour = DateTime.now().hour;
-    if (hour < 12) return "Good Morning,";
-    if (hour < 17) return "Good Afternoon,";
-    return "Good Evening,";
+    
+    // From 4:00 AM to 11:59 AM
+    if (hour >= 4 && hour < 12) return "Good Morning,";
+    
+    // From 12:00 PM to 4:59 PM
+    if (hour >= 12 && hour < 17) return "Good Afternoon,";
+    
+    // From 5:00 PM all the way through the night until 3:59 AM!
+    return "Good Evening,"; 
   }
 
   Future<void> _loadDashboardData() async {
@@ -194,7 +200,14 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
     final data = await _apiClient.getActiveBulkRequests();
     if (mounted) {
       setState(() {
-        _activeBulkRequests = data;
+        // 🔥 THE FIX: Hide contracts that are 100% full if the user isn't in them!
+        _activeBulkRequests = data.where((req) {
+           double target = (req['target_weight_kg'] ?? 1).toDouble();
+           double pledged = (req['total_pledged'] ?? 0).toDouble();
+           bool hasPledged = req['has_pledged'] == true;
+           
+           return (pledged < target) || hasPledged; 
+        }).toList();
       });
     }
   }
@@ -234,6 +247,11 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
     final TextEditingController weightController = TextEditingController();
     bool isSubmitting = false;
 
+    // 🔥 CALCULATE REMAINING MATH
+    double targetWeight = (request['target_weight_kg'] ?? 1.0).toDouble();
+    double totalPledged = (request['total_pledged'] ?? 0).toDouble();
+    double remainingAmount = targetWeight - totalPledged;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -251,7 +269,9 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                   Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
                   const SizedBox(height: 20),
                   Text("Join Delivery Squad", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
-                  Text("${request['target_weight_kg']}kg of ${request['crop_name']} for ${request['buyer_name']}", style: GoogleFonts.poppins(fontSize: 12, color: Colors.green.shade700, fontWeight: FontWeight.w600)),
+                  
+                  // 🔥 DISPLAY REMAINING
+                  Text("Remaining needed: ${remainingAmount.toStringAsFixed(0)} kg", style: GoogleFonts.poppins(fontSize: 14, color: Colors.green.shade700, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 20),
                   
                   Text("How much can you contribute?", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
@@ -266,6 +286,26 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                     ),
                   ),
+                  const SizedBox(height: 15),
+
+                  // 🔥 ADDED QUICK-ADD CHIPS TO MATCH CONTRACTS SCREEN
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [50, 100, 200, 500].map((amount) => Padding(
+                        padding: const EdgeInsets.only(right: 10),
+                        child: ActionChip(
+                          label: Text("+$amount kg", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 12)),
+                          backgroundColor: Colors.green.shade50,
+                          side: BorderSide(color: Colors.green.shade200),
+                          onPressed: () {
+                            double current = double.tryParse(weightController.text) ?? 0;
+                            weightController.text = (current + amount).toStringAsFixed(0);
+                          },
+                        ),
+                      )).toList(),
+                    ),
+                  ),
                   const SizedBox(height: 25),
                   
                   SizedBox(
@@ -274,6 +314,13 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                       onPressed: isSubmitting ? null : () async {
                         final double? weight = double.tryParse(weightController.text);
                         if (weight == null || weight <= 0) return;
+
+                        // 🔥 BLOCK OVER-PLEDGING FIREWALL
+                        if (weight > remainingAmount) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("You cannot pledge more than the remaining limit (${remainingAmount.toStringAsFixed(0)} kg)"), backgroundColor: Colors.red));
+                          return;
+                        }
+
                         setSheetState(() => isSubmitting = true);
                         
                         final error = await _apiClient.createPledge(request['id'], weight);
