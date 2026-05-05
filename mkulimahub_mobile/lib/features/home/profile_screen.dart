@@ -201,62 +201,71 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     String title = widget.isNewUser ? "Create Profile" : (_isEditing ? "Edit Profile" : "My Profile");
 
-    return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: _isLoading && _profileData == null && !widget.isNewUser
-          ? const Center(child: CircularProgressIndicator(color: Colors.green))
-          : Stack(
-              children: [
-                Container(
-                  height: MediaQuery.of(context).size.height * 0.35,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(colors: [Colors.green.shade900, Colors.green.shade500], begin: Alignment.topLeft, end: Alignment.bottomRight),
+    // 🔥 THE FIX: Prevent hardware back button if it's a new user
+    return PopScope(
+      canPop: !widget.isNewUser,
+      onPopInvoked: (didPop) {
+        if (!didPop && widget.isNewUser) {
+          _showSnackBar("Please complete your farm setup to continue.", Colors.orange.shade700);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.grey[50],
+        body: _isLoading && _profileData == null && !widget.isNewUser
+            ? const Center(child: CircularProgressIndicator(color: Colors.green))
+            : Stack(
+                children: [
+                  Container(
+                    height: MediaQuery.of(context).size.height * 0.35,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: [Colors.green.shade900, Colors.green.shade500], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                    ),
                   ),
-                ),
-                SafeArea(
-                  child: Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            if (!widget.isNewUser)
-                              IconButton(icon: const Icon(LucideIcons.arrowLeft, color: Colors.white), onPressed: () => Navigator.pop(context))
-                            else
-                              const SizedBox(width: 48), 
-                            
-                            Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                            
-                            if (!_isEditing)
-                              IconButton(icon: const Icon(LucideIcons.settings, color: Colors.white), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen())))
-                            else if (_isEditing && !widget.isNewUser)
-                              IconButton(icon: const Icon(LucideIcons.x, color: Colors.white), onPressed: () => setState(() => _isEditing = false))
-                            else
-                              const SizedBox(width: 48), 
-                          ],
-                        ),
-                      ),
-                      Expanded(
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.only(left: 24, right: 24, bottom: 40, top: 20),
-                          child: Column(
+                  SafeArea(
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              _buildProfileImage(),
-                              const SizedBox(height: 30),
-                              AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 300),
-                                child: _isEditing ? _buildEditForm() : _buildViewMode(),
-                              ),
+                              if (!widget.isNewUser)
+                                IconButton(icon: const Icon(LucideIcons.arrowLeft, color: Colors.white), onPressed: () => Navigator.pop(context))
+                              else
+                                const SizedBox(width: 48), 
+                              
+                              Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                              
+                              if (!_isEditing)
+                                IconButton(icon: const Icon(LucideIcons.settings, color: Colors.white), onPressed: () { /* Settings Screen */ })
+                              else if (_isEditing && !widget.isNewUser)
+                                IconButton(icon: const Icon(LucideIcons.x, color: Colors.white), onPressed: () => setState(() => _isEditing = false))
+                              else
+                                const SizedBox(width: 48), 
                             ],
                           ),
                         ),
-                      ),
-                    ],
+                        Expanded(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.only(left: 24, right: 24, bottom: 40, top: 20),
+                            child: Column(
+                              children: [
+                                _buildProfileImage(),
+                                const SizedBox(height: 30),
+                                AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 300),
+                                  child: _isEditing ? _buildEditForm() : _buildViewMode(),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
+      ),
     );
   }
 

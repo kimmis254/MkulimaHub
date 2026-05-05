@@ -4,6 +4,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/features/buyer/buyer_checkout_screen.dart';
 
+// 🔥 THE GLOBAL CART MANAGER: Stores all items across the app!
+class CartManager {
+  static final List<Map<String, dynamic>> items = [];
+}
+
 class BuyerCartScreen extends StatefulWidget {
   const BuyerCartScreen({super.key});
 
@@ -12,57 +17,28 @@ class BuyerCartScreen extends StatefulWidget {
 }
 
 class _BuyerCartScreenState extends State<BuyerCartScreen> {
-  // 🔥 MOCK DATA: Items in the cart
-  List<Map<String, dynamic>> _cartItems = [
-    {
-      "id": "1",
-      "crop": "Hass Avocados",
-      "farmer": "Kamau N.",
-      "location": "Murang'a",
-      "weightKg": 500,
-      "pricePerKg": 150,
-      "image": "https://images.unsplash.com/photo-1523049673856-4287b33a18e0?w=500"
-    },
-    {
-      "id": "2",
-      "crop": "Red Onions",
-      "farmer": "Sarah M.",
-      "location": "Kajiado",
-      "weightKg": 200,
-      "pricePerKg": 120,
-      "image": "https://images.unsplash.com/photo-1518977676601-b53f82aba655?w=500"
-    }
-  ];
-
   bool _isLoading = false;
 
   double get _subtotal {
-    return _cartItems.fold(0, (sum, item) => sum + (item['weightKg'] * item['pricePerKg']));
+    return CartManager.items.fold(0, (sum, item) => sum + (item['weightKg'] * item['pricePerKg']));
   }
-
-  double get _logisticsFee {
-    // Flat transport rate calculation (Mock logic: KES 10 per kg)
-    return _cartItems.fold(0, (sum, item) => sum + (item['weightKg'] * 10));
-  }
-
-  double get _total => _subtotal + _logisticsFee;
 
   void _removeItem(String id) {
     setState(() {
-      _cartItems.removeWhere((item) => item['id'] == id);
+      CartManager.items.removeWhere((item) => item['id'] == id);
     });
   }
 
   void _checkout() {
-    if (_cartItems.isEmpty) return;
+    if (CartManager.items.isEmpty) return;
     
-    // 🔥 Send the total amount to the premium Checkout Screen
+    // 🔥 Pass the actual items to the massive new Checkout Screen!
     Navigator.push(
       context, 
       MaterialPageRoute(
-        builder: (_) => BuyerCheckoutScreen(totalAmount: _total)
+        builder: (_) => BuyerCheckoutScreen(cartItems: CartManager.items)
       )
-    );
+    ).then((_) => setState(() {})); // Refresh cart when returning
   }
 
   @override
@@ -79,14 +55,14 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
         title: Text("Procurement Cart", style: GoogleFonts.poppins(color: Colors.teal.shade900, fontWeight: FontWeight.bold, fontSize: 18)),
         centerTitle: true,
         actions: [
-          if (_cartItems.isNotEmpty)
+          if (CartManager.items.isNotEmpty)
             IconButton(
               icon: Icon(LucideIcons.trash2, color: Colors.red.shade300),
-              onPressed: () => setState(() => _cartItems.clear()),
+              onPressed: () => setState(() => CartManager.items.clear()),
             )
         ],
       ),
-      body: _cartItems.isEmpty ? _buildEmptyCart() : _buildCartContent(),
+      body: CartManager.items.isEmpty ? _buildEmptyCart() : _buildCartContent(),
     );
   }
 
@@ -124,15 +100,15 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
   Widget _buildCartContent() {
     return Column(
       children: [
-        // 🔥 ITEM LIST
+        // ITEM LIST
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.all(20),
-            itemCount: _cartItems.length,
+            itemCount: CartManager.items.length,
             itemBuilder: (context, index) {
-              final item = _cartItems[index];
+              final item = CartManager.items[index];
               return FadeInRight(
-                delay: Duration(milliseconds: index * 100),
+                delay: Duration(milliseconds: index * 50),
                 child: Container(
                   margin: const EdgeInsets.only(bottom: 15),
                   padding: const EdgeInsets.all(12),
@@ -193,7 +169,7 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
           ),
         ),
 
-        // 🔥 CHECKOUT SUMMARY FOOTER
+        // CHECKOUT SUMMARY FOOTER
         Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
@@ -205,23 +181,7 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _buildReceiptRow("Subtotal", _subtotal),
-                const SizedBox(height: 10),
-                _buildReceiptRow("Logistics & Aggregation", _logisticsFee),
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 15),
-                  child: Divider(height: 1),
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text("Total to Escrow", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-                    Text(
-                      "KES ${_total.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}", 
-                      style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.teal.shade900)
-                    ),
-                  ],
-                ),
+                _buildReceiptRow("Cart Subtotal", _subtotal, isBold: true),
                 const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
@@ -233,16 +193,14 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       elevation: 0,
                     ),
-                    child: _isLoading 
-                      ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-                      : Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(LucideIcons.lock, color: Colors.white, size: 18),
-                            const SizedBox(width: 8),
-                            Text("Secure Checkout", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                          ],
-                        ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text("Proceed to Checkout", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                        const SizedBox(width: 8),
+                        const Icon(LucideIcons.arrowRight, color: Colors.white, size: 18),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -253,14 +211,14 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
     );
   }
 
-  Widget _buildReceiptRow(String label, double amount) {
+  Widget _buildReceiptRow(String label, double amount, {bool isBold = false}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13)),
+        Text(label, style: GoogleFonts.poppins(color: isBold ? Colors.black87 : Colors.grey.shade600, fontSize: isBold ? 16 : 13, fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
         Text(
           "KES ${amount.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}", 
-          style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 13)
+          style: GoogleFonts.poppins(color: isBold ? Colors.teal.shade900 : Colors.black87, fontWeight: FontWeight.bold, fontSize: isBold ? 22 : 13)
         ),
       ],
     );

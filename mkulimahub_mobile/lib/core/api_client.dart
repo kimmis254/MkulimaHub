@@ -57,30 +57,31 @@ class ApiClient {
   }
 
   // 🔥 NEW: Google Login/Signup Endpoint
-  Future<String?> googleLogin({
-    required String idToken, 
-  }) async {
+  Future<String?> googleLogin({required String idToken, String? overrideRole}) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/google'),
+        Uri.parse('$baseUrl/api/auth/google'),
         headers: {'Content-Type': 'application/json'},
-        // The backend extracts the email and UID safely from this token!
-        body: jsonEncode({'id_token': idToken}), 
+        body: jsonEncode({
+          'id_token': idToken,
+          if (overrideRole != null) 'role': overrideRole, // Pass role to backend
+        }),
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final token = data['access_token'];
+        if (data['status'] == 'needs_phone') return 'needs_phone';
         
-        if (token != null) await _saveToken(token); 
-
-        return data['status']; 
-      } else {
-        final errorData = jsonDecode(response.body);
-        return errorData['detail'] ?? 'Authentication failed.';
+        final token = data['access_token'];
+        if (token != null) {
+          await _saveToken(token);
+          if (data['needs_profile'] == true) return 'needs_profile';
+          return 'success';
+        }
       }
+      return jsonDecode(response.body)['detail'] ?? 'Google login failed';
     } catch (e) {
-      return 'Network error. Please check your connection.';
+      return 'Connection error. Please check your internet.';
     }
   }
   
@@ -1185,7 +1186,61 @@ class ApiClient {
       return "Connection error.";
     }
   }
-  
+  // BUYER SIDE /////////////
+
+  Future<List<dynamic>> getMarketListings() async {
+    final token = await getToken();
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/market/listings'),
+        headers: token != null ? {"Authorization": "Bearer $token"} : {},
+      );
+      if (response.statusCode == 200) return jsonDecode(response.body);
+    } catch (e) {
+      print("Error fetching listings: $e");
+    }
+    return [];
+  }
+
+  Future<List<dynamic>> getHubMarketplace() async {
+    final token = await getToken();
+    if (token == null) return [];
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/buyer/marketplace'),
+        headers: {"Authorization": "Bearer $token"}
+      );
+      if (response.statusCode == 200) return jsonDecode(response.body);
+    } catch (e) {
+      print("Error fetching hub marketplace: $e");
+    }
+    return [];
+  }
+
+  // 🔥 CREATE A DIRECT MARKET ORDER
+  Future<String?> createMarketOrder(int listingId, String orderType, double quantity) async {
+    final token = await getToken();
+    if (token == null) return "Please login first.";
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/market/listings/$listingId/order'),
+        headers: {"Content-Type": "application/json", "Authorization": "Bearer $token"},
+        body: jsonEncode({"order_type": orderType, "quantity": quantity}),
+      );
+      if (response.statusCode == 200) return null; // Success!
+      return jsonDecode(response.body)['detail'] ?? "Failed to place order.";
+    } catch (e) {
+      return "Connection error.";
+    }
+  }
+
+  Future<String?> updateQAStatus(int pledgeId, String status, String notes) async {
+    return _put('/api/buyer/pledges/$pledgeId/qa', {
+      "status": status,
+      "notes": notes
+    });
+  }
+
   Future<String?> _put(String endpoint, Map<String, dynamic> body) async {
     try {
       // 🔥 THE FIX: Use your universal getToken() method so the key is always correct!
@@ -1210,4 +1265,12 @@ class ApiClient {
       return 'Connection error. Please check your internet.';
     }
   }
+
+  
+
+
+
+
+
+
 }

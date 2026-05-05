@@ -1,10 +1,10 @@
+import 'dart:convert';
 import 'dart:ui';
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
-import 'package:mkulimahub_mobile/features/home/harvest_model.dart';
 import 'package:mkulimahub_mobile/features/home/ai_chat_screen.dart';
 import 'package:mkulimahub_mobile/features/buyer/customer_profile_screen.dart';
 import 'package:mkulimahub_mobile/features/buyer/buyer_orders_screen.dart';
@@ -30,10 +30,10 @@ class _BuyerDashboardState extends State<BuyerDashboard> {
   void initState() {
     super.initState();
     _screens = [
-      BuyerMarketplaceView(key: buyerMarketplaceKey), // Tab 0: Market
-      const BuyerOrdersScreen(),                      // Tab 1: Orders
-      const BuyerInsightsScreen(),                    // Tab 2: Insights
-      const BuyerWalletScreen(),                      // Tab 3: Wallet
+      BuyerMarketplaceView(key: buyerMarketplaceKey), 
+      const BuyerOrdersScreen(),                      
+      const BuyerInsightsScreen(),                    
+      const BuyerWalletScreen(),                      
     ];
   }
 
@@ -44,7 +44,6 @@ class _BuyerDashboardState extends State<BuyerDashboard> {
       backgroundColor: Colors.grey.shade50,
       body: IndexedStack(index: _selectedIndex, children: _screens),
       
-      // 🔥 CUSTOMER PREMIUM GLASS NAV (TEAL THEME)
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       floatingActionButton: Container(
         margin: const EdgeInsets.fromLTRB(20, 0, 20, 20),
@@ -141,10 +140,13 @@ class BuyerMarketplaceView extends StatefulWidget {
 class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
   final ApiClient _apiClient = ApiClient();
   
-  List<Harvest> _allHarvests = [];
+  List<dynamic> _allListings = [];
+  List<dynamic> _hubPools = []; 
   bool _isLoading = true;
   String _searchQuery = "";
   int _selectedCategoryIndex = 0;
+  
+  String _userName = "Buyer";
 
   final List<Map<String, dynamic>> _categories = [
     {"name": "All", "icon": LucideIcons.layoutGrid, "color": Colors.teal},
@@ -158,15 +160,33 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
   @override
   void initState() {
     super.initState();
-    loadHarvests();
+    _loadMarketData();
   }
 
-  Future<void> loadHarvests() async {
+  String _getGreeting() {
+    final hour = DateTime.now().hour;
+    if (hour >= 4 && hour < 12) return "Good Morning,";
+    if (hour >= 12 && hour < 17) return "Good Afternoon,";
+    return "Good Evening,"; 
+  }
+
+  Future<void> _loadMarketData() async {
     setState(() => _isLoading = true);
-    final data = await _apiClient.getHarvests();
+    
+    final profile = await _apiClient.getProfile();
+    if (profile != null && mounted) {
+      setState(() => _userName = profile['full_name']?.split(' ')[0] ?? "Buyer");
+    }
+
+    final results = await Future.wait([
+      _apiClient.getMarketListings(),
+      _apiClient.getHubMarketplace(), 
+    ]);
+    
     if (mounted) {
       setState(() {
-        _allHarvests = data;
+        _allListings = results[0] as List<dynamic>;
+        _hubPools = results[1] as List<dynamic>;
         _isLoading = false;
       });
     }
@@ -182,13 +202,13 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
     return 'Other'; 
   }
 
-  List<Harvest> get _filteredHarvests {
-    return _allHarvests.where((harvest) {
-      final matchesSearch = harvest.cropName.toLowerCase().contains(_searchQuery.toLowerCase());
+  List<dynamic> get _filteredListings {
+    return _allListings.where((harvest) {
+      final matchesSearch = harvest['crop_name'].toString().toLowerCase().contains(_searchQuery.toLowerCase());
       bool matchesCategory = true;
       if (_selectedCategoryIndex != 0) { 
         final targetCategory = _categories[_selectedCategoryIndex]['name'];
-        final detectedCategory = _getCategoryForCrop(harvest.cropName);
+        final detectedCategory = _getCategoryForCrop(harvest['crop_name']);
         matchesCategory = detectedCategory == targetCategory;
       }
       return matchesSearch && matchesCategory;
@@ -212,19 +232,197 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
     return 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500';
   }
 
+  Widget _buildListingImage(Map<String, dynamic> item, String fallbackCropName) {
+    if (item['image_base64'] != null && item['image_base64'].toString().isNotEmpty) {
+      try {
+        final base64String = item['image_base64'].toString().split(',').last;
+        return Image.memory(base64Decode(base64String), fit: BoxFit.cover, width: double.infinity, height: double.infinity);
+      } catch (e) {
+        debugPrint("Image decode error: $e");
+      }
+    }
+    return Image.network(_getImageForCrop(fallbackCropName), fit: BoxFit.cover, width: double.infinity, height: double.infinity);
+  }
+
+  void _showOrderSheet(Map<String, dynamic> listing) {
+    final TextEditingController qtyController = TextEditingController(text: "1");
+
+    List<dynamic> parsedUnits = [];
+    if (listing['unit_pricing'] is String) {
+      try { parsedUnits = jsonDecode(listing['unit_pricing']); } catch (_) {}
+    } else if (listing['unit_pricing'] is List) {
+      parsedUnits = listing['unit_pricing'];
+    }
+    List<Map<String, dynamic>> unitPricing = List<Map<String, dynamic>>.from(parsedUnits.map((e) => Map<String, dynamic>.from(e)));
+    
+    String selectedFormat = listing['is_selling_by_weight'] == true ? "weight" : (unitPricing.isNotEmpty ? unitPricing[0]['unit_name'] : "weight");
+    
+    double getPrice() {
+      if (selectedFormat == "weight") return listing['price_per_kg'].toDouble();
+      final u = unitPricing.firstWhere((element) => element['unit_name'] == selectedFormat, orElse: () => {'price': 0});
+      return u['price'].toDouble();
+    }
+
+    double getKg() {
+      if (selectedFormat == "weight") return 1.0;
+      final u = unitPricing.firstWhere((element) => element['unit_name'] == selectedFormat, orElse: () => {'kg': 0});
+      return u['kg'].toDouble();
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            double currentQty = double.tryParse(qtyController.text) ?? 1;
+            double totalCost = currentQty * getPrice();
+            double totalKg = currentQty * getKg();
+
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 24, left: 24, right: 24, top: 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
+                  const SizedBox(height: 20),
+                  Text("Purchase ${listing['crop_name']}", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text("Seller: ${listing['farmer_name']} (${listing['county']})", style: GoogleFonts.poppins(fontSize: 12, color: Colors.teal.shade700, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 20),
+                  
+                  Text("Select Format", style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87)),
+                  const SizedBox(height: 8),
+                  
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        if (listing['is_selling_by_weight'] == true)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 10),
+                            child: ChoiceChip(
+                              label: Text("By the KG", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: selectedFormat == "weight" ? Colors.white : Colors.black87)),
+                              selected: selectedFormat == "weight",
+                              selectedColor: Colors.teal.shade600,
+                              onSelected: (val) => setSheetState(() => selectedFormat = "weight"),
+                            ),
+                          ),
+                        ...unitPricing.map((unit) => Padding(
+                          padding: const EdgeInsets.only(right: 10),
+                          child: ChoiceChip(
+                            label: Text(unit['unit_name'], style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: selectedFormat == unit['unit_name'] ? Colors.white : Colors.black87)),
+                            selected: selectedFormat == unit['unit_name'],
+                            selectedColor: Colors.teal.shade600,
+                            onSelected: (val) => setSheetState(() => selectedFormat = unit['unit_name']),
+                          ),
+                        )),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  
+                  Text("Quantity", style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: () {
+                          if (currentQty > 1) {
+                            setSheetState(() => qtyController.text = (currentQty - 1).toStringAsFixed(0));
+                          }
+                        },
+                        icon: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: Colors.grey.shade200, shape: BoxShape.circle), child: const Icon(LucideIcons.minus, size: 16)),
+                      ),
+                      Expanded(
+                        child: TextField(
+                          controller: qtyController,
+                          keyboardType: TextInputType.number,
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 18),
+                          onChanged: (val) => setSheetState(() {}),
+                          decoration: InputDecoration(filled: true, fillColor: Colors.grey.shade50, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () {
+                          setSheetState(() => qtyController.text = (currentQty + 1).toStringAsFixed(0));
+                        },
+                        icon: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: Colors.teal.shade100, shape: BoxShape.circle), child: const Icon(LucideIcons.plus, size: 16, color: Colors.teal)),
+                      ),
+                    ],
+                  ),
+                  
+                  const SizedBox(height: 25),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.teal.shade100)),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text("Total Escrow", style: GoogleFonts.poppins(color: Colors.teal.shade800, fontSize: 12)),
+                            Text("KES ${totalCost.toStringAsFixed(0)}", style: GoogleFonts.poppins(color: Colors.teal.shade900, fontSize: 20, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        Text("Est. Load: ${totalKg.toStringAsFixed(0)} KG", style: GoogleFonts.poppins(color: Colors.teal.shade700, fontSize: 12, fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        if (totalKg > listing['available_kg']) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Only ${listing['available_kg']} KG remaining!"), backgroundColor: Colors.red));
+                          return;
+                        }
+
+                        // 🔥 THE FIX: Push data into the Global Cart Manager!
+                        CartManager.items.add({
+                          "id": listing['id'],
+                          "type": "individual",
+                          "crop": listing['crop_name'],
+                          "farmer": listing['farmer_name'],
+                          "location": listing['county'],
+                          "weightKg": totalKg,
+                          "pricePerKg": getPrice() / getKg(), // standardize logic
+                          "image": listing['image_base64'] ?? _getImageForCrop(listing['crop_name']),
+                          "format": selectedFormat,
+                          "qty": currentQty
+                        });
+
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Added to Procurement Cart!"), backgroundColor: Colors.green));
+                      },
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.teal.shade700, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      child: Text("Add to Cart", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
+                    ),
+                  )
+                ],
+              ),
+            );
+          }
+        );
+      }
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final displayHarvests = _filteredHarvests;
-    
-    // 🔥 SEPARATE BULK AND INDIVIDUAL LISTINGS
-    final bulkHarvests = displayHarvests.where((h) => h.cropName.contains('Pool')).toList();
-    final individualHarvests = displayHarvests.where((h) => !h.cropName.contains('Pool')).toList();
+    final individualHarvests = _filteredListings;
 
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
       body: CustomScrollView(
         slivers: [
-          // 🔥 TEAL HEADER
+          // 🔥 TEAL HEADER WITH SMART GREETING
           SliverToBoxAdapter(
             child: Container(
               padding: const EdgeInsets.only(top: 50, left: 20, right: 20, bottom: 25),
@@ -253,8 +451,8 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text("Welcome back,", style: GoogleFonts.poppins(color: Colors.teal.shade200, fontSize: 12)),
-                              Text("Customer", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20)),
+                              Text(_getGreeting(), style: GoogleFonts.poppins(color: Colors.teal.shade200, fontSize: 12)),
+                              Text(_userName, style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20)),
                             ],
                           ),
                         ],
@@ -274,6 +472,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                           const SizedBox(width: 10),
                           BouncyButton(
                             onPressed: () {
+                              // 🔥 NAVIGATE TO THE GLOBAL CART
                               Navigator.push(context, MaterialPageRoute(builder: (_) => const BuyerCartScreen()));
                             },
                             child: Container(
@@ -362,19 +561,18 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
             ),
           ),
           
-          // 🔥 NEW: ACTIVE HUB POOLS SECTION (Horizontal Slider)
-          if (bulkHarvests.isNotEmpty) ...[
+          if (_hubPools.isNotEmpty) ...[
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.only(top: 15, left: 20, right: 20, bottom: 10),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text("Active Hub Pools", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+                    Text("Verified Hub Pools", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(color: Colors.amber.shade100, borderRadius: BorderRadius.circular(8)),
-                      child: Text("Wholesale", style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.amber.shade900)),
+                      child: Text("Wholesale Ready", style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.amber.shade900)),
                     )
                   ],
                 ),
@@ -387,8 +585,8 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   physics: const BouncingScrollPhysics(),
-                  itemCount: bulkHarvests.length,
-                  itemBuilder: (context, index) => _buildBulkCard(bulkHarvests[index]),
+                  itemCount: _hubPools.length,
+                  itemBuilder: (context, index) => _buildBulkCard(_hubPools[index]),
                 ),
               ),
             ),
@@ -431,13 +629,13 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
               sliver: SliverGrid(
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2, 
-                  childAspectRatio: 0.68,
+                  childAspectRatio: 0.65,
                   crossAxisSpacing: 15, 
                   mainAxisSpacing: 15
                 ),
                 delegate: SliverChildBuilderDelegate((context, index) {
                   final harvest = individualHarvests[index];
-                  String cleanDisplayTitle = _formatCropName(harvest.cropName);
+                  String cleanDisplayTitle = _formatCropName(harvest['crop_name']);
 
                   return FadeInUp(
                     delay: Duration(milliseconds: index * 50), 
@@ -457,11 +655,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                               flex: 5,
                               child: Stack(
                                 children: [
-                                  Image.network(
-                                    _getImageForCrop(cleanDisplayTitle), 
-                                    width: double.infinity, height: double.infinity, fit: BoxFit.cover, 
-                                    errorBuilder: (c, e, s) => Container(color: Colors.teal.shade50, child: const Center(child: Icon(LucideIcons.imageOff, color: Colors.teal)))
-                                  ),
+                                  _buildListingImage(harvest, cleanDisplayTitle),
                                   Container(
                                     decoration: BoxDecoration(
                                       gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black.withOpacity(0.3), Colors.transparent, Colors.transparent])
@@ -471,7 +665,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                               ),
                             ),
                             Expanded(
-                              flex: 5,
+                              flex: 6,
                               child: Padding(
                                 padding: const EdgeInsets.all(12.0),
                                 child: Column(
@@ -483,11 +677,12 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                                       children: [
                                         Text(cleanDisplayTitle, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis),
                                         const SizedBox(height: 2),
+                                        Text("${harvest['farmer_name']}", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
                                         Row(
                                           children: [
-                                            Icon(LucideIcons.scale, size: 12, color: Colors.grey.shade500),
+                                            Icon(LucideIcons.mapPin, size: 10, color: Colors.grey.shade500),
                                             const SizedBox(width: 4),
-                                            Text("${harvest.weightKg} kg", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12, fontWeight: FontWeight.w500)),
+                                            Text("${harvest['county']}", style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 10, fontWeight: FontWeight.w500)),
                                           ],
                                         ),
                                       ]
@@ -498,12 +693,12 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                                         Column(
                                           crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
-                                            Text("Price", style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 10)),
-                                            Text("KES ${harvest.pricePerKg}", style: GoogleFonts.poppins(color: Colors.teal.shade700, fontWeight: FontWeight.w800, fontSize: 15)),
+                                            Text("${harvest['available_kg']} ${harvest['unit_type']} Avail.", style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 9)),
+                                            Text("KES ${harvest['price_per_kg']}", style: GoogleFonts.poppins(color: Colors.teal.shade700, fontWeight: FontWeight.w800, fontSize: 13)),
                                           ],
                                         ),
                                         BouncyButton(
-                                          onPressed: () {}, 
+                                          onPressed: () => _showOrderSheet(harvest), 
                                           child: Container(
                                             padding: const EdgeInsets.all(8), 
                                             decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(12)), 
@@ -530,15 +725,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
     );
   }
 
-  // 🔥 WIDGET: THE PREMIUM BULK LISTING CARD
-  Widget _buildBulkCard(Harvest harvest) {
-    // Strip out the "(HubName Pool)" part for a cleaner title
-    String cleanName = harvest.cropName;
-    int start = harvest.cropName.indexOf('(');
-    if (start != -1) {
-      cleanName = harvest.cropName.substring(0, start).trim();
-    }
-
+  Widget _buildBulkCard(Map<String, dynamic> pool) {
     return FadeInRight(
       child: Container(
         width: 300,
@@ -568,23 +755,42 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                       const Icon(LucideIcons.shieldCheck, color: Colors.white, size: 20),
                     ],
                   ),
-                  Text(_formatCropName(cleanName), style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(pool['hub_name'], style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18), maxLines: 1, overflow: TextOverflow.ellipsis),
                   Row(
                     children: [
                       const Icon(LucideIcons.scale, color: Colors.amber, size: 16),
                       const SizedBox(width: 8),
-                      Text("${harvest.weightKg} KG Available", style: GoogleFonts.poppins(color: Colors.white, fontSize: 14)),
+                      Text("${pool['available_weight_kg']} KG ${pool['crop']}", style: GoogleFonts.poppins(color: Colors.white, fontSize: 14)),
                     ],
                   ),
                   const Divider(color: Colors.white24),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text("KES ${harvest.pricePerKg}/KG", style: GoogleFonts.poppins(color: Colors.amber.shade400, fontWeight: FontWeight.bold, fontSize: 16)),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(12)),
-                        child: Text("Buy Bulk", style: GoogleFonts.poppins(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                      Text("KES ${pool['asking_price_per_kg']}/KG", style: GoogleFonts.poppins(color: Colors.amber.shade400, fontWeight: FontWeight.bold, fontSize: 16)),
+                      GestureDetector(
+                        onTap: () {
+                          // 🔥 THE FIX: Push data into the Global Cart Manager!
+                          CartManager.items.add({
+                            "id": pool['id'] ?? "pool",
+                            "type": "pool",
+                            "crop": pool['crop'],
+                            "farmer": pool['hub_name'],
+                            "location": "Hub",
+                            "weightKg": pool['available_weight_kg'].toDouble(),
+                            "pricePerKg": pool['asking_price_per_kg'].toDouble(),
+                            "image": _getImageForCrop(pool['crop']),
+                            "format": "weight",
+                            "qty": pool['available_weight_kg']
+                          });
+
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Hub Pool added to Cart!"), backgroundColor: Colors.green));
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(12)),
+                          child: Text("Add to Cart", style: GoogleFonts.poppins(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                        ),
                       )
                     ],
                   )
@@ -598,6 +804,9 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
   }
 }
 
+// ==========================================
+// 🔥 BOUNCY BUTTON HELPER
+// ==========================================
 class BouncyButton extends StatefulWidget {
   final Widget child;
   final VoidCallback onPressed;
@@ -605,6 +814,7 @@ class BouncyButton extends StatefulWidget {
   @override
   State<BouncyButton> createState() => _BouncyButtonState();
 }
+
 class _BouncyButtonState extends State<BouncyButton> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _scaleAnimation;
@@ -618,28 +828,11 @@ class _BouncyButtonState extends State<BouncyButton> with SingleTickerProviderSt
   void dispose() { _controller.dispose(); super.dispose(); }
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(onTapDown: (_) => _controller.forward(), onTapUp: (_) { _controller.reverse(); widget.onPressed(); }, onTapCancel: () => _controller.reverse(), child: ScaleTransition(scale: _scaleAnimation, child: widget.child));
-  }
-}
-
-// ==========================================
-// 🔥 PLACEHOLDER FOR WALLET (Kept at the bottom)
-// ==========================================
-
-class BuyerWalletView extends StatelessWidget {
-  const BuyerWalletView({super.key});
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(LucideIcons.wallet, size: 60, color: Colors.teal.shade200),
-          const SizedBox(height: 16),
-          Text("Financials & Escrow", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
-          Text("Manage your balance and view invoices.", style: GoogleFonts.poppins(color: Colors.grey)),
-        ],
-      )
+    return GestureDetector(
+      onTapDown: (_) => _controller.forward(), 
+      onTapUp: (_) { _controller.reverse(); widget.onPressed(); }, 
+      onTapCancel: () => _controller.reverse(), 
+      child: ScaleTransition(scale: _scaleAnimation, child: widget.child)
     );
   }
 }

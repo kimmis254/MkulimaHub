@@ -25,6 +25,9 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   
   late bool _isEditing;
 
+  // 🔥 NEW: Customer Type State
+  String _customerType = 'business'; // Defaults to business
+
   final _bioController = TextEditingController();
   final _villageController = TextEditingController();
 
@@ -44,7 +47,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   @override
   void initState() {
     super.initState();
-    // Default to editing ONLY if they are a brand new user onboarding
     _isEditing = widget.isNewUser;
     _initializeData();
   }
@@ -63,12 +65,14 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     try {
       final String response = await rootBundle.loadString('assets/data/kenya_locations.json');
       final data = await json.decode(response) as List<dynamic>;
-      setState(() {
-        _locationsData = data;
-        _counties = _locationsData.map((c) => c['county_name'].toString()).toList();
-      });
+      if (mounted) {
+        setState(() {
+          _locationsData = data;
+          _counties = _locationsData.map((c) => c['county_name'].toString()).toList();
+        });
+      }
     } catch (e) {
-      print("Error loading locations JSON: $e");
+      debugPrint("Error loading locations JSON: $e");
     }
   }
 
@@ -83,6 +87,11 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
         
         _bioController.text = data['bio'] ?? "";
         _villageController.text = data['village'] ?? ""; 
+        
+        // 🔥 Load customer type if saved
+        if (data['customer_type'] != null) {
+          _customerType = data['customer_type'];
+        }
         
         final backendCounty = data['county']; 
         if (backendCounty != null && _counties.contains(backendCounty)) {
@@ -123,6 +132,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
       "sub_county": _selectedSubCounty,
       "ward": _selectedWard,
       "village": _villageController.text,
+      "customer_type": _customerType, // 🔥 Save their selection!
     };
 
     final error = await _apiClient.updateProfile(data);
@@ -165,82 +175,90 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   Widget build(BuildContext context) {
     String title = widget.isNewUser ? "Logistics Setup" : (_isEditing ? "Edit Logistics" : "My Profile");
 
-    return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: _isLoading && _profileData == null && !widget.isNewUser
-          ? const Center(child: CircularProgressIndicator(color: Colors.teal))
-          : Stack(
-              children: [
-                // 🔥 PREMIUM TEAL BACKGROUND
-                Container(
-                  height: MediaQuery.of(context).size.height * 0.35,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Colors.teal.shade900, Colors.teal.shade600],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+    return PopScope(
+      canPop: !widget.isNewUser,
+      onPopInvoked: (didPop) {
+        if (!didPop && widget.isNewUser) {
+          _showSnackBar("Please complete your logistics setup to continue.", Colors.orange.shade700);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.grey[50],
+        body: _isLoading && _profileData == null && !widget.isNewUser
+            ? const Center(child: CircularProgressIndicator(color: Colors.teal))
+            : Stack(
+                children: [
+                  // PREMIUM TEAL BACKGROUND
+                  Container(
+                    height: MediaQuery.of(context).size.height * 0.35,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Colors.teal.shade900, Colors.teal.shade600],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
                     ),
                   ),
-                ),
-                
-                SafeArea(
-                  child: Column(
-                    children: [
-                      // Custom AppBar Area
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            if (!widget.isNewUser)
-                              IconButton(
-                                icon: const Icon(LucideIcons.arrowLeft, color: Colors.white),
-                                onPressed: () => Navigator.pop(context),
-                              )
-                            else
-                              const SizedBox(width: 48), 
-                            
-                            Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                            
-                            if (!_isEditing)
-                              IconButton(
-                                icon: const Icon(LucideIcons.settings, color: Colors.white),
-                                onPressed: () {
-                                  Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
-                                },
-                              )
-                            else if (_isEditing && !widget.isNewUser)
-                              IconButton(
-                                icon: const Icon(LucideIcons.x, color: Colors.white),
-                                onPressed: () => setState(() => _isEditing = false),
-                              )
-                            else
-                              const SizedBox(width: 48), 
-                          ],
-                        ),
-                      ),
-                      
-                      // Scrollable Content
-                      Expanded(
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.only(left: 24, right: 24, bottom: 40, top: 20),
-                          child: Column(
+                  
+                  SafeArea(
+                    child: Column(
+                      children: [
+                        // Custom AppBar Area
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              _buildProfileImage(),
-                              const SizedBox(height: 30),
-                              AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 300),
-                                child: _isEditing ? _buildEditForm() : _buildViewMode(),
-                              ),
+                              if (!widget.isNewUser)
+                                IconButton(
+                                  icon: const Icon(LucideIcons.arrowLeft, color: Colors.white),
+                                  onPressed: () => Navigator.pop(context),
+                                )
+                              else
+                                const SizedBox(width: 48), 
+                              
+                              Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                              
+                              if (!_isEditing)
+                                IconButton(
+                                  icon: const Icon(LucideIcons.settings, color: Colors.white),
+                                  onPressed: () {
+                                    Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+                                  },
+                                )
+                              else if (_isEditing && !widget.isNewUser)
+                                IconButton(
+                                  icon: const Icon(LucideIcons.x, color: Colors.white),
+                                  onPressed: () => setState(() => _isEditing = false),
+                                )
+                              else
+                                const SizedBox(width: 48), 
                             ],
                           ),
                         ),
-                      ),
-                    ],
+                        
+                        // Scrollable Content
+                        Expanded(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.only(left: 24, right: 24, bottom: 40, top: 20),
+                            child: Column(
+                              children: [
+                                _buildProfileImage(),
+                                const SizedBox(height: 30),
+                                AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 300),
+                                  child: _isEditing ? _buildEditForm() : _buildViewMode(),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
+      ),
     );
   }
 
@@ -248,12 +266,13 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     final location = (_profileData?['county'] != null) 
         ? "${_profileData?['village'] ?? ''}, ${_profileData?['county']}"
         : "Location not set";
+        
+    final isBusiness = _customerType == 'business';
 
     return Column(
       key: const ValueKey("view"),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Name & Location Header inside a floating card
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(24),
@@ -264,14 +283,20 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
           ),
           child: Column(
             children: [
-              Text(_profileData?['full_name'] ?? "Customer", style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87)),
+              Text(_profileData?['full_name'] ?? "Customer", style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87), textAlign: TextAlign.center),
               const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(10)),
+                child: Text(isBusiness ? "Corporate Buyer" : "Individual Buyer", style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.teal.shade800)),
+              ),
+              const SizedBox(height: 12),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(LucideIcons.mapPin, size: 16, color: Colors.teal.shade700),
                   const SizedBox(width: 6),
-                  Text(location, style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 14)),
+                  Flexible(child: Text(location, style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 14))),
                 ],
               ),
             ],
@@ -279,7 +304,11 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
         ),
         const SizedBox(height: 30),
         
-        _buildInfoCard("Business Details", _profileData?['bio'] ?? "No details added yet.", LucideIcons.store),
+        _buildInfoCard(
+          isBusiness ? "Business Details" : "About Me", 
+          _profileData?['bio'] ?? "No details added yet.", 
+          isBusiness ? LucideIcons.store : LucideIcons.user
+        ),
         
         Container(
           width: double.infinity,
@@ -291,7 +320,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
               children: [
                 Icon(LucideIcons.truck, size: 18, color: Colors.teal.shade700),
                 const SizedBox(width: 8),
-                Text("Primary Delivery Location", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87)),
+                Text(isBusiness ? "Commercial Drop-off Location" : "Home Delivery Location", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87)),
               ],
             ),
             const SizedBox(height: 12),
@@ -308,15 +337,38 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   }
 
   Widget _buildEditForm() {
+    final isBusiness = _customerType == 'business';
+
     return Column(
       key: const ValueKey("edit"),
       children: [
-        FadeInDown(child: _buildSectionTitle("Business Info")),
+        // 🔥 CUSTOMER TYPE TOGGLE
+        FadeInDown(child: _buildSectionTitle("Account Type")),
         const SizedBox(height: 10),
-        _buildModernField(_bioController, "Business Type & Details", LucideIcons.store, maxLines: 3, hint: "E.g. Wholesaler looking for fresh veg..."),
+        Row(
+          children: [
+            _buildTypeToggleOption("business", "Business", LucideIcons.building2),
+            const SizedBox(width: 15),
+            _buildTypeToggleOption("individual", "Individual", LucideIcons.user),
+          ],
+        ),
+        const SizedBox(height: 30),
+
+        // 🔥 DYNAMIC INFO SECTION
+        FadeInDown(delay: const Duration(milliseconds: 100), child: _buildSectionTitle(isBusiness ? "Business Info" : "Personal Info")),
+        const SizedBox(height: 10),
+        _buildModernField(
+          _bioController, 
+          isBusiness ? "Business Type & Details" : "Buying Preferences", 
+          isBusiness ? LucideIcons.store : LucideIcons.shoppingBag, 
+          maxLines: 3, 
+          hint: isBusiness ? "E.g. Wholesaler looking for fresh veg..." : "E.g. Buying fresh produce for my family..."
+        ),
         
         const SizedBox(height: 30),
-        FadeInDown(delay: const Duration(milliseconds: 100), child: _buildSectionTitle("Logistics / Drop-off")),
+        
+        // 🔥 LOGISTICS SECTION
+        FadeInDown(delay: const Duration(milliseconds: 150), child: _buildSectionTitle("Logistics & Delivery")),
         const SizedBox(height: 10),
         
         Container(
@@ -359,7 +411,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                 controller: _villageController,
                 style: GoogleFonts.poppins(fontSize: 14),
                 decoration: InputDecoration(
-                  labelText: "Estate / Landmark",
+                  labelText: isBusiness ? "Warehouse / Business Landmark" : "Estate / Home Landmark",
                   labelStyle: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 13),
                   prefixIcon: Icon(LucideIcons.mapPin, color: Colors.teal[700], size: 18),
                   border: InputBorder.none,
@@ -390,11 +442,41 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     );
   }
 
+  // 🔥 WIDGET: Smart Type Toggle Button
+  Widget _buildTypeToggleOption(String id, String title, IconData icon) {
+    bool isSelected = _customerType == id;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _customerType = id),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.teal.shade50 : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: isSelected ? Colors.teal.shade500 : Colors.grey.shade300, width: isSelected ? 2 : 1),
+          ),
+          child: Column(
+            children: [
+              Icon(icon, color: isSelected ? Colors.teal.shade700 : Colors.grey.shade400, size: 28),
+              const SizedBox(height: 8),
+              Text(title, style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.bold, color: isSelected ? Colors.teal.shade900 : Colors.grey.shade500)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildProfileImage() {
+    // 🔥 SMART ICON: Changes based on selected type!
+    IconData fallbackIcon = _customerType == 'business' ? LucideIcons.building2 : LucideIcons.user;
+
     return Stack(
       alignment: Alignment.center,
       children: [
-        Container(
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
           decoration: BoxDecoration(
             shape: BoxShape.circle, 
             border: Border.all(color: Colors.white, width: 4), 
@@ -404,7 +486,12 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
             radius: 55,
             backgroundColor: Colors.white,
             backgroundImage: _profileImage != null ? FileImage(_profileImage!) : null,
-            child: _profileImage == null ? Icon(LucideIcons.building2, size: 45, color: Colors.teal.shade200) : null,
+            child: _profileImage == null 
+                ? AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    child: Icon(fallbackIcon, key: ValueKey(fallbackIcon), size: 45, color: Colors.teal.shade200)
+                  ) 
+                : null,
           ),
         ),
         if (_isEditing)

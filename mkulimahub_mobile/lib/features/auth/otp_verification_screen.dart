@@ -147,10 +147,18 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
              await _apiClient.saveUserRole(role); 
              
              if (role == 'buyer') {
-               Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const CustomerProfileScreen()), (route) => false);
-             } else {
-               Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const ProfileScreen(isNewUser: true)), (route) => false);
-             }
+             Navigator.pushAndRemoveUntil(
+               context, 
+               MaterialPageRoute(builder: (_) => const CustomerProfileScreen(isNewUser: true)), 
+               (route) => false
+             );
+          } else {
+             Navigator.pushAndRemoveUntil(
+               context, 
+               MaterialPageRoute(builder: (_) => const ProfileScreen(isNewUser: true)), 
+               (route) => false
+             );
+          }
            }
         } else {
            setState(() => _isLoading = false);

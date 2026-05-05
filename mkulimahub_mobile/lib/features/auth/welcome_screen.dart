@@ -6,7 +6,6 @@ import 'package:mkulimahub_mobile/features/auth/login_screen.dart';
 import 'package:mkulimahub_mobile/features/auth/register_screen.dart';
 import 'package:mkulimahub_mobile/features/buyer/buyer_registration_screen.dart';
 
-
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
 
@@ -57,7 +56,7 @@ class WelcomeScreen extends StatelessWidget {
                 delay: const Duration(milliseconds: 300),
                 child: _buildRoleCard(
                   context: context,
-                  title: "I am a Farmer / Co-op",
+                  title: "I am a Farmer",
                   subtitle: "List harvests, join hubs, and pledge to bulk contracts.",
                   icon: LucideIcons.leaf,
                   primaryColor: Colors.green.shade700,
@@ -68,14 +67,14 @@ class WelcomeScreen extends StatelessWidget {
               
               const SizedBox(height: 20),
 
-              // 🔥 OPTION 2: THE CORPORATE BUYER
+              // 🔥 OPTION 2: THE CUSTOMER
               FadeInUp(
                 delay: const Duration(milliseconds: 400),
                 child: _buildRoleCard(
                   context: context,
-                  title: "I am a Customer / Buyer",
+                  title: "I am a Customer",
                   subtitle: "Source crops, post bulk requests, and track logistics.",
-                  icon: LucideIcons.shoppingBag, // 
+                  icon: LucideIcons.shoppingBag, 
                   primaryColor: Colors.blue.shade800,
                   backgroundColor: Colors.blue.shade50,
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BuyerRegistrationScreen())),
@@ -125,9 +124,9 @@ class WelcomeScreen extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: Colors.grey.shade200, width: 1.5),
+          border: Border.all(color: Colors.grey.shade100, width: 2),
           boxShadow: [
-            BoxShadow(color: primaryColor.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, 10))
+            BoxShadow(color: primaryColor.withOpacity(0.08), blurRadius: 20, offset: const Offset(0, 10))
           ]
         ),
         child: Row(
@@ -149,7 +148,7 @@ class WelcomeScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 10),
-            Icon(LucideIcons.chevronRight, color: Colors.grey.shade400, size: 20),
+            Icon(LucideIcons.chevronRight, color: primaryColor.withOpacity(0.5), size: 24),
           ],
         ),
       ),

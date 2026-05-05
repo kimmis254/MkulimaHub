@@ -6,14 +6,15 @@ import 'package:mkulimahub_mobile/features/auth/auth_service.dart';
 import 'package:mkulimahub_mobile/features/auth/otp_verification_screen.dart';
 
 class GooglePhoneLinkScreen extends StatefulWidget {
-  // 🔥 THE FIX: We only need the secure token and the name for the UI!
-  final String idToken; 
+  final String idToken;
   final String name;
+  final String? overrideRole; 
 
   const GooglePhoneLinkScreen({
-    super.key, 
-    required this.idToken, 
+    super.key,
+    required this.idToken,
     required this.name,
+    this.overrideRole, 
   });
 
   @override
@@ -25,27 +26,23 @@ class _GooglePhoneLinkScreenState extends State<GooglePhoneLinkScreen> {
   final _authService = AuthService();
   bool _isLoading = false;
 
-  void _sendOTP() async {
-    final phone = _phoneController.text.trim();
-    if (!RegExp(r'^0(7|1)\d{8}$').hasMatch(phone) && !phone.startsWith('+254') && phone.length < 9) {
-      _showSnackBar("Please enter a valid phone number", Colors.redAccent);
+  void _submitPhone() async {
+    String phone = _phoneController.text.trim();
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please enter a valid phone number"), backgroundColor: Colors.red));
       return;
     }
 
     setState(() => _isLoading = true);
 
-    String formattedPhone = phone;
-    // Handle formats
-    if (formattedPhone.startsWith('0')) {
-      formattedPhone = '+254${formattedPhone.substring(1)}';
-    } else if (formattedPhone.startsWith('7') || formattedPhone.startsWith('1')) {
-      formattedPhone = '+254$formattedPhone';
-    } else if (!formattedPhone.startsWith('+')) {
-      formattedPhone = '+254$formattedPhone';
+    if (phone.startsWith('0')) {
+      phone = '+254${phone.substring(1)}';
+    } else if (!phone.startsWith('+')) {
+      phone = '+254$phone';
     }
 
     await _authService.sendPhoneOTP(
-      phoneNumber: formattedPhone,
+      phoneNumber: phone,
       onCodeSent: (verificationId) {
         setState(() => _isLoading = false);
         if (mounted) {
@@ -54,191 +51,107 @@ class _GooglePhoneLinkScreenState extends State<GooglePhoneLinkScreen> {
             MaterialPageRoute(
               builder: (_) => OtpVerificationScreen(
                 verificationId: verificationId,
-                phoneNumber: formattedPhone,
-                // 🔥 Pass all Google + Phone data so OTP screen can register them!
-                pendingGoogleData: {
-                  'idToken': widget.idToken,
-                  'phoneNumber': formattedPhone
+                phoneNumber: phone,
+                // 🔥 THE FIX: Removed the invalid parameter and securely packed the Google ID inside the map!
+                pendingRegistrationData: {
+                  'google_id_token': widget.idToken,
+                  if (widget.overrideRole != null) 'role': widget.overrideRole,
                 },
-              )
-            )
+              ),
+            ),
           );
         }
       },
       onError: (errorMsg) {
         setState(() => _isLoading = false);
-        if (mounted) _showSnackBar(errorMsg, Colors.redAccent);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMsg), backgroundColor: Colors.red));
+        }
       }
-    );
-  }
-
-  void _showSnackBar(String message, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w500)), 
-        backgroundColor: color,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        margin: const EdgeInsets.all(20),
-      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    // Determine theme colors based on role
+    Color primaryColor = widget.overrideRole == 'buyer' ? Colors.blue.shade800 : Colors.green.shade700;
+    Color lightColor = widget.overrideRole == 'buyer' ? Colors.blue.shade50 : Colors.green.shade50;
+
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
       child: Scaffold(
         backgroundColor: Colors.white,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+            icon: Icon(LucideIcons.arrowLeft, color: primaryColor),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
         body: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 🔥 Custom Floating Back Button
-              Padding(
-                padding: const EdgeInsets.only(left: 10, top: 10),
-                child: IconButton(
-                  icon: const Icon(LucideIcons.arrowLeft, color: Colors.black87),
-                  onPressed: () => Navigator.pop(context),
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.grey.shade50,
-                    padding: const EdgeInsets.all(12),
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 20),
+                FadeInDown(
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(color: lightColor, shape: BoxShape.circle),
+                    child: Icon(LucideIcons.smartphone, size: 50, color: primaryColor),
                   ),
                 ),
-              ),
-              
-              Expanded(
-                child: Center(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 32.0),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // 🔥 Premium Hero Graphic
-                        FadeInDown(
-                          child: Center(
-                            child: Container(
-                              padding: const EdgeInsets.all(24),
-                              decoration: BoxDecoration(
-                                color: Colors.green.shade50,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: Colors.green.shade100, width: 2)
-                              ),
-                              child: Stack(
-                                alignment: Alignment.bottomRight,
-                                children: [
-                                  Icon(LucideIcons.smartphone, size: 50, color: Colors.green.shade700),
-                                  Container(
-                                    padding: const EdgeInsets.all(4),
-                                    decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                                    child: const Icon(LucideIcons.link2, size: 16, color: Colors.blue),
-                                  )
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 30),
-                        
-                        // 🔥 Enhanced Typography
-                        FadeInDown(
-                          delay: const Duration(milliseconds: 100),
-                          child: Text(
-                            "Almost there, \n${widget.name.split(' ')[0]}!", 
-                            style: GoogleFonts.poppins(fontSize: 28, fontWeight: FontWeight.w800, height: 1.2, color: Colors.black87), 
-                            textAlign: TextAlign.center
-                          )
-                        ),
-                        const SizedBox(height: 12),
-                        FadeInDown(
-                          delay: const Duration(milliseconds: 200),
-                          child: Text(
-                            "Secure your MkulimaHub account by linking your active M-PESA phone number.", 
-                            style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 14), 
-                            textAlign: TextAlign.center
-                          )
-                        ),
-                        const SizedBox(height: 40),
-                        
-                        // 🔥 Modern Input Field
-                        FadeInUp(
-                          delay: const Duration(milliseconds: 300),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade50,
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: Colors.grey.shade200, width: 1.5),
-                            ),
-                            child: TextField(
-                              controller: _phoneController,
-                              keyboardType: TextInputType.phone,
-                              style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.5),
-                              decoration: InputDecoration(
-                                hintText: "712 345 678",
-                                hintStyle: GoogleFonts.poppins(color: Colors.grey.shade400, fontWeight: FontWeight.w500, letterSpacing: 1.5),
-                                prefixIcon: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(LucideIcons.phone, color: Colors.green.shade600, size: 20),
-                                      const SizedBox(width: 10),
-                                      Text("+254", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16)),
-                                      const SizedBox(width: 10),
-                                      Container(height: 24, width: 1.5, color: Colors.grey.shade300),
-                                    ],
-                                  ),
-                                ),
-                                border: InputBorder.none,
-                                contentPadding: const EdgeInsets.symmetric(vertical: 18),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 30),
-                        
-                        // 🔥 Gradient Premium Button (Matches OTP Screen)
-                        FadeInUp(
-                          delay: const Duration(milliseconds: 400),
-                          child: SizedBox(
-                            height: 60,
-                            child: ElevatedButton(
-                              onPressed: _isLoading ? null : _sendOTP,
-                              style: ElevatedButton.styleFrom(
-                                padding: EdgeInsets.zero,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                elevation: 0,
-                              ),
-                              child: Ink(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(colors: [Colors.green.shade600, Colors.green.shade800]),
-                                  borderRadius: BorderRadius.circular(16),
-                                  boxShadow: [BoxShadow(color: Colors.green.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))]
-                                ),
-                                child: Container(
-                                  alignment: Alignment.center,
-                                  child: _isLoading 
-                                    ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-                                    : Row(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        children: [
-                                          Text("Send Code", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1.1)),
-                                          const SizedBox(width: 8),
-                                          const Icon(LucideIcons.arrowRight, color: Colors.white, size: 18),
-                                        ],
-                                      ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                const SizedBox(height: 30),
+                FadeInUp(
+                  delay: const Duration(milliseconds: 100),
+                  child: Text("Link Your Phone", style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87), textAlign: TextAlign.center),
+                ),
+                const SizedBox(height: 10),
+                FadeInUp(
+                  delay: const Duration(milliseconds: 200),
+                  child: Text("Welcome ${widget.name.split(' ')[0]}! Please enter your phone number to secure your account and enable SMS alerts.", style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey.shade600, height: 1.5), textAlign: TextAlign.center),
+                ),
+                const SizedBox(height: 40),
+                FadeInUp(
+                  delay: const Duration(milliseconds: 300),
+                  child: TextFormField(
+                    controller: _phoneController,
+                    keyboardType: TextInputType.phone,
+                    style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600),
+                    decoration: InputDecoration(
+                      labelText: "Phone Number",
+                      hintText: "e.g. 0712345678",
+                      prefixIcon: Icon(LucideIcons.phone, color: primaryColor),
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: Colors.grey.shade200)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: Colors.grey.shade200)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: primaryColor, width: 2)),
                     ),
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 30),
+                FadeInUp(
+                  delay: const Duration(milliseconds: 400),
+                  child: SizedBox(
+                    height: 60,
+                    child: ElevatedButton(
+                      onPressed: _isLoading ? null : _submitPhone,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryColor,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        elevation: 4,
+                      ),
+                      child: _isLoading
+                          ? const CircularProgressIndicator(color: Colors.white)
+                          : Text("Send Verification Code", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

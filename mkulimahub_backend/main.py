@@ -1513,11 +1513,31 @@ def update_squad_delivery_status(bulk_request_id: int, payload: SquadStatusUpdat
     db.commit()
     return {"message": f"Squad delivery marked as {payload.status}!"}
 
+class QAUpdate(BaseModel):
+    status: str
+    notes: Optional[str] = None
+
+@app.put("/api/buyer/pledges/{pledge_id}/qa")
+def update_qa_status(pledge_id: int, payload: QAUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Allows Corporate Buyer to perform Quality Assurance on arrived goods WITHOUT releasing Escrow yet."""
+    pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
+    if not pledge:
+        raise HTTPException(status_code=404, detail="Pledge not found.")
+        
+    contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == pledge.bulk_request_id).first()
+    if contract.buyer_name != current_user.full_name:
+        raise HTTPException(status_code=403, detail="Unauthorized. Only the contracted buyer can perform QA.")
+
+    pledge.status = payload.status
+    if payload.notes:
+        pledge.notes = payload.notes
+        
+    db.commit()
+    return {"message": "Quality Assurance complete."}
+
 @app.get("/api/buyer/dashboard")
 def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Aggregates data for the Corporate Buyer's Procurement Dashboard."""
-    
-    # 🔥 MATCHED TO YOUR SCHEMA: Filtering by buyer_name instead of buyer_id
+    """Aggregates data for the Corporate Buyer's Procurement Dashboard (now includes Roster!)."""
     contracts = db.query(models.BulkRequest).filter(models.BulkRequest.buyer_name == current_user.full_name).all()
     
     total_capital_committed = 0
@@ -1528,13 +1548,25 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
         pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == contract.id).all()
         total_pledged_kg = sum(p.pledged_weight_kg for p in pledges if p.pledged_weight_kg)
         
-        # 🔥 MATCHED TO YOUR SCHEMA: Using target_weight_kg
         contract_value = contract.target_weight_kg * contract.price_per_kg
         total_capital_committed += contract_value
         total_tonnage_requested += contract.target_weight_kg
         
         progress_pct = (total_pledged_kg / contract.target_weight_kg) if contract.target_weight_kg > 0 else 0
         
+        # 🔥 Attach the Roster for Quality Assurance Tracking!
+        roster = []
+        for p in pledges:
+            farmer = db.query(models.User).filter(models.User.id == p.farmer_id).first()
+            roster.append({
+                "pledge_id": p.id,
+                "farmer_name": farmer.full_name if farmer else "Unknown",
+                "pledged_kg": p.pledged_weight_kg,
+                "actual_kg": p.actual_weight_kg or p.pledged_weight_kg,
+                "status": p.status,
+                "notes": p.notes
+            })
+            
         active_contracts.append({
             "contract_id": contract.id,
             "crop_name": contract.crop_name,
@@ -1542,7 +1574,8 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
             "pledged_weight_kg": total_pledged_kg,
             "price_per_kg": contract.price_per_kg,
             "progress_percentage": min(progress_pct, 1.0),
-            "status": "fulfilled" if total_pledged_kg >= contract.target_weight_kg else "active"
+            "status": "fulfilled" if total_pledged_kg >= contract.target_weight_kg else "active",
+            "roster": roster # ✨ Send it to Flutter!
         })
         
     return {
@@ -2159,6 +2192,54 @@ def create_market_order(listing_id: int, payload: MarketOrderCreate, db: Session
         
     db.commit()
     return {"message": "Order placed successfully!"}
+
+@app.get("/api/market/listings")
+def get_all_market_listings(db: Session = Depends(get_db)):
+    """Fetches all active individual farmer listings for the Buyer Marketplace."""
+    
+    # Grab all listings to avoid SQL filter bugs, we will filter them safely in Python!
+    listings = db.query(models.MarketListing).all()
+    results = []
+    
+    for listing in listings:
+        # Skip if explicitly sold out
+        if listing.available_kg is not None and listing.available_kg <= 0:
+            continue
+
+        display_price = listing.price_per_kg
+        display_unit = "KG"
+        
+        # 🔥 THE FIX: Safe JSON Parsing to prevent SQLite string crashes!
+        parsed_units = []
+        if listing.unit_pricing:
+            if isinstance(listing.unit_pricing, str):
+                try:
+                    parsed_units = json.loads(listing.unit_pricing)
+                except:
+                    pass
+            else:
+                parsed_units = listing.unit_pricing
+                
+        # Use the parsed data to get the price
+        if not listing.is_selling_by_weight and parsed_units and len(parsed_units) > 0:
+            display_price = parsed_units[0].get("price", 0)
+            display_unit = parsed_units[0].get("unit_name", "Unit")
+            
+        results.append({
+            "id": listing.id,
+            "crop_name": listing.crop_name,
+            # Fallback to weight_kg if available_kg is null
+            "available_kg": listing.available_kg if listing.available_kg is not None else getattr(listing, 'weight_kg', 0),
+            "price_per_kg": display_price, 
+            "unit_type": display_unit,
+            "is_selling_by_weight": listing.is_selling_by_weight,
+            "unit_pricing": parsed_units, # Send the clean array back to Flutter!
+            "image_base64": getattr(listing, 'image_base64', None),
+            "farmer_name": listing.farmer.full_name if listing.farmer else "Local Farmer",
+            "county": listing.farmer.county if listing.farmer else "Kenya"
+        })
+        
+    return results
 
 @app.put("/api/squads/{squad_id}/delegate")
 def delegate_coordinator(squad_id: int, new_coordinator_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
