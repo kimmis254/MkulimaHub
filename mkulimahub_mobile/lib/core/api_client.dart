@@ -1151,4 +1151,63 @@ class ApiClient {
       return "Connection error.";
     }
   }
+
+  Future<String?> delegateCoordinator(int squadId, int newCoordinatorId) async {
+    return _put('/api/squads/$squadId/delegate?new_coordinator_id=$newCoordinatorId', {});
+  }
+
+  Future<String?> receiveLineItem(int pledgeId, double actualWeight, String notes) async {
+    return _put('/api/pledges/$pledgeId/receive-line-item', {
+      "actual_weight_kg": actualWeight,
+      "notes": notes
+    });
+  }
+
+  Future<String?> updateMarketListing(int listingId, double availableKg, double? pricePerKg, List<Map<String, dynamic>> unitPricing) async {
+    return _put('/api/market/listings/$listingId', {
+      "available_kg": availableKg,
+      "price_per_kg": pricePerKg,
+      "unit_pricing": unitPricing
+    });
+  }
+
+  Future<String?> deleteMarketListing(int listingId) async {
+    final token = await getToken();
+    if (token == null) return "Authentication required";
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/market/listings/$listingId'),
+        headers: {"Authorization": "Bearer $token"},
+      );
+      if (response.statusCode == 200) return null; // Success!
+      return jsonDecode(response.body)['detail'] ?? "Failed to delete listing.";
+    } catch (e) {
+      return "Connection error.";
+    }
+  }
+  
+  Future<String?> _put(String endpoint, Map<String, dynamic> body) async {
+    try {
+      // 🔥 THE FIX: Use your universal getToken() method so the key is always correct!
+      final token = await getToken(); 
+
+      final response = await http.put(
+        Uri.parse('$baseUrl$endpoint'), 
+        headers: {
+          'Content-Type': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token', // The badge is attached!
+        },
+        body: jsonEncode(body),
+      );
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null; // Success!
+      } else {
+        final decoded = jsonDecode(response.body);
+        return decoded['detail'] ?? 'An error occurred during update.';
+      }
+    } catch (e) {
+      return 'Connection error. Please check your internet.';
+    }
+  }
 }

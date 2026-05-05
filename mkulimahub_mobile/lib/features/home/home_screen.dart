@@ -1,4 +1,4 @@
-import 'dart:convert'; // 🔥 ADDED FOR BASE64 IMAGE DECODING
+import 'dart:convert'; 
 import 'dart:ui';
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
@@ -13,7 +13,6 @@ import 'package:mkulimahub_mobile/features/home/contracts_screen.dart';
 import 'package:mkulimahub_mobile/features/home/ai_chat_screen.dart';
 import 'package:mkulimahub_mobile/features/home/my_deliveries_screen.dart';
 import 'package:mkulimahub_mobile/features/home/delivery_squads_screen.dart';
-
 
 final GlobalKey<FarmerDashboardViewState> dashboardKey = GlobalKey<FarmerDashboardViewState>();
 
@@ -69,12 +68,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   _buildNavItem(0, LucideIcons.layoutDashboard, "Home"),
                   _buildNavItem(1, LucideIcons.network, "Hubs"),
                   
-                  // Center Action Button
                   GestureDetector(
                     onTap: () async {
                       final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddHarvestScreen()));
                       if (result == true) {
-                        dashboardKey.currentState?.loadHarvests(); 
+                        dashboardKey.currentState?._loadDashboardData(); 
                         if (_selectedIndex != 0) setState(() => _selectedIndex = 0);
                       }
                     },
@@ -135,9 +133,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// ==========================================
-// 🔥 THE UPGRADED FARMER COMMAND CENTER
-// ==========================================
 class FarmerDashboardView extends StatefulWidget {
   const FarmerDashboardView({super.key});
   @override
@@ -149,6 +144,8 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
   
   List<dynamic> _myListings = []; 
   List<dynamic> _activeBulkRequests = []; 
+  List<dynamic> _myHubPools = []; 
+  
   bool _isLoading = true;
   String _userName = "Farmer";
 
@@ -160,14 +157,8 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
 
   String _getGreeting() {
     final hour = DateTime.now().hour;
-    
-    // From 4:00 AM to 11:59 AM
     if (hour >= 4 && hour < 12) return "Good Morning,";
-    
-    // From 12:00 PM to 4:59 PM
     if (hour >= 12 && hour < 17) return "Good Afternoon,";
-    
-    // From 5:00 PM all the way through the night until 3:59 AM!
     return "Good Evening,"; 
   }
 
@@ -179,50 +170,49 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
       setState(() => _userName = profile['full_name']?.split(' ')[0] ?? "Farmer");
     }
 
-    await Future.wait([
-      loadHarvests(),
-      _loadBulkRequests(),
+    final results = await Future.wait([
+      _apiClient.getMyHarvests(),
+      _apiClient.getActiveBulkRequests(),
+      _apiClient.getMyPledges(),
     ]);
 
-    if (mounted) setState(() => _isLoading = false);
-  }
-
-  Future<void> loadHarvests() async {
-    final data = await _apiClient.getMyHarvests();
     if (mounted) {
       setState(() {
-        _myListings = data;
-      });
-    }
-  }
-
-  Future<void> _loadBulkRequests() async {
-    final data = await _apiClient.getActiveBulkRequests();
-    if (mounted) {
-      setState(() {
-        // 🔥 THE FIX: Hide contracts that are 100% full if the user isn't in them!
-        _activeBulkRequests = data.where((req) {
+        _myListings = results[0] as List<dynamic>;
+        
+        final bulkData = results[1] as List<dynamic>;
+        _activeBulkRequests = bulkData.where((req) {
            double target = (req['target_weight_kg'] ?? 1).toDouble();
            double pledged = (req['total_pledged'] ?? 0).toDouble();
            bool hasPledged = req['has_pledged'] == true;
-           
            return (pledged < target) || hasPledged; 
         }).toList();
+
+        final pledgesData = results[2] as List<dynamic>;
+        _myHubPools = pledgesData.where((p) {
+           final br = p['bulk_request'];
+           if (br == null) return false;
+           final isPool = br['buyer_name'].toString().toLowerCase().contains('hub pool');
+           final status = p['status']?.toString().toLowerCase() ?? '';
+           final isCompleted = status == 'completed' || status == 'paid';
+           return isPool && !isCompleted; 
+        }).toList();
+
+        _isLoading = false;
       });
     }
   }
 
-  // 🔥 1. IMAGE DECODER
-  Widget _buildListingImage(Map<String, dynamic> listing) {
-    if (listing['image_base64'] != null && listing['image_base64'].toString().isNotEmpty) {
+  Widget _buildListingImage(Map<String, dynamic> item, String fallbackCropName) {
+    if (item['image_base64'] != null && item['image_base64'].toString().isNotEmpty) {
       try {
-        final base64String = listing['image_base64'].toString().split(',').last;
+        final base64String = item['image_base64'].toString().split(',').last;
         return Image.memory(base64Decode(base64String), fit: BoxFit.cover, width: double.infinity, height: double.infinity);
       } catch (e) {
         debugPrint("Image decode error: $e");
       }
     }
-    return Image.network(_getImageForCrop(listing['crop_name'] ?? ''), fit: BoxFit.cover, width: double.infinity, height: double.infinity);
+    return Image.network(_getImageForCrop(fallbackCropName), fit: BoxFit.cover, width: double.infinity, height: double.infinity);
   }
 
   String _formatCropName(String rawName) {
@@ -238,16 +228,14 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
     if (name.contains('maize') || name.contains('corn')) return 'https://images.unsplash.com/photo-1551754655-cd27e38d2076?w=500';
     if (name.contains('bean')) return 'https://images.unsplash.com/photo-1551489186-cf8726f514f8?w=500';
     if (name.contains('mango')) return 'https://images.unsplash.com/photo-1553279768-865429fa0078?w=500';
-    if (name.contains('avocado')) return 'https://images.unsplash.com/photo-1519996529931-28324d5a630e?w=500'; // 🔥 BULLETPROOF LINK FIXED
+    if (name.contains('avocado')) return 'https://images.unsplash.com/photo-1519996529931-28324d5a630e?w=500'; 
     return 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500';
   }
 
-  // PLEDGE SHEET
   void _showPledgeSheet(Map<String, dynamic> request) {
     final TextEditingController weightController = TextEditingController();
     bool isSubmitting = false;
 
-    // 🔥 CALCULATE REMAINING MATH
     double targetWeight = (request['target_weight_kg'] ?? 1.0).toDouble();
     double totalPledged = (request['total_pledged'] ?? 0).toDouble();
     double remainingAmount = targetWeight - totalPledged;
@@ -269,26 +257,19 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                   Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
                   const SizedBox(height: 20),
                   Text("Join Delivery Squad", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
-                  
-                  // 🔥 DISPLAY REMAINING
                   Text("Remaining needed: ${remainingAmount.toStringAsFixed(0)} kg", style: GoogleFonts.poppins(fontSize: 14, color: Colors.green.shade700, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 20),
-                  
                   Text("How much can you contribute?", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
                   const SizedBox(height: 8),
                   TextField(
                     controller: weightController,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     decoration: InputDecoration(
-                      labelText: "Pledge Weight (KG)",
-                      filled: true,
-                      fillColor: Colors.grey.shade50,
+                      labelText: "Pledge Weight (KG)", filled: true, fillColor: Colors.grey.shade50,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                     ),
                   ),
                   const SizedBox(height: 15),
-
-                  // 🔥 ADDED QUICK-ADD CHIPS TO MATCH CONTRACTS SCREEN
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Row(
@@ -296,8 +277,7 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                         padding: const EdgeInsets.only(right: 10),
                         child: ActionChip(
                           label: Text("+$amount kg", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 12)),
-                          backgroundColor: Colors.green.shade50,
-                          side: BorderSide(color: Colors.green.shade200),
+                          backgroundColor: Colors.green.shade50, side: BorderSide(color: Colors.green.shade200),
                           onPressed: () {
                             double current = double.tryParse(weightController.text) ?? 0;
                             weightController.text = (current + amount).toStringAsFixed(0);
@@ -307,24 +287,18 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                     ),
                   ),
                   const SizedBox(height: 25),
-                  
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: isSubmitting ? null : () async {
                         final double? weight = double.tryParse(weightController.text);
                         if (weight == null || weight <= 0) return;
-
-                        // 🔥 BLOCK OVER-PLEDGING FIREWALL
                         if (weight > remainingAmount) {
                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("You cannot pledge more than the remaining limit (${remainingAmount.toStringAsFixed(0)} kg)"), backgroundColor: Colors.red));
                           return;
                         }
-
                         setSheetState(() => isSubmitting = true);
-                        
                         final error = await _apiClient.createPledge(request['id'], weight);
-                        
                         if (mounted) {
                           Navigator.pop(context);
                           if (error == null) {
@@ -335,14 +309,8 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                           }
                         }
                       },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange.shade600,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      child: isSubmitting 
-                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                          : Text("Confirm Pledge", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade600, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      child: isSubmitting ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : Text("Confirm Pledge", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
                     ),
                   )
                 ],
@@ -354,132 +322,228 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
     );
   }
 
-  // 🔥 2. COMPREHENSIVE MANAGER
+  // 🔥 CUSTOM PREMIUM EDITABLE CARD WIDGET
+  Widget _buildEditableCard({
+    required String title,
+    String? subtitle,
+    required IconData icon,
+    required TextEditingController controller,
+    String? suffix,
+    String? prefix,
+    required MaterialColor color,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 15),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.shade100, width: 1.5),
+        boxShadow: [BoxShadow(color: color.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: color.shade50, shape: BoxShape.circle),
+            child: Icon(icon, color: color.shade700, size: 20),
+          ),
+          const SizedBox(width: 15),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
+                if (subtitle != null)
+                  Text(subtitle, style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 11)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 15),
+          SizedBox(
+            width: 110,
+            child: TextField(
+              controller: controller,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              textAlign: TextAlign.center,
+              style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: color.shade900),
+              decoration: InputDecoration(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                prefixText: prefix,
+                suffixText: suffix,
+                filled: true,
+                fillColor: color.shade50.withOpacity(0.6),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 🔥 COMPLETELY REDESIGNED LISTING MANAGER
   void _showManageListingSheet(Map<String, dynamic> listing) {
+    // Inventory
     final TextEditingController inventoryController = TextEditingController(text: (listing['available_kg'] ?? 0).toString());
+    
+    // Pricing
+    final TextEditingController wholesalePriceController = TextEditingController(text: (listing['price_per_kg'] ?? 0).toString());
+    
+    // 🔥 THE JSON FIX: Safely parse unit_pricing whether it's a String or an Array
+    List<dynamic> parsedUnits = [];
+    if (listing['unit_pricing'] is String) {
+      try { parsedUnits = jsonDecode(listing['unit_pricing']); } catch (_) {}
+    } else if (listing['unit_pricing'] is List) {
+      parsedUnits = listing['unit_pricing'];
+    }
+    
+    List<Map<String, dynamic>> unitPricing = List<Map<String, dynamic>>.from(parsedUnits.map((e) => Map<String, dynamic>.from(e)));
+    
+    // Create controllers for every single unit type provided!
+    final Map<String, TextEditingController> unitPriceControllers = {};
+    for (var unit in unitPricing) {
+      unitPriceControllers[unit['unit_name']] = TextEditingController(text: unit['price'].toString());
+    }
+
     bool isSubmitting = false;
     String cleanDisplayTitle = _formatCropName(listing['crop_name'] ?? 'Produce');
     List<dynamic> orders = listing['orders'] ?? [];
-    List<dynamic> unitPricing = listing['unit_pricing'] ?? [];
 
     showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
+      context: context, 
+      isScrollControlled: true, 
       backgroundColor: Colors.transparent, 
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
             return Container(
-              height: MediaQuery.of(context).size.height * 0.85, 
-              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 16, right: 16, top: 20),
+              height: MediaQuery.of(context).size.height * 0.88, 
+              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 20, right: 20, top: 20),
               decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(30))),
               child: SingleChildScrollView(
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
                     const SizedBox(height: 20),
                     
                     // 1. Premium Image Header
                     Container(
-                      height: 120, width: double.infinity,
-                      decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), color: Colors.black),
+                      height: 120, width: double.infinity, decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), color: Colors.black),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(20),
                         child: Stack(
                           fit: StackFit.expand,
                           children: [
-                            _buildListingImage(listing), 
+                            _buildListingImage(listing, listing['crop_name'] ?? ''), 
                             Container(color: Colors.black.withOpacity(0.4)),
                             Center(child: Text(cleanDisplayTitle, style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1))),
                           ],
                         ),
                       ),
                     ),
-                    const SizedBox(height: 20),
-                    
-                    // 2. Comprehensive Pricing Overview
-                    Text("Your Selling Formats", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-                    const SizedBox(height: 10),
-                    if (listing['is_selling_by_weight'] == true)
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(LucideIcons.scale, color: Colors.green),
-                        title: Text("Wholesale (By the KG)", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600)),
-                        trailing: Text("KES ${listing['price_per_kg'] ?? 0}/KG", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.green.shade700)),
-                      ),
-                    ...unitPricing.map((unit) => ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(LucideIcons.box, color: Colors.orange),
-                      title: Text("${unit['unit_name']} (${unit['kg']} KG)", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600)),
-                      trailing: Text("KES ${unit['price']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.orange.shade700)),
-                    )),
-                    const Divider(height: 30),
-                    
-                    // 3. Edit Inventory
-                    Text("Adjust Remaining Inventory", style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87)),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: inventoryController,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        prefixIcon: const Icon(LucideIcons.edit3, color: Colors.green),
-                        suffixText: "KG",
-                        filled: true, fillColor: Colors.green.shade50,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-                      ),
-                    ),
                     const SizedBox(height: 25),
 
-                    // Action Button
+                    // 2. Editable Inventory Card
+                    Text("Manage Inventory", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+                    const SizedBox(height: 10),
+                    _buildEditableCard(
+                      title: "Available Stock",
+                      subtitle: "Total weight remaining",
+                      icon: LucideIcons.boxes,
+                      controller: inventoryController,
+                      suffix: " KG",
+                      color: Colors.green
+                    ),
+                    const SizedBox(height: 15),
+
+                    // 3. Editable Pricing Formats
+                    Text("Edit Selling Formats", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+                    const SizedBox(height: 10),
+                    
+                    if (listing['is_selling_by_weight'] == true)
+                      _buildEditableCard(
+                        title: "Wholesale Rate",
+                        subtitle: "Per Kilogram",
+                        icon: LucideIcons.scale,
+                        controller: wholesalePriceController,
+                        prefix: "KES ",
+                        color: Colors.blue
+                      ),
+                    
+                    ...unitPricing.map((unit) {
+                      String uName = unit['unit_name'];
+                      return _buildEditableCard(
+                        title: uName,
+                        subtitle: "Equivalent to ${unit['kg']} KG",
+                        icon: LucideIcons.boxSelect,
+                        controller: unitPriceControllers[uName]!,
+                        prefix: "KES ",
+                        color: Colors.orange
+                      );
+                    }),
+                    
+                    const SizedBox(height: 20),
+                    
+                    // 4. Save Changes Button
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
                         onPressed: isSubmitting ? null : () async {
                           setSheetState(() => isSubmitting = true);
-                          await Future.delayed(const Duration(seconds: 1)); // Simulate API Call
+                          
+                          // 🔥 1. Gather all the new inputted numbers!
+                          final newInventory = double.tryParse(inventoryController.text) ?? 0;
+                          final newWholesalePrice = double.tryParse(wholesalePriceController.text);
+                          
+                          List<Map<String, dynamic>> updatedUnits = [];
+                          for (var unit in unitPricing) {
+                            updatedUnits.add({
+                              "unit_name": unit['unit_name'],
+                              "kg": unit['kg'],
+                              "price": double.tryParse(unitPriceControllers[unit['unit_name']]!.text) ?? unit['price'],
+                            });
+                          }
+
+                          // 🔥 2. Send it to the real backend!
+                          final error = await _apiClient.updateMarketListing(listing['id'], newInventory, newWholesalePrice, updatedUnits);
+                          
                           if (mounted) {
                             Navigator.pop(context);
-                            loadHarvests();
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Inventory updated successfully!"), backgroundColor: Colors.green));
+                            if (error == null) {
+                              _loadDashboardData(); // Refresh the grid!
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Listing updated successfully!"), backgroundColor: Colors.green));
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                            }
                           }
                         },
-                        icon: const Icon(LucideIcons.save, size: 16, color: Colors.white),
+                        icon: const Icon(LucideIcons.save, size: 16, color: Colors.white), 
                         label: Text("Save Changes", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.white)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green.shade700,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))
-                        ),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
                       ),
                     ),
-                    const SizedBox(height: 30),
-
-                    // 4. THE SPECIFIC ORDERS LIST (DEEP LINKING)
+                    const SizedBox(height: 35),
+                    
+                    // 5. Orders List
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text("Active Orders", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(color: Colors.orange.shade100, borderRadius: BorderRadius.circular(12)),
-                          child: Text("${orders.length} Pending", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.orange.shade800, fontSize: 12)),
-                        )
+                        Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Colors.orange.shade100, borderRadius: BorderRadius.circular(12)), child: Text("${orders.length} Pending", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.orange.shade800, fontSize: 12)))
                       ],
                     ),
                     const SizedBox(height: 10),
                     
                     if (orders.isEmpty)
                       Container(
-                        padding: const EdgeInsets.all(20), width: double.infinity,
-                        decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.shade200)),
+                        padding: const EdgeInsets.all(20), width: double.infinity, decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.shade200)),
                         child: Text("No orders for this listing yet.", textAlign: TextAlign.center, style: GoogleFonts.poppins(color: Colors.grey.shade500)),
                       )
                     else
                       ...orders.map((order) => Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.orange.shade200)),
+                        margin: const EdgeInsets.only(bottom: 10), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.orange.shade200)),
                         child: ListTile(
                           leading: CircleAvatar(backgroundColor: Colors.orange.shade50, child: const Icon(LucideIcons.user, color: Colors.orange)),
                           title: Text(order['buyer_name'], style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
@@ -491,22 +555,43 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                           },
                         ),
                       )),
-                    
-                    const SizedBox(height: 20),
-                    
-                    // 🔥 5. THE RESTORED DELETE BUTTON
+                      
+                    const SizedBox(height: 30),
                     Center(
                       child: TextButton.icon(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          // Optional: Add an API call here to actually delete/hide the listing on the backend
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Listing removed from market."), backgroundColor: Colors.red));
+                        onPressed: () async {
+                          // 🔥 Add an explicit confirmation dialog before wiping out their data
+                          bool confirm = await showDialog(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text("Delete Listing?"),
+                              content: const Text("Are you sure you want to permanently remove this listing from the marketplace?"),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+                                TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Yes, Delete", style: TextStyle(color: Colors.red))),
+                              ]
+                            )
+                          ) ?? false;
+                          
+                          if (confirm) {
+                            Navigator.pop(context); // Close the Bottom Sheet
+                            
+                            // 🔥 Send the real Delete command to the API
+                            final error = await _apiClient.deleteMarketListing(listing['id']);
+                            if (mounted) {
+                               if (error == null) {
+                                 _loadDashboardData(); // Instantly removes it from the screen!
+                                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Listing removed from market."), backgroundColor: Colors.red));
+                               } else {
+                                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                               }
+                            }
+                          }
                         },
-                        icon: const Icon(LucideIcons.trash2, size: 16, color: Colors.red),
+                        icon: const Icon(LucideIcons.trash2, size: 16, color: Colors.red), 
                         label: Text("Remove Listing (Sold out/Spoiled)", style: GoogleFonts.poppins(color: Colors.red, fontSize: 13, fontWeight: FontWeight.w600)),
                       ),
                     ),
-                    
                     const SizedBox(height: 30),
                   ],
                 ),
@@ -524,7 +609,6 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
       backgroundColor: Colors.grey.shade50,
       body: CustomScrollView(
         slivers: [
-          // 🔥 PREMIUM HEADER
           SliverToBoxAdapter(
             child: Container(
               padding: const EdgeInsets.only(top: 50, left: 20, right: 20, bottom: 35),
@@ -543,11 +627,7 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                         children: [
                           BouncyButton(
                             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen())),
-                            child: CircleAvatar(
-                              radius: 22,
-                              backgroundColor: Colors.white.withOpacity(0.2), 
-                              child: const Icon(LucideIcons.user, color: Colors.white, size: 22)
-                            ),
+                            child: CircleAvatar(radius: 22, backgroundColor: Colors.white.withOpacity(0.2), child: const Icon(LucideIcons.user, color: Colors.white, size: 22)),
                           ),
                           const SizedBox(width: 12),
                           Column(
@@ -563,33 +643,23 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                         children: [
                           BouncyButton(
                             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyDeliveriesScreen())),
-                            child: Container(
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(color: Colors.orange.withOpacity(0.2), shape: BoxShape.circle),
-                              child: const Icon(LucideIcons.packageSearch, color: Colors.orangeAccent, size: 22),
-                            ),
+                            child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.orange.withOpacity(0.2), shape: BoxShape.circle), child: const Icon(LucideIcons.packageSearch, color: Colors.orangeAccent, size: 22)),
                           ),
                           const SizedBox(width: 10),
                           BouncyButton(
                             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AiChatScreen())),
-                            child: Container(
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
-                              child: const Icon(LucideIcons.bot, color: Colors.white, size: 22),
-                            ),
+                            child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle), child: const Icon(LucideIcons.bot, color: Colors.white, size: 22)),
                           ),
                         ],
                       ),
                     ],
                   ),
                   const SizedBox(height: 25),
-                  
-                  // 🔥 QUICK STATS CARDS
                   Row(
                     children: [
-                      _buildStatCard("Active Listings", _myListings.length.toString(), LucideIcons.layoutList),
+                      _buildStatCard("Active Market", _myListings.length.toString(), LucideIcons.layoutList),
                       const SizedBox(width: 15),
-                      _buildStatCard("Open Requests", _activeBulkRequests.length.toString(), LucideIcons.flame),
+                      _buildStatCard("Active Hub Pools", _myHubPools.length.toString(), LucideIcons.users),
                     ],
                   )
                 ],
@@ -597,7 +667,6 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
             ),
           ),
           
-          // 🔥 HOT BULK REQUESTS (Opportunities)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.only(top: 25, bottom: 15),
@@ -624,21 +693,13 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                   else if (_activeBulkRequests.isEmpty)
                      Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(16)),
-                        child: Text("No corporate requests posted yet today.", style: GoogleFonts.poppins(color: Colors.orange.shade800), textAlign: TextAlign.center),
-                      ),
+                      child: Container(width: double.infinity, padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(16)), child: Text("No corporate requests posted yet today.", style: GoogleFonts.poppins(color: Colors.orange.shade800), textAlign: TextAlign.center)),
                     )
                   else
                     SizedBox(
                       height: 185, 
                       child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: _activeBulkRequests.length,
-                        physics: const BouncingScrollPhysics(),
+                        scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 16), itemCount: _activeBulkRequests.length, physics: const BouncingScrollPhysics(),
                         itemBuilder: (context, index) {
                           final req = _activeBulkRequests[index];
                           return FadeInRight(
@@ -646,27 +707,15 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                             child: GestureDetector(
                               onTap: () => _showPledgeSheet(req),
                               child: Container(
-                                width: 260,
-                                margin: const EdgeInsets.only(right: 15),
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(color: Colors.orange.shade100, width: 1.5),
-                                  boxShadow: [BoxShadow(color: Colors.orange.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 5))]
-                                ),
+                                width: 260, margin: const EdgeInsets.only(right: 15), padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.orange.shade100, width: 1.5), boxShadow: [BoxShadow(color: Colors.orange.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 5))]),
                                 child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
                                     Row(
                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                          decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(8)),
-                                          child: Text("High Priority", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontSize: 10, fontWeight: FontWeight.bold)),
-                                        ),
+                                        Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(8)), child: Text("High Priority", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontSize: 10, fontWeight: FontWeight.bold))),
                                         Icon(LucideIcons.flame, color: Colors.orange.shade400, size: 18),
                                       ],
                                     ),
@@ -680,28 +729,16 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                                     ),
                                     const SizedBox(height: 8),
                                     SizedBox(
-                                      width: double.infinity,
-                                      height: 38,
+                                      width: double.infinity, height: 38,
                                       child: req['has_pledged'] == true
                                           ? ElevatedButton(
-                                              onPressed: () async {
-                                                await Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: req['id'])));
-                                                if (mounted) _loadDashboardData();
-                                              },
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: Colors.purple.shade50,
-                                                elevation: 0,
-                                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                              ),
+                                              onPressed: () async { await Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: req['id']))); if (mounted) _loadDashboardData(); },
+                                              style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade50, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
                                               child: Text("View Squad", style: GoogleFonts.poppins(color: Colors.purple.shade800, fontWeight: FontWeight.bold, fontSize: 12)),
                                             )
                                           : ElevatedButton(
                                               onPressed: () => _showPledgeSheet(req),
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: Colors.orange.shade50,
-                                                elevation: 0,
-                                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                              ),
+                                              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade50, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
                                               child: Text("Join Squad", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 12)),
                                             ),
                                     )
@@ -718,18 +755,17 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
             ),
           ),
 
-          // 🔥 MY ACTIVE LISTINGS HEADER
+          // 🔥 UNIFIED ACTIVE LISTINGS & HUB POOLS HEADER
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.only(left: 20, right: 20, top: 15, bottom: 15),
-              child: Text("My Active Listings", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+              child: Text("My Market & Hub Pools", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
             ),
           ),
           
-          // 🔥 4. INTERACTIVE HARVEST GRID
           if (_isLoading)
             const SliverFillRemaining(child: Center(child: CircularProgressIndicator(color: Colors.green)))
-          else if (_myListings.isEmpty)
+          else if (_myListings.isEmpty && _myHubPools.isEmpty)
             SliverToBoxAdapter(
               child: Center(
                 child: Padding(
@@ -738,7 +774,7 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                     children: [
                       Icon(LucideIcons.store, size: 50, color: Colors.grey.shade300),
                       const SizedBox(height: 10),
-                      Text("You have no active listings.", style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 14)),
+                      Text("You have no active listings or pools.", style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 14)),
                     ],
                   ),
                 )
@@ -749,107 +785,162 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
               padding: const EdgeInsets.symmetric(horizontal: 20),
               sliver: SliverGrid(
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2, 
-                  childAspectRatio: 0.72,
-                  crossAxisSpacing: 15, 
-                  mainAxisSpacing: 15
+                  crossAxisCount: 2, childAspectRatio: 0.72, crossAxisSpacing: 15, mainAxisSpacing: 15
                 ),
                 delegate: SliverChildBuilderDelegate((context, index) {
-                  final listing = _myListings[index];
-                  String cleanDisplayTitle = _formatCropName(listing['crop_name'] ?? 'Crop');
                   
-                  final currentInventory = listing['available_kg'] ?? listing['weight_kg'] ?? 0;
-                  final unit = listing['unit_type'] ?? 'KG';
-                  final price = listing['price_per_unit'] ?? listing['price_per_kg'] ?? 0;
-                  
-                  bool hasNewOrder = (listing['orders_count'] ?? 0) > 0;
+                  if (index < _myListings.length) {
+                    final listing = _myListings[index];
+                    String cleanDisplayTitle = _formatCropName(listing['crop_name'] ?? 'Crop');
+                    final currentInventory = listing['available_kg'] ?? listing['weight_kg'] ?? 0;
+                    final unit = listing['unit_type'] ?? 'KG';
+                    final price = listing['price_per_unit'] ?? listing['price_per_kg'] ?? 0;
+                    bool hasNewOrder = (listing['orders_count'] ?? 0) > 0;
 
-                  return FadeInUp(
-                    delay: Duration(milliseconds: index * 50), 
-                    child: InkWell(
-                      onTap: () => _showManageListingSheet(listing),
-                      borderRadius: BorderRadius.circular(20),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white, 
-                          borderRadius: BorderRadius.circular(20), 
-                          boxShadow: [
-                            BoxShadow(
-                              color: hasNewOrder ? Colors.orange.withOpacity(0.3) : Colors.black.withOpacity(0.04), 
-                              blurRadius: hasNewOrder ? 20 : 15, 
-                              offset: const Offset(0, 8)
-                            )
-                          ],
-                          border: Border.all(color: hasNewOrder ? Colors.orange.shade400 : Colors.grey.shade100, width: hasNewOrder ? 2 : 1)
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(20),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                flex: 5,
-                                child: Stack(
-                                  children: [
-                                    // 🔥 THE FIX: Renders the Base64 image!
-                                    _buildListingImage(listing), 
-                                    
-                                    Container(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black.withOpacity(0.3), Colors.transparent]))),
-                                    
-                                    Positioned(
-                                      top: 8, right: 8,
-                                      child: Container(
-                                        padding: const EdgeInsets.all(6),
-                                        decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 5)]),
-                                        child: Icon(LucideIcons.edit2, size: 14, color: Colors.grey.shade600),
-                                      ),
-                                    ),
-
-                                    if (hasNewOrder)
-                                      Positioned(
-                                        top: 8, left: 8,
-                                        child: Pulse(
-                                          infinite: true,
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                            decoration: BoxDecoration(color: Colors.orange.shade600, borderRadius: BorderRadius.circular(8), boxShadow: [BoxShadow(color: Colors.orange.withOpacity(0.5), blurRadius: 5)]),
-                                            child: Row(
-                                              children: [
-                                                const Icon(LucideIcons.bellRing, size: 10, color: Colors.white),
-                                                const SizedBox(width: 4),
-                                                Text("New Order!", style: GoogleFonts.poppins(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-                                              ],
+                    return FadeInUp(
+                      delay: Duration(milliseconds: index * 50), 
+                      child: InkWell(
+                        onTap: () => _showManageListingSheet(listing),
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white, borderRadius: BorderRadius.circular(20), 
+                            boxShadow: [BoxShadow(color: hasNewOrder ? Colors.orange.withOpacity(0.3) : Colors.black.withOpacity(0.04), blurRadius: hasNewOrder ? 20 : 15, offset: const Offset(0, 8))],
+                            border: Border.all(color: hasNewOrder ? Colors.orange.shade400 : Colors.grey.shade100, width: hasNewOrder ? 2 : 1)
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  flex: 5,
+                                  child: Stack(
+                                    children: [
+                                      _buildListingImage(listing, listing['crop_name'] ?? ''), 
+                                      Container(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black.withOpacity(0.3), Colors.transparent]))),
+                                      Positioned(top: 8, right: 8, child: Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 5)]), child: Icon(LucideIcons.edit2, size: 14, color: Colors.grey.shade600))),
+                                      if (hasNewOrder)
+                                        Positioned(
+                                          top: 8, left: 8,
+                                          child: Pulse(
+                                            infinite: true,
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                              decoration: BoxDecoration(color: Colors.orange.shade600, borderRadius: BorderRadius.circular(8), boxShadow: [BoxShadow(color: Colors.orange.withOpacity(0.5), blurRadius: 5)]),
+                                              child: Row(children: [const Icon(LucideIcons.bellRing, size: 10, color: Colors.white), const SizedBox(width: 4), Text("New Order!", style: GoogleFonts.poppins(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold))]),
                                             ),
                                           ),
                                         ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                              Expanded(
-                                flex: 4,
-                                child: Padding(
-                                  padding: const EdgeInsets.all(10.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Text(cleanDisplayTitle, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis),
-                                      const SizedBox(height: 4),
-                                      Text("$currentInventory $unit available", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 11)),
-                                      const Spacer(),
-                                      Text("KES $price/$unit", style: GoogleFonts.poppins(color: Colors.green.shade700, fontWeight: FontWeight.w800, fontSize: 13)),
                                     ],
                                   ),
                                 ),
-                              ),
-                            ],
+                                Expanded(
+                                  flex: 4,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(10.0),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Text(cleanDisplayTitle, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                        const SizedBox(height: 4),
+                                        Text("$currentInventory $unit available", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 11)),
+                                        const Spacer(),
+                                        Text("KES $price/$unit", style: GoogleFonts.poppins(color: Colors.green.shade700, fontWeight: FontWeight.w800, fontSize: 13)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  );
-                }, childCount: _myListings.length),
+                    );
+                  } 
+                  else {
+                    final poolData = _myHubPools[index - _myListings.length];
+                    final bulkRequest = poolData['bulk_request'] ?? {};
+                    
+                    String cropName = _formatCropName(bulkRequest['crop_name'] ?? 'Produce');
+                    double targetWeight = (bulkRequest['target_weight_kg'] ?? 0).toDouble();
+                    double price = (bulkRequest['price_per_kg'] ?? 0).toDouble();
+                    
+                    double totalSquadWeight = 0;
+                    if (bulkRequest['squad_roster'] != null) {
+                      for (var member in bulkRequest['squad_roster']) totalSquadWeight += (member['pledge_kg'] ?? 0).toDouble();
+                    } else {
+                      totalSquadWeight = (poolData['pledged_weight_kg'] ?? 0).toDouble();
+                    }
+                    
+                    double progress = targetWeight > 0 ? (totalSquadWeight / targetWeight) : 0;
+                    if (progress > 1.0) progress = 1.0;
+
+                    return FadeInUp(
+                      delay: Duration(milliseconds: index * 50), 
+                      child: InkWell(
+                        onTap: () async {
+                           await Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: bulkRequest['id'])));
+                           _loadDashboardData(); 
+                        },
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white, borderRadius: BorderRadius.circular(20), 
+                            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 15, offset: const Offset(0, 8))],
+                            border: Border.all(color: Colors.purple.shade100, width: 1.5)
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  flex: 5,
+                                  child: Stack(
+                                    children: [
+                                      Image.network(_getImageForCrop(cropName), fit: BoxFit.cover, width: double.infinity, height: double.infinity), 
+                                      Container(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black.withOpacity(0.4), Colors.transparent]))),
+                                      
+                                      Positioned(
+                                        top: 8, left: 8,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                          decoration: BoxDecoration(color: Colors.purple.shade600, borderRadius: BorderRadius.circular(8), boxShadow: [BoxShadow(color: Colors.purple.withOpacity(0.3), blurRadius: 5)]),
+                                          child: Row(children: [const Icon(LucideIcons.users, size: 10, color: Colors.white), const SizedBox(width: 4), Text("Hub Pool", style: GoogleFonts.poppins(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold))]),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 4,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(10.0),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Text(cropName, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                        const SizedBox(height: 6),
+                                        
+                                        Text("${totalSquadWeight.toStringAsFixed(0)} / ${targetWeight.toStringAsFixed(0)} KG", style: GoogleFonts.poppins(color: Colors.purple.shade700, fontSize: 10, fontWeight: FontWeight.bold)),
+                                        const SizedBox(height: 3),
+                                        ClipRRect(borderRadius: BorderRadius.circular(10), child: LinearProgressIndicator(value: progress, minHeight: 4, backgroundColor: Colors.purple.shade50, color: Colors.purple.shade400)),
+                                        
+                                        const Spacer(),
+                                        Text("KES $price/KG", style: GoogleFonts.poppins(color: Colors.green.shade700, fontWeight: FontWeight.w800, fontSize: 13)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+                }, childCount: _myListings.length + _myHubPools.length),
               ),
             ),
           
@@ -863,16 +954,11 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.15),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withOpacity(0.2)),
-        ),
+        decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white.withOpacity(0.2))),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, color: Colors.green.shade100, size: 24),
-            const SizedBox(height: 12),
+            Icon(icon, color: Colors.green.shade100, size: 24), const SizedBox(height: 12),
             Text(value, style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
             Text(title, style: GoogleFonts.poppins(fontSize: 12, color: Colors.green.shade100)),
           ],
