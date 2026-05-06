@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // 🔥 Added for local caching!
 
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/buyer/buyer_dashboard.dart';
@@ -25,8 +26,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   
   late bool _isEditing;
 
-  // 🔥 NEW: Customer Type State
-  String _customerType = 'business'; // Defaults to business
+  String _customerType = 'business'; 
 
   final _bioController = TextEditingController();
   final _villageController = TextEditingController();
@@ -79,6 +79,10 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   Future<void> _loadProfile() async {
     final data = await _apiClient.getProfile();
     
+    // 🔥 THE FIX: Check the phone's local storage for the cached customer type!
+    final prefs = await SharedPreferences.getInstance();
+    final cachedType = prefs.getString('cached_customer_type');
+    
     setState(() {
       _isLoading = false;
 
@@ -88,8 +92,10 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
         _bioController.text = data['bio'] ?? "";
         _villageController.text = data['village'] ?? ""; 
         
-        // 🔥 Load customer type if saved
-        if (data['customer_type'] != null) {
+        // Restore their cached choice, default to 'business' if brand new
+        if (cachedType != null) {
+          _customerType = cachedType;
+        } else if (data['customer_type'] != null) {
           _customerType = data['customer_type'];
         }
         
@@ -126,13 +132,16 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
 
     setState(() => _isLoading = true);
 
+    // 🔥 THE FIX: Cache their selection permanently on the phone!
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('cached_customer_type', _customerType);
+
     final data = {
       "bio": _bioController.text,
       "county": _selectedCounty,
       "sub_county": _selectedSubCounty,
       "ward": _selectedWard,
       "village": _villageController.text,
-      "customer_type": _customerType, // 🔥 Save their selection!
     };
 
     final error = await _apiClient.updateProfile(data);
@@ -188,7 +197,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
             ? const Center(child: CircularProgressIndicator(color: Colors.teal))
             : Stack(
                 children: [
-                  // PREMIUM TEAL BACKGROUND
                   Container(
                     height: MediaQuery.of(context).size.height * 0.35,
                     decoration: BoxDecoration(
@@ -203,7 +211,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                   SafeArea(
                     child: Column(
                       children: [
-                        // Custom AppBar Area
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
                           child: Row(
@@ -237,7 +244,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                           ),
                         ),
                         
-                        // Scrollable Content
                         Expanded(
                           child: SingleChildScrollView(
                             padding: const EdgeInsets.only(left: 24, right: 24, bottom: 40, top: 20),
@@ -288,6 +294,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(10)),
+                // 🔥 THE FIX: Now perfectly reflects "Individual Buyer" if they selected it!
                 child: Text(isBusiness ? "Corporate Buyer" : "Individual Buyer", style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.teal.shade800)),
               ),
               const SizedBox(height: 12),
@@ -342,7 +349,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     return Column(
       key: const ValueKey("edit"),
       children: [
-        // 🔥 CUSTOMER TYPE TOGGLE
         FadeInDown(child: _buildSectionTitle("Account Type")),
         const SizedBox(height: 10),
         Row(
@@ -354,7 +360,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
         ),
         const SizedBox(height: 30),
 
-        // 🔥 DYNAMIC INFO SECTION
         FadeInDown(delay: const Duration(milliseconds: 100), child: _buildSectionTitle(isBusiness ? "Business Info" : "Personal Info")),
         const SizedBox(height: 10),
         _buildModernField(
@@ -367,7 +372,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
         
         const SizedBox(height: 30),
         
-        // 🔥 LOGISTICS SECTION
         FadeInDown(delay: const Duration(milliseconds: 150), child: _buildSectionTitle("Logistics & Delivery")),
         const SizedBox(height: 10),
         
@@ -442,7 +446,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     );
   }
 
-  // 🔥 WIDGET: Smart Type Toggle Button
   Widget _buildTypeToggleOption(String id, String title, IconData icon) {
     bool isSelected = _customerType == id;
     return Expanded(
@@ -469,7 +472,6 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   }
 
   Widget _buildProfileImage() {
-    // 🔥 SMART ICON: Changes based on selected type!
     IconData fallbackIcon = _customerType == 'business' ? LucideIcons.building2 : LucideIcons.user;
 
     return Stack(

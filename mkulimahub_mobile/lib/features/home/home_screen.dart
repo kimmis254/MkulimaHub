@@ -322,7 +322,6 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
     );
   }
 
-  // 🔥 CUSTOM PREMIUM EDITABLE CARD WIDGET
   Widget _buildEditableCard({
     required String title,
     String? subtitle,
@@ -382,25 +381,25 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
     );
   }
 
-  // 🔥 COMPLETELY REDESIGNED LISTING MANAGER
   void _showManageListingSheet(Map<String, dynamic> listing) {
-    // Inventory
     final TextEditingController inventoryController = TextEditingController(text: (listing['available_kg'] ?? 0).toString());
-    
-    // Pricing
     final TextEditingController wholesalePriceController = TextEditingController(text: (listing['price_per_kg'] ?? 0).toString());
     
-    // 🔥 THE JSON FIX: Safely parse unit_pricing whether it's a String or an Array
+    // 🔥 THE FIX: Bulletproof string replacement to convert Python dicts to proper JSON!
     List<dynamic> parsedUnits = [];
     if (listing['unit_pricing'] is String) {
-      try { parsedUnits = jsonDecode(listing['unit_pricing']); } catch (_) {}
+      try { 
+        String safeJson = listing['unit_pricing'].toString().replaceAll("'", '"');
+        parsedUnits = jsonDecode(safeJson); 
+      } catch (e) {
+        debugPrint("JSON Parse Error: $e");
+      }
     } else if (listing['unit_pricing'] is List) {
       parsedUnits = listing['unit_pricing'];
     }
     
     List<Map<String, dynamic>> unitPricing = List<Map<String, dynamic>>.from(parsedUnits.map((e) => Map<String, dynamic>.from(e)));
     
-    // Create controllers for every single unit type provided!
     final Map<String, TextEditingController> unitPriceControllers = {};
     for (var unit in unitPricing) {
       unitPriceControllers[unit['unit_name']] = TextEditingController(text: unit['price'].toString());
@@ -428,7 +427,6 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                     Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
                     const SizedBox(height: 20),
                     
-                    // 1. Premium Image Header
                     Container(
                       height: 120, width: double.infinity, decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), color: Colors.black),
                       child: ClipRRect(
@@ -445,7 +443,6 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                     ),
                     const SizedBox(height: 25),
 
-                    // 2. Editable Inventory Card
                     Text("Manage Inventory", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
                     const SizedBox(height: 10),
                     _buildEditableCard(
@@ -458,7 +455,6 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                     ),
                     const SizedBox(height: 15),
 
-                    // 3. Editable Pricing Formats
                     Text("Edit Selling Formats", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
                     const SizedBox(height: 10),
                     
@@ -486,14 +482,12 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                     
                     const SizedBox(height: 20),
                     
-                    // 4. Save Changes Button
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
                         onPressed: isSubmitting ? null : () async {
                           setSheetState(() => isSubmitting = true);
                           
-                          // 🔥 1. Gather all the new inputted numbers!
                           final newInventory = double.tryParse(inventoryController.text) ?? 0;
                           final newWholesalePrice = double.tryParse(wholesalePriceController.text);
                           
@@ -506,13 +500,12 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                             });
                           }
 
-                          // 🔥 2. Send it to the real backend!
                           final error = await _apiClient.updateMarketListing(listing['id'], newInventory, newWholesalePrice, updatedUnits);
                           
                           if (mounted) {
                             Navigator.pop(context);
                             if (error == null) {
-                              _loadDashboardData(); // Refresh the grid!
+                              _loadDashboardData(); 
                               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Listing updated successfully!"), backgroundColor: Colors.green));
                             } else {
                               ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
@@ -526,7 +519,6 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                     ),
                     const SizedBox(height: 35),
                     
-                    // 5. Orders List
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -560,7 +552,6 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                     Center(
                       child: TextButton.icon(
                         onPressed: () async {
-                          // 🔥 Add an explicit confirmation dialog before wiping out their data
                           bool confirm = await showDialog(
                             context: context,
                             builder: (ctx) => AlertDialog(
@@ -574,13 +565,12 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                           ) ?? false;
                           
                           if (confirm) {
-                            Navigator.pop(context); // Close the Bottom Sheet
+                            Navigator.pop(context); 
                             
-                            // 🔥 Send the real Delete command to the API
                             final error = await _apiClient.deleteMarketListing(listing['id']);
                             if (mounted) {
                                if (error == null) {
-                                 _loadDashboardData(); // Instantly removes it from the screen!
+                                 _loadDashboardData(); 
                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Listing removed from market."), backgroundColor: Colors.red));
                                } else {
                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
@@ -702,6 +692,11 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                         scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 16), itemCount: _activeBulkRequests.length, physics: const BouncingScrollPhysics(),
                         itemBuilder: (context, index) {
                           final req = _activeBulkRequests[index];
+                          String urgency = req['urgency'] ?? 'Medium';
+                          Color uBgColor = urgency == 'High' ? Colors.red.shade50 : (urgency == 'Medium' ? Colors.orange.shade50 : Colors.green.shade50);
+                          Color uTextColor = urgency == 'High' ? Colors.red.shade800 : (urgency == 'Medium' ? Colors.orange.shade800 : Colors.green.shade800);
+                          IconData uIcon = urgency == 'High' ? LucideIcons.flame : (urgency == 'Medium' ? LucideIcons.clock : LucideIcons.leaf);
+
                           return FadeInRight(
                             delay: Duration(milliseconds: index * 100),
                             child: GestureDetector(
@@ -715,8 +710,9 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                                     Row(
                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
-                                        Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(8)), child: Text("High Priority", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontSize: 10, fontWeight: FontWeight.bold))),
-                                        Icon(LucideIcons.flame, color: Colors.orange.shade400, size: 18),
+                                        // 🔥 Applying the dynamic urgency style
+                                        Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: uBgColor, borderRadius: BorderRadius.circular(8)), child: Text("$urgency Priority", style: GoogleFonts.poppins(color: uTextColor, fontSize: 10, fontWeight: FontWeight.bold))),
+                                        Icon(uIcon, color: uTextColor.withOpacity(0.7), size: 18),
                                       ],
                                     ),
                                     Text("${req['target_weight_kg']}kg of ${req['crop_name']}", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -755,7 +751,6 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
             ),
           ),
 
-          // 🔥 UNIFIED ACTIVE LISTINGS & HUB POOLS HEADER
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.only(left: 20, right: 20, top: 15, bottom: 15),

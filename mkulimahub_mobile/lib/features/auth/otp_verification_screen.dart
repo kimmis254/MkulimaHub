@@ -21,7 +21,6 @@ class OtpVerificationScreen extends StatefulWidget {
   final Map<String, dynamic>? pendingLoginData; 
   final bool is2FALogin; 
   final bool isPasswordReset;
-  final Map<String, dynamic>? pendingGoogleData;
 
   const OtpVerificationScreen({
     super.key, 
@@ -29,7 +28,6 @@ class OtpVerificationScreen extends StatefulWidget {
     required this.phoneNumber,
     this.pendingRegistrationData, 
     this.pendingLoginData,
-    this.pendingGoogleData,
     this.is2FALogin = false,
     this.isPasswordReset = false,
   });
@@ -52,7 +50,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   void initState() {
     super.initState();
     _startTimer();
-    // 🔥 Listen to the controller to dynamically update our custom boxes
     _otpController.addListener(() {
       setState(() {});
     });
@@ -65,13 +62,14 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     super.dispose();
   }
 
-  void _showError(String message) {
+  void _showSnackBar(String message, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message, style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w500)), 
-        backgroundColor: Colors.redAccent,
+        backgroundColor: color,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(20),
       ),
     );
   }
@@ -89,9 +87,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           timer.cancel();
         });
       } else {
-        setState(() {
-          _start--;
-        });
+        setState(() => _start--);
       }
     });
   }
@@ -115,6 +111,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     );
   }
 
+  // 🔥 THE FIX: ONE unified, bulletproof verification routing method!
   void _verifyCode() async {
     final code = _otpController.text.trim();
     if (code.length != 6) {
@@ -131,8 +128,52 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
     if (userCredential != null && userCredential.user != null) {
       
+      // 1. PASSWORD RESET FLOW
+      if (widget.isPasswordReset) {
+        setState(() => _isLoading = false);
+        if (mounted) {
+          Navigator.pushReplacement(
+            context, 
+            MaterialPageRoute(
+              builder: (_) => CreateNewPasswordScreen(
+                phoneNumber: widget.phoneNumber,
+                uid: userCredential.user!.uid,
+              )
+            )
+          );
+        }
+        return;
+      }
+
+      // 2. GOOGLE REGISTRATION FLOW (Catching the google_id_token correctly!)
+      if (widget.pendingRegistrationData != null && widget.pendingRegistrationData!.containsKey('google_id_token')) {
+        final String? error = await _apiClient.googleRegister(
+          idToken: widget.pendingRegistrationData!['google_id_token'],
+          phoneNumber: widget.phoneNumber,
+          role: widget.pendingRegistrationData!['role'], 
+        );
+
+        if (mounted) {
+          setState(() => _isLoading = false);
+          if (error == 'needs_profile' || error == 'success' || error == null) {
+             String role = widget.pendingRegistrationData!['role'] ?? 'farmer';
+             await _apiClient.saveUserRole(role);
+             
+             if (role == 'buyer') {
+               Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const CustomerProfileScreen(isNewUser: true)), (route) => false);
+             } else {
+               Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const ProfileScreen(isNewUser: true)), (route) => false);
+             }
+          } else {
+             _showSnackBar(error, Colors.redAccent);
+          }
+        }
+        return;
+      }
+
+      // 3. NORMAL REGISTRATION FLOW
       if (widget.pendingRegistrationData != null) {
-        final apiError = await _apiClient.register(widget.pendingRegistrationData!);
+        final String? apiError = await _apiClient.register(widget.pendingRegistrationData!);
         
         if (apiError == null) {
            await _apiClient.login(
@@ -147,74 +188,31 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
              await _apiClient.saveUserRole(role); 
              
              if (role == 'buyer') {
-             Navigator.pushAndRemoveUntil(
-               context, 
-               MaterialPageRoute(builder: (_) => const CustomerProfileScreen(isNewUser: true)), 
-               (route) => false
-             );
-          } else {
-             Navigator.pushAndRemoveUntil(
-               context, 
-               MaterialPageRoute(builder: (_) => const ProfileScreen(isNewUser: true)), 
-               (route) => false
-             );
-          }
+               Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const CustomerProfileScreen(isNewUser: true)), (route) => false);
+             } else {
+               Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const ProfileScreen(isNewUser: true)), (route) => false);
+             }
            }
         } else {
            setState(() => _isLoading = false);
            if (mounted) _showSnackBar(apiError, Colors.redAccent);
         }
-        
-      } else if (widget.is2FALogin && widget.pendingLoginData != null) {
-            final error = await _apiClient.login(
-              widget.pendingLoginData!['phone']!,
-              widget.pendingLoginData!['password']!
-            );
+        return;
+      }
 
-            if (error == null) {
-              final profileData = await _apiClient.getProfile();
-              String role = profileData?['role'] ?? 'farmer';
-              await _apiClient.saveUserRole(role);
+      // 4. 2FA LOGIN FLOW
+      if (widget.is2FALogin && widget.pendingLoginData != null) {
+        final error = await _apiClient.login(
+          widget.pendingLoginData!['phone']!,
+          widget.pendingLoginData!['password']!
+        );
 
-              if (mounted) {
-                if (role == 'buyer') {
-                  Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const BuyerDashboard()), (route) => false);
-                } else {
-                  Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const HomeScreen()), (route) => false);
-                }
-              }
-            } else {
-              setState(() => _isLoading = false);
-              if (mounted) _showError(error); 
-            }
-      } else if (widget.isPasswordReset) {
-        setState(() => _isLoading = false);
-        if (mounted) {
-          Navigator.pushReplacement(
-            context, 
-            MaterialPageRoute(
-              builder: (_) => CreateNewPasswordScreen(
-                phoneNumber: widget.phoneNumber,
-                uid: userCredential.user!.uid,
-              )
-            )
-          );
-        }
-      } else if (widget.pendingGoogleData != null) {
-        final apiStatus = await _apiClient.googleRegister(
-  idToken: widget.pendingGoogleData!['idToken'],
-  phoneNumber: widget.pendingGoogleData!['phoneNumber'],
-);
-
-        if (apiStatus == 'needs_profile') {
-          setState(() => _isLoading = false);
-          if (mounted) Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const ProfileScreen(isNewUser: true)), (route) => false);
-        } else if (apiStatus == 'success') {
+        if (error == null) {
           final profileData = await _apiClient.getProfile();
-          setState(() => _isLoading = false);
+          String role = profileData?['role'] ?? 'farmer';
+          await _apiClient.saveUserRole(role);
 
           if (mounted) {
-            String role = profileData?['role'] ?? 'farmer';
             if (role == 'buyer') {
               Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const BuyerDashboard()), (route) => false);
             } else {
@@ -223,9 +221,12 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           }
         } else {
           setState(() => _isLoading = false);
-          if (mounted) _showSnackBar(apiStatus ?? "Failed to link phone.", Colors.redAccent);
+          if (mounted) _showSnackBar(error, Colors.redAccent); 
         }
+        return;
       }
+
+      setState(() => _isLoading = false);
 
     } else {
       setState(() => _isLoading = false);
@@ -233,28 +234,15 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     }
   }
 
-  void _showSnackBar(String message, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w500)), 
-        backgroundColor: color,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        margin: const EdgeInsets.all(20),
-      ),
-    );
-  }
-
-  // 🔥 CUSTOM PREMIUM OTP BOX GENERATOR
+  // 櫨 CUSTOM PREMIUM OTP BOX GENERATOR
   Widget _buildOtpBoxes() {
     String currentText = _otpController.text;
     
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: List.generate(6, (index) {
-        // Determine the state of this specific box
         bool isFilled = index < currentText.length;
-        bool isActive = index == currentText.length; // The box currently waiting for input
+        bool isActive = index == currentText.length; 
         
         return AnimatedContainer(
           duration: const Duration(milliseconds: 200),
@@ -361,24 +349,20 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                               ),
                               const SizedBox(height: 35),
                               
-                              // 🔥 THE MAGIC INVISIBLE TEXTFIELD TRICK
                               SizedBox(
                                 height: 60,
                                 child: Stack(
                                   children: [
-                                    // 1. The visual boxes underneath
                                     Center(child: _buildOtpBoxes()),
-                                    
-                                    // 2. The completely transparent text field right on top catching the taps
                                     TextField(
                                       controller: _otpController,
                                       keyboardType: TextInputType.number,
                                       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                                       maxLength: 6,
-                                      showCursor: false, // Hide cursor
-                                      style: const TextStyle(color: Colors.transparent, fontSize: 1), // Hide text
+                                      showCursor: false, 
+                                      style: const TextStyle(color: Colors.transparent, fontSize: 1), 
                                       decoration: const InputDecoration(
-                                        counterText: "", // Hide character counter
+                                        counterText: "", 
                                         border: InputBorder.none,
                                         enabledBorder: InputBorder.none,
                                         focusedBorder: InputBorder.none,

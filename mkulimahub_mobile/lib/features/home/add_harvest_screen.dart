@@ -129,6 +129,25 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
       return;
     }
 
+    // 🔥 THE SMART AUTO-CATCH LOGIC
+    // If they filled out the text fields but forgot to click the "+ Add Pricing Tier" button, we auto-save it for them!
+    if (_sellByUnit) {
+      if (_selectedUnit != null && _pricePerUnitController.text.isNotEmpty && _kgPerUnitController.text.isNotEmpty) {
+         bool exists = _addedUnits.any((u) => u['unit_name'] == _selectedUnit);
+         if (!exists) {
+           _addedUnits.add({
+             "unit_name": _selectedUnit,
+             "price": double.parse(_pricePerUnitController.text),
+             "kg": double.parse(_kgPerUnitController.text),
+           });
+         }
+      } else if (_addedUnits.isEmpty) {
+         // They turned the switch on, but left all fields completely blank
+         _showPremiumToast("Please add at least one Pricing Tier, or turn off Custom Units.", isError: true);
+         return;
+      }
+    }
+
     setState(() => _isLoading = true);
 
     String cleanCropName = _selectedCrop!.split(' ')[0];
@@ -158,10 +177,7 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
   }
 
   void _showPremiumToast(String message, {bool isError = false}) {
-    // 1. Instantly hide the keyboard so the screen returns to normal size
     FocusManager.instance.primaryFocus?.unfocus();
-
-    // 2. Clear any existing snackbars so they don't pile up
     ScaffoldMessenger.of(context).clearSnackBars();
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -175,7 +191,6 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
         ),
         backgroundColor: isError ? Colors.red.shade800 : Colors.teal.shade800,
         behavior: SnackBarBehavior.floating,
-        // 🔥 3. SAFE MARGIN: Standard bottom padding. Flutter will automatically push it up if the keyboard is open!
         margin: const EdgeInsets.only(bottom: 30, left: 24, right: 24),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         duration: const Duration(seconds: 3),
@@ -201,7 +216,6 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               
-              // 1. THE PHOTO UPLOADER
               Text("Crop Photo", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87)),
               const SizedBox(height: 10),
               GestureDetector(
@@ -229,7 +243,6 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
               ),
               const SizedBox(height: 25),
 
-              // 2. CROP & MASTER INVENTORY
               _buildLabel("What are you selling?"),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -256,7 +269,6 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
               _buildPremiumField(controller: _baseKgController, hint: "E.g. 500", icon: LucideIcons.scale, suffix: "KG", isNumber: true),
               const SizedBox(height: 30),
 
-              // 3. SELLING CONFIGURATIONS
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.orange.shade100)),
@@ -267,7 +279,6 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
                     Text("Enable one or both options.", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
                     const SizedBox(height: 15),
 
-                    // OPTION A: SELL BY WEIGHT
                     SwitchListTile(
                       title: Text("Sell by the KG", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
                       subtitle: Text("Wholesale or large orders", style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade600)),
@@ -282,7 +293,6 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
 
                     const Divider(height: 30),
 
-                    // OPTION B: SELL BY UNIT (Smart Dropdown!)
                     SwitchListTile(
                       title: Text("Sell by Custom Units", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
                       subtitle: Text("Add options like Bags, Buckets, or Pieces.", style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade600)),
@@ -294,7 +304,6 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
                     if (_sellByUnit) ...[
                       const SizedBox(height: 10),
 
-                      // Display the units they have already added!
                       if (_addedUnits.isNotEmpty) ...[
                         Wrap(
                           spacing: 8,
@@ -314,12 +323,11 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
                         const SizedBox(height: 15),
                       ],
 
-                      // The Input Form to add a new unit
                       if (_selectedCrop != null && _cropUnits.containsKey(_selectedCrop)) ...[
                         _buildLabel("Select Unit Type"),
                         Container(
                           padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.shade200, style: BorderStyle.solid)), // FIXED DASH ERROR
+                          decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.shade200, style: BorderStyle.solid)), 
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -395,7 +403,6 @@ class _AddHarvestScreenState extends State<AddHarvestScreen> {
               ),
               const SizedBox(height: 40),
 
-              // SUBMIT BUTTON
               SizedBox(
                 height: 60,
                 width: double.infinity,

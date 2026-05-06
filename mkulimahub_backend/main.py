@@ -162,22 +162,19 @@ GOOGLE_CLIENT_ID = "654543955611-g18qameesn4daglsc8pup7rkj6c1n541.apps.googleuse
 class GoogleAuthRequest(BaseModel):
     id_token: str
     phone_number: Optional[str] = None
+    role: Optional[str] = "farmer" # Defaults to farmer, but accepts buyer!
 
-@app.post("/auth/google")
+# 🔥 2. Added /api/ to the URL to match the Flutter app
+@app.post("/api/auth/google")
 @limiter.limit("5/minute")
 def google_login(request: Request, payload: GoogleAuthRequest, db: Session = Depends(get_db)):
     try:
         # Verify the token cryptographically with Google's servers
         idinfo = id_token.verify_oauth2_token(payload.id_token, google_requests.Request(), GOOGLE_CLIENT_ID,clock_skew_in_seconds=10)
-        
-        # If we get here, the token is 100% real. Extract the verified email.
         verified_email = idinfo['email']
         
     except ValueError as e:
-        # 🔥 THE SNITCH: This will print the EXACT reason Google rejected it to your terminal!
         print(f"🚨 GOOGLE TOKEN REJECTED: {str(e)}") 
-        
-        # 🔥 It will also send the exact error directly to your phone screen!
         raise HTTPException(status_code=401, detail=f"Token Error: {str(e)}")
 
     user = db.query(models.User).filter(models.User.email == verified_email).first()
@@ -187,28 +184,29 @@ def google_login(request: Request, payload: GoogleAuthRequest, db: Session = Dep
             return {"status": "needs_phone"}
             
         access_token = security.create_access_token(data={"sub": str(user.id), "role": user.role})
-        return {"access_token": access_token, "token_type": "bearer", "status": "success"}
+        
+        # Check if they still need to finish setting up their location/profile
+        needs_profile = False
+        if not user.county or not user.village:
+            needs_profile = True
+            
+        return {"access_token": access_token, "token_type": "bearer", "status": "success", "needs_profile": needs_profile}
     else:
         return {"status": "needs_phone"}
 
-@app.post("/auth/google-register")
+# 🔥 3. Added /api/ to the URL
+@app.post("/api/auth/google-register")
 @limiter.limit("5/minute")
 def google_register(request: Request, payload: GoogleAuthRequest, db: Session = Depends(get_db)):
     if not payload.phone_number:
         raise HTTPException(status_code=400, detail="Phone number is required for registration.")
         
     try:
-        # 🔥 THE FIX: Securely verify the token for registration too!
         idinfo = id_token.verify_oauth2_token(payload.id_token, google_requests.Request(), GOOGLE_CLIENT_ID,clock_skew_in_seconds=10)
-        
-        # Extract the iron-clad data straight from Google
         verified_email = idinfo['email']
-        verified_name = idinfo.get('name', 'New Farmer')
+        verified_name = idinfo.get('name', 'New User')
         verified_uid = idinfo['sub']
-        
     except ValueError as e:
-        
-        # 🔥 It will also send the exact error directly to your phone screen!
         raise HTTPException(status_code=401, detail=f"Token Error: {str(e)}")
 
     # Check for duplicate phone numbers
@@ -221,13 +219,13 @@ def google_register(request: Request, payload: GoogleAuthRequest, db: Session = 
     if user:
         user.phone_number = payload.phone_number
     else:
-        # Use the mathematically verified data from Google, not the user's payload!
+        # 🔥 4. Dynamically assign the role passed from Flutter!
         user = models.User(
             full_name=verified_name,
             email=verified_email,
             google_uid=verified_uid,
             phone_number=payload.phone_number,
-            role="farmer"
+            role=payload.role 
         )
         db.add(user)
     
@@ -262,7 +260,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 def read_root():
     return {"message": "MkulimaHub API is active!", "status": "secure"}
 
-@app.post("/auth/register", response_model=schemas.UserResponse)
+@app.post("/api/auth/register", response_model=schemas.UserResponse)
 def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     existing_user = db.query(models.User).filter(models.User.phone_number == user.phone_number).first()
     if existing_user:
@@ -277,14 +275,13 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         longitude=user.longitude        
     )
 
-    # 🔥 THE FIX: Wrap the database writes safely
     try:
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
         return new_user
     except Exception as e:
-        db.rollback() # Safely cancel the corrupted transaction!
+        db.rollback() 
         print(f"❌ Database error during registration: {e}")
         raise HTTPException(status_code=500, detail="Failed to create account. Please try again.")
 
@@ -470,31 +467,26 @@ def create_bulk_contract(contract: schemas.BulkRequestCreate, db: Session = Depe
 
 @app.get("/api/contracts")
 def get_open_contracts(county: str = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Fetches open Corporate Contracts for the Contracts Screen."""
     query = db.query(models.BulkRequest).filter(
-        models.BulkRequest.status.in_(["Open", "fulfilled"]), # 🔥 THE FIX
+        models.BulkRequest.status.in_(["Open", "fulfilled"]), 
         ~models.BulkRequest.buyer_name.like("Hub Pool:%") 
     )
-    if county:
-        query = query.filter(models.BulkRequest.county == county)
+    if county: query = query.filter(models.BulkRequest.county == county)
         
     contracts = query.all()
     results = []
     
     for req in contracts:
         has_pledged = any(p.farmer_id == current_user.id for p in req.pledges)
-        total_pledged = sum((p.pledged_weight_kg or 0) for p in req.pledges) # 🔥 Calculate progress!
+        total_pledged = sum((p.pledged_weight_kg or 0) for p in req.pledges) 
         
         results.append({
-            "id": req.id,
-            "crop_name": req.crop_name,
-            "target_weight_kg": req.target_weight_kg,
-            "total_pledged": total_pledged, # 🔥 Send the math to Flutter!
-            "price_per_kg": req.price_per_kg,
-            "buyer_name": req.buyer_name,
-            "county": req.county,
-            "ward": req.ward,
-            "has_pledged": has_pledged # 🔥 Tell Flutter if they are in the squad!
+            "id": req.id, "crop_name": req.crop_name, "target_weight_kg": req.target_weight_kg,
+            "total_pledged": total_pledged, "price_per_kg": req.price_per_kg,
+            "buyer_name": req.buyer_name, "county": req.county,
+            "ward": req.ward, # 🔥 Contact & Address
+            "urgency": req.urgency, # 🔥 Real Urgency
+            "has_pledged": has_pledged 
         })
     return results
 
@@ -574,17 +566,13 @@ def get_my_pledges(db: Session = Depends(get_db), current_user: models.User = De
             "actual_weight_kg": p.actual_weight_kg,
             "status": p.status,
             "bulk_request": {
-                "id": req.id,
-                "buyer_name": req.buyer_name,
-                "crop_name": req.crop_name,
-                "target_weight_kg": req.target_weight_kg,
-                "price_per_kg": req.price_per_kg,
-                "county": req.county,
-                "squad_status": req.squad_status, 
-                "coordinator_id": req.coordinator_id, 
-                "squad_roster": squad_roster,
-                "candidates": candidates_list, 
-                "has_voted": has_voted         
+                "id": req.id, "buyer_name": req.buyer_name, "crop_name": req.crop_name,
+                "target_weight_kg": req.target_weight_kg, "price_per_kg": req.price_per_kg,
+                "county": req.county, 
+                "ward": req.ward, # 🔥 Added
+                "urgency": req.urgency, # 🔥 Added
+                "squad_status": req.squad_status, "coordinator_id": req.coordinator_id, 
+                "squad_roster": squad_roster, "candidates": candidates_list, "has_voted": has_voted         
             }
         })
         
@@ -1409,14 +1397,20 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
             
         is_internal_pool = contract.buyer_name.startswith("Hub Pool:")
 
-        # 🔥 Mask the Base64 String!
+        # 🔥 THE FIX: Dynamically assign the correct auditor text based on the contract type!
         display_notes = p.notes
         if display_notes and str(display_notes).startswith("EVIDENCE_LOG|"):
-            display_notes = "📷 Digital Evidence Submitted. Awaiting Hub Audit."
+            if is_internal_pool:
+                display_notes = "📷 Digital Evidence Submitted. Awaiting Hub Admin Audit."
+            else:
+                display_notes = "📷 Digital Evidence Submitted. Awaiting Squad Coordinator Verification."
         elif not display_notes:
-            display_notes = "Deliver to Coordinator Hub."
+            if is_internal_pool:
+                display_notes = "Deliver to Hub Admin."
+            else:
+                display_notes = "Deliver to Squad Coordinator."
 
-        # 🔥 THE FIX: Check if EVERY farmer in the squad is verified!
+        # Check if EVERY farmer in the squad is verified!
         all_squad_received = True
         squad_pledges_check = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == contract.id).all()
         for sp in squad_pledges_check:
@@ -1437,9 +1431,8 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
             "is_coordinator": contract.coordinator_id == current_user.id, 
             "bulk_request_id": contract.id, 
             "squad_status": contract.squad_status,
-            "all_squad_received": all_squad_received # 🔥 Send lock status to Flutter!
+            "all_squad_received": all_squad_received 
         })
-
     # ==========================================
     # 2. FETCH INDIVIDUAL DIRECT SALES (MarketListings & Orders)
     # ==========================================
@@ -1519,25 +1512,29 @@ class QAUpdate(BaseModel):
 
 @app.put("/api/buyer/pledges/{pledge_id}/qa")
 def update_qa_status(pledge_id: int, payload: QAUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows Corporate Buyer to perform Quality Assurance on arrived goods WITHOUT releasing Escrow yet."""
     pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
-    if not pledge:
-        raise HTTPException(status_code=404, detail="Pledge not found.")
+    if not pledge: raise HTTPException(status_code=404, detail="Pledge not found.")
         
     contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == pledge.bulk_request_id).first()
     if contract.buyer_name != current_user.full_name:
-        raise HTTPException(status_code=403, detail="Unauthorized. Only the contracted buyer can perform QA.")
+        raise HTTPException(status_code=403, detail="Unauthorized.")
 
     pledge.status = payload.status
-    if payload.notes:
-        pledge.notes = payload.notes
+    if payload.notes: pledge.notes = payload.notes
         
+    # 🔥 AUTO-COMPLETE CONTRACT LOGIC: If all farmers are paid, close the contract!
+    if payload.status == "paid":
+        all_pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == contract.id).all()
+        # Check if EVERY pledge is either paid or rejected (no one left waiting)
+        all_done = all(p.status in ['paid', 'rejected'] for p in all_pledges)
+        if all_done:
+            contract.status = "completed"
+            
     db.commit()
-    return {"message": "Quality Assurance complete."}
+    return {"message": "Funds Released and Escrow closed!" if payload.status == "paid" else "Status updated."}
 
 @app.get("/api/buyer/dashboard")
 def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Aggregates data for the Corporate Buyer's Procurement Dashboard (now includes Roster!)."""
     contracts = db.query(models.BulkRequest).filter(models.BulkRequest.buyer_name == current_user.full_name).all()
     
     total_capital_committed = 0
@@ -1551,38 +1548,35 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
         contract_value = contract.target_weight_kg * contract.price_per_kg
         total_capital_committed += contract_value
         total_tonnage_requested += contract.target_weight_kg
-        
         progress_pct = (total_pledged_kg / contract.target_weight_kg) if contract.target_weight_kg > 0 else 0
         
-        # 🔥 Attach the Roster for Quality Assurance Tracking!
         roster = []
         for p in pledges:
             farmer = db.query(models.User).filter(models.User.id == p.farmer_id).first()
             roster.append({
-                "pledge_id": p.id,
-                "farmer_name": farmer.full_name if farmer else "Unknown",
-                "pledged_kg": p.pledged_weight_kg,
-                "actual_kg": p.actual_weight_kg or p.pledged_weight_kg,
-                "status": p.status,
-                "notes": p.notes
+                "pledge_id": p.id, "farmer_name": farmer.full_name if farmer else "Unknown",
+                "pledged_kg": p.pledged_weight_kg, "actual_kg": p.actual_weight_kg or p.pledged_weight_kg,
+                "status": p.status, "notes": p.notes
             })
             
+        # 🔥 THE FIX: Respect "completed" status so it flows into History!
+        c_status = contract.status
+        if c_status != "completed":
+            c_status = "fulfilled" if total_pledged_kg >= contract.target_weight_kg else "active"
+
         active_contracts.append({
-            "contract_id": contract.id,
-            "crop_name": contract.crop_name,
-            "target_weight_kg": contract.target_weight_kg,
-            "pledged_weight_kg": total_pledged_kg,
-            "price_per_kg": contract.price_per_kg,
-            "progress_percentage": min(progress_pct, 1.0),
-            "status": "fulfilled" if total_pledged_kg >= contract.target_weight_kg else "active",
-            "roster": roster # ✨ Send it to Flutter!
+            "contract_id": contract.id, "crop_name": contract.crop_name,
+            "target_weight_kg": contract.target_weight_kg, "pledged_weight_kg": total_pledged_kg,
+            "price_per_kg": contract.price_per_kg, "progress_percentage": min(progress_pct, 1.0),
+            "status": c_status, # Sent to Flutter
+            "roster": roster 
         })
         
     return {
         "metrics": {
             "total_capital_kes": total_capital_committed,
             "total_tonnage_kg": total_tonnage_requested,
-            "active_contract_count": len(contracts)
+            "active_contract_count": len([c for c in active_contracts if c['status'] != 'completed'])
         },
         "contracts": active_contracts
     }
@@ -1679,34 +1673,28 @@ def create_bulk_request(
 
 @app.get("/bulk-requests/")
 def get_active_bulk_requests(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Fetches open Corporate Contracts for the Home Screen Slider."""
     requests = db.query(models.BulkRequest).filter(
-        models.BulkRequest.status.in_(["Open", "fulfilled"]), # 🔥 THE FIX
+        models.BulkRequest.status.in_(["Open", "fulfilled"]),
         ~models.BulkRequest.buyer_name.like("Hub Pool:%") 
     ).all()
 
     results = []
     for req in requests:
         has_pledged = any(p.farmer_id == current_user.id for p in req.pledges)
-        total_pledged = sum((p.pledged_weight_kg or 0) for p in req.pledges) # 🔥 Calculate progress!
+        total_pledged = sum((p.pledged_weight_kg or 0) for p in req.pledges) 
         
         results.append({
-            "id": req.id,
-            "crop_name": req.crop_name,
-            "target_weight_kg": req.target_weight_kg,
-            "total_pledged": total_pledged, # 🔥 Send the math to Flutter!
-            "price_per_kg": req.price_per_kg,
-            "buyer_name": req.buyer_name,
-            "county": req.county,
-            "ward": req.ward,
+            "id": req.id, "crop_name": req.crop_name, "target_weight_kg": req.target_weight_kg,
+            "total_pledged": total_pledged, "price_per_kg": req.price_per_kg,
+            "buyer_name": req.buyer_name, "county": req.county,
+            "ward": req.ward, "urgency": req.urgency, # 🔥 Added
             "has_pledged": has_pledged 
         })
     return results
 
+
 @app.get("/harvests/me")
 def get_my_market_listings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Fetches the farmer's active listings for the Home Screen."""
-    
     listings = db.query(models.MarketListing).filter(
         models.MarketListing.farmer_id == current_user.id,
         models.MarketListing.status == "active"
@@ -1714,43 +1702,42 @@ def get_my_market_listings(db: Session = Depends(get_db), current_user: models.U
     
     results = []
     for listing in listings:
-        # Fetch pending orders specifically for THIS listing
         orders_query = db.query(models.MarketOrder).filter(
             models.MarketOrder.listing_id == listing.id, 
             models.MarketOrder.status == "pending"
         ).all()
         
-        # Package the orders into a neat list for the Flutter pop-up!
         orders_list = [{
-            "id": o.id,
-            "buyer_name": o.buyer.full_name if o.buyer else "Local Buyer",
-            "quantity": o.quantity_ordered,
-            "type": o.order_type,
-            "total_price": o.total_price,
-            "status": o.status
+            "id": o.id, "buyer_name": o.buyer.full_name if o.buyer else "Local Buyer",
+            "quantity": o.quantity_ordered, "type": o.order_type,
+            "total_price": o.total_price, "status": o.status
         } for o in orders_query]
+
+        # 🔥 THE FIX: Bulletproof decoding
+        parsed_units = []
+        if listing.unit_pricing:
+            if isinstance(listing.unit_pricing, str):
+                try: parsed_units = json.loads(listing.unit_pricing)
+                except: 
+                    try: parsed_units = json.loads(listing.unit_pricing.replace("'", '"'))
+                    except: pass
+            elif isinstance(listing.unit_pricing, list):
+                parsed_units = listing.unit_pricing
 
         display_price = listing.price_per_kg
         display_unit = "KG"
-        if not listing.is_selling_by_weight and listing.unit_pricing:
-            display_price = listing.unit_pricing[0].get("price", 0)
-            display_unit = listing.unit_pricing[0].get("unit_name", "Unit")
+        if not listing.is_selling_by_weight and parsed_units and len(parsed_units) > 0:
+            display_price = parsed_units[0].get("price", 0)
+            display_unit = parsed_units[0].get("unit_name", "Unit")
 
         results.append({
-            "id": listing.id,
-            "crop_name": listing.crop_name,
-            "available_kg": listing.available_kg,
-            "price_per_kg": display_price, 
-            "unit_type": display_unit,
-            
-            # 🔥 THE NEW DATA WE NEED FOR THE COMPREHENSIVE POP-UP
-            "is_selling_by_weight": listing.is_selling_by_weight,
-            "unit_pricing": listing.unit_pricing, 
-            "image_base64": getattr(listing, 'image_base64', None), # Safely grab the uploaded image
-            "orders": orders_list, 
-            "orders_count": len(orders_list)
+            "id": listing.id, "crop_name": listing.crop_name,
+            "available_kg": listing.available_kg, "price_per_kg": display_price, 
+            "unit_type": display_unit, "is_selling_by_weight": listing.is_selling_by_weight,
+            "unit_pricing": parsed_units, # Send the clean array to Flutter!
+            "image_base64": getattr(listing, 'image_base64', None), 
+            "orders": orders_list, "orders_count": len(orders_list)
         })
-        
     return results
 
 @app.post("/bulk-requests/{request_id}/pledge", response_model=schemas.PledgeRead)
@@ -2133,9 +2120,8 @@ def create_market_listing(payload: MarketListingCreate, db: Session = Depends(ge
         available_kg=payload.base_inventory_kg,
         is_selling_by_weight=payload.is_selling_by_weight,
         price_per_kg=payload.price_per_kg,
-        unit_pricing=payload.unit_pricing,
-        
-        # 🔥 ADD THIS LINE SO IT ACTUALLY SAVES!
+        # 🔥 THE FIX: Strictly encode as a JSON string so it saves with double quotes!
+        unit_pricing=json.dumps(payload.unit_pricing) if payload.unit_pricing else "[]",
         image_base64=payload.image_base64 
     )
     db.add(new_listing)
@@ -2195,50 +2181,40 @@ def create_market_order(listing_id: int, payload: MarketOrderCreate, db: Session
 
 @app.get("/api/market/listings")
 def get_all_market_listings(db: Session = Depends(get_db)):
-    """Fetches all active individual farmer listings for the Buyer Marketplace."""
-    
-    # Grab all listings to avoid SQL filter bugs, we will filter them safely in Python!
     listings = db.query(models.MarketListing).all()
     results = []
     
     for listing in listings:
-        # Skip if explicitly sold out
         if listing.available_kg is not None and listing.available_kg <= 0:
             continue
 
-        display_price = listing.price_per_kg
-        display_unit = "KG"
-        
-        # 🔥 THE FIX: Safe JSON Parsing to prevent SQLite string crashes!
+        # 🔥 THE FIX: Bulletproof decoding
         parsed_units = []
         if listing.unit_pricing:
             if isinstance(listing.unit_pricing, str):
-                try:
-                    parsed_units = json.loads(listing.unit_pricing)
-                except:
-                    pass
-            else:
+                try: parsed_units = json.loads(listing.unit_pricing)
+                except: 
+                    try: parsed_units = json.loads(listing.unit_pricing.replace("'", '"'))
+                    except: pass
+            elif isinstance(listing.unit_pricing, list):
                 parsed_units = listing.unit_pricing
-                
-        # Use the parsed data to get the price
+
+        display_price = listing.price_per_kg
+        display_unit = "KG"
         if not listing.is_selling_by_weight and parsed_units and len(parsed_units) > 0:
             display_price = parsed_units[0].get("price", 0)
             display_unit = parsed_units[0].get("unit_name", "Unit")
             
         results.append({
-            "id": listing.id,
-            "crop_name": listing.crop_name,
-            # Fallback to weight_kg if available_kg is null
+            "id": listing.id, "crop_name": listing.crop_name,
             "available_kg": listing.available_kg if listing.available_kg is not None else getattr(listing, 'weight_kg', 0),
-            "price_per_kg": display_price, 
-            "unit_type": display_unit,
+            "price_per_kg": display_price, "unit_type": display_unit,
             "is_selling_by_weight": listing.is_selling_by_weight,
             "unit_pricing": parsed_units, # Send the clean array back to Flutter!
             "image_base64": getattr(listing, 'image_base64', None),
             "farmer_name": listing.farmer.full_name if listing.farmer else "Local Farmer",
             "county": listing.farmer.county if listing.farmer else "Kenya"
         })
-        
     return results
 
 @app.put("/api/squads/{squad_id}/delegate")
@@ -2263,8 +2239,13 @@ class ReceiveLineItemPayload(BaseModel):
 
 @app.put("/api/pledges/{pledge_id}/receive-line-item")
 def receive_individual_pledge(pledge_id: int, payload: ReceiveLineItemPayload, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows Hub Admin to weigh and receive a specific farmer's goods."""
+    """Allows Hub Admin OR Squad Coordinator to weigh and receive a specific farmer's goods."""
     pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
+    contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == pledge.bulk_request_id).first()
+    
+    # 🔥 THE FIX: Security Check allowing both Hub Admins and Squad Coordinators
+    if contract.coordinator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the Coordinator can verify and receive goods.")
     
     pledge.status = "received"
     pledge.actual_weight_kg = payload.actual_weight_kg
@@ -2285,7 +2266,6 @@ def update_market_listing(
     db: Session = Depends(get_db), 
     current_user: models.User = Depends(get_current_user)
 ):
-    """Allows a farmer to update their inventory and prices."""
     listing = db.query(models.MarketListing).filter(
         models.MarketListing.id == listing_id, 
         models.MarketListing.farmer_id == current_user.id
@@ -2298,7 +2278,8 @@ def update_market_listing(
     if payload.price_per_kg is not None:
         listing.price_per_kg = payload.price_per_kg
         
-    listing.unit_pricing = payload.unit_pricing
+    # 🔥 THE FIX: Strictly encode as a JSON string!
+    listing.unit_pricing = json.dumps(payload.unit_pricing) if payload.unit_pricing else "[]"
     
     db.commit()
     return {"message": "Listing updated successfully!"}

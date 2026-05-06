@@ -41,18 +41,31 @@ class ApiClient {
   Future<String?> register(Map<String, dynamic> userData) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/register'),
-        headers: {"Content-Type": "application/json"},
+        Uri.parse('$baseUrl/api/auth/register'), // Make sure this matches your python route
+        headers: {'Content-Type': 'application/json'},
         body: jsonEncode(userData),
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return null; 
+        final data = jsonDecode(response.body);
+        if (data['access_token'] != null) {
+          await _saveToken(data['access_token']);
+        }
+        return null; // Null means Success!
       } else {
-        return "Registration failed: ${response.body}";
+        final decoded = jsonDecode(response.body);
+        
+        // 🔥 Safely extract the error, even if FastAPI sends a 422 List!
+        if (decoded['detail'] != null) {
+          if (decoded['detail'] is List) {
+            return "Please fill in all required fields correctly."; 
+          }
+          return decoded['detail'].toString();
+        }
+        return "Registration failed. Please try again.";
       }
     } catch (e) {
-      return "Connection error: $e";
+      return "Connection error. Please check your internet.";
     }
   }
 
@@ -88,15 +101,16 @@ class ApiClient {
   Future<String?> googleRegister({
     required String idToken,
     required String phoneNumber,
+    String? role, 
   }) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/google-register'),
+        Uri.parse('$baseUrl/api/auth/google-register'), // <-- Fixed URL
         headers: {'Content-Type': 'application/json'},
-        // The backend extracts the name and email from the token, we just provide the phone!
         body: jsonEncode({
           'id_token': idToken,
           'phone_number': phoneNumber,
+          if (role != null) 'role': role, // <-- Passes role to backend
         }),
       );
 

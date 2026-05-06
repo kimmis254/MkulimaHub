@@ -380,14 +380,35 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                         String cropName = bulkRequest['crop_name'] ?? 'Crop';
                         String county = bulkRequest['county'] ?? 'Unknown Location';
                         
+                        // 🔥 Identify if this is a Corporate Contract vs Hub Pool
+                        bool isHubPool = buyerName.toLowerCase().contains('hub pool'); 
+                        bool isCoordinator = bulkRequest['coordinator_id'] == _currentUserId;
+
                         double targetWeight = (bulkRequest['target_weight_kg'] ?? 0).toDouble();
                         double pricePerKg = (bulkRequest['price_per_kg'] ?? 0).toDouble();
                         double totalSquadWeight = 0;
+                        
+                        // 🔥 Determine overall truck status
+                        bool allReceived = true;
+                        String transitState = 'active';
+
                         if (bulkRequest['squad_roster'] != null) {
-                          for (var member in bulkRequest['squad_roster']) totalSquadWeight += (member['pledge_kg'] ?? 0).toDouble();
+                          var roster = bulkRequest['squad_roster'] as List;
+                          if (roster.isNotEmpty) {
+                             transitState = roster[0]['status'] ?? 'active';
+                          }
+                          for (var member in roster) {
+                             totalSquadWeight += (member['pledge_kg'] ?? 0).toDouble();
+                             String s = member['status'] ?? 'unknown';
+                             if (s != 'received' && s != 'in_transit' && s != 'delivered' && s != 'completed' && s != 'paid') {
+                               allReceived = false;
+                             }
+                          }
                         } else {
                           totalSquadWeight = (pledge['pledged_weight_kg'] ?? 0).toDouble();
+                          allReceived = false;
                         }
+                        
                         double progress = targetWeight > 0 ? (totalSquadWeight / targetWeight) : 0; 
                         if (progress > 1.0) progress = 1.0;
 
@@ -457,6 +478,27 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                           ClipRRect(borderRadius: BorderRadius.circular(10), child: LinearProgressIndicator(value: progress, minHeight: 8, backgroundColor: Colors.grey.shade100, color: Colors.orange.shade400)),
                                         ],
                                       ),
+                                      if (isCoordinator && !isHubPool) ...[
+                                        const SizedBox(height: 15),
+                                        Container(
+                                          padding: const EdgeInsets.all(16),
+                                          decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.blue.shade200)),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Icon(LucideIcons.map, size: 16, color: Colors.blue.shade800),
+                                                  const SizedBox(width: 8),
+                                                  Text("Coordinator Delivery Intel", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.blue.shade900)),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 10),
+                                              Text(bulkRequest['ward'] ?? "No explicit address provided. Use chat.", style: GoogleFonts.poppins(fontSize: 12, color: Colors.blue.shade800, height: 1.5)),
+                                            ],
+                                          ),
+                                        )
+                                      ],
                                       
                                       const Divider(height: 30),
                                       Text("Squad Roster", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87)),
@@ -465,9 +507,10 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                       if (bulkRequest['squad_roster'] != null)
                                         ...((bulkRequest['squad_roster'] as List).map((member) {
                                           bool isMe = member['farmer_id'] == _currentUserId; 
-                                          
-                                          // Grab real status directly from the API roster array!
                                           String memberStatus = member['status'] ?? 'unknown';
+
+                                          String pendingLabel = isHubPool ? "Awaiting Hub Admin ⏳" : "Awaiting Coordinator ⏳";
+                                          String verifiedLabel = isHubPool ? "Verified by Admin ✅" : "Verified by Coordinator ✅";
 
                                           return AnimatedContainer(
                                             duration: const Duration(milliseconds: 200),
@@ -489,7 +532,6 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                   child: Column(
                                                     crossAxisAlignment: CrossAxisAlignment.start,
                                                     children: [
-                                                      // 🔥 TOP ROW: Info & Badges
                                                       Row(
                                                         crossAxisAlignment: CrossAxisAlignment.start,
                                                         children: [
@@ -510,7 +552,8 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                                     ),
                                                                     if (isMe) Icon(LucideIcons.edit2, size: 14, color: Colors.green.shade700),
                                                                     
-                                                                    if (!isMe && bulkRequest['coordinator_id'] == _currentUserId)
+                                                                    // 🔥 DELEGATION LOGIC
+                                                                    if (!isMe && !isHubPool && isCoordinator)
                                                                       GestureDetector(
                                                                         onTap: () async {
                                                                           bool confirm = await showDialog(
@@ -518,7 +561,7 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                                             builder: (ctx) => AlertDialog(
                                                                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                                                                               title: const Text("Pass the Crown? 👑"),
-                                                                              content: Text("Are you sure you want to make ${member['name']} the new Squad Coordinator?\n\nYou will lose your transit and verification privileges."),
+                                                                              content: Text("Are you sure you want to make ${member['name']} the new Squad Coordinator?\n\nYou will lose your transit privileges."),
                                                                               actions: [
                                                                                 TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
                                                                                 ElevatedButton(onPressed: () => Navigator.pop(ctx, true), style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade600), child: const Text("Yes, Delegate", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)))
@@ -561,14 +604,13 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                               
                                                               const SizedBox(height: 6),
 
-                                                              // Badges (Cleanly separated from buttons)
                                                               if (isMe) ...[
                                                                 if (memberStatus == 'pending_audit') Text("Awaiting Approval ⏳", style: GoogleFonts.poppins(fontSize: 11, color: Colors.orange.shade700, fontWeight: FontWeight.bold))
                                                                 else if (memberStatus == 'received') Text("Verified ✅", style: GoogleFonts.poppins(fontSize: 12, color: Colors.green.shade700, fontWeight: FontWeight.bold))
                                                                 else if (memberStatus == 'in_transit' || memberStatus == 'delivered' || memberStatus == 'completed' || memberStatus == 'paid') Text("Dispatched 🚚", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade700))
                                                               ] else ...[
-                                                                if (memberStatus == 'pending_audit') Text("Awaiting Hub Admin ⏳", style: GoogleFonts.poppins(fontSize: 10, color: Colors.orange.shade700, fontWeight: FontWeight.bold))
-                                                                else if (memberStatus == 'received') Text("Verified by Admin ✅", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade700))
+                                                                if (memberStatus == 'pending_audit') Text(pendingLabel, style: GoogleFonts.poppins(fontSize: 10, color: Colors.orange.shade700, fontWeight: FontWeight.bold))
+                                                                else if (memberStatus == 'received') Text(verifiedLabel, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade700))
                                                                 else if (memberStatus == 'in_transit' || memberStatus == 'delivered' || memberStatus == 'completed' || memberStatus == 'paid') Text("Dispatched 🚚", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade700))
                                                                 else Text("Waiting Drop-off 📦", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade500))
                                                               ]
@@ -577,8 +619,40 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                         ],
                                                       ),
 
-                                                      // 🔥 BOTTOM ROW: Big Actionable Buttons (Given a full row so they don't squeeze!)
-                                                      if (isMe && (memberStatus == 'pledged' || memberStatus == 'gathering')) ...[
+                                                      // 🔥 THE FIX: COORDINATOR VERIFICATION BUTTON
+                                                      if (isCoordinator && !isHubPool && (memberStatus == 'pledged' || memberStatus == 'gathering' || memberStatus == 'pending_audit')) ...[
+                                                        const Padding(
+                                                          padding: EdgeInsets.symmetric(vertical: 12),
+                                                          child: Divider(height: 1, color: Colors.black12),
+                                                        ),
+                                                        SizedBox(
+                                                          width: double.infinity,
+                                                          child: ElevatedButton.icon(
+                                                            onPressed: () async {
+                                                              setState(() { member['status'] = 'received'; });
+                                                              final error = await _apiClient.updatePledgeStatus(member['pledge_id'], 'received');
+                                                              if (mounted) {
+                                                                if (error == null) {
+                                                                  _loadMyPledges(); 
+                                                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Goods verified and loaded!"), backgroundColor: Colors.green));
+                                                                } else {
+                                                                  setState(() { member['status'] = memberStatus; }); // Revert
+                                                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                                                                }
+                                                              }
+                                                            },
+                                                            icon: const Icon(LucideIcons.clipboardCheck, size: 14, color: Colors.white),
+                                                            label: Text("Verify & Receive Goods", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                                                            style: ElevatedButton.styleFrom(
+                                                              padding: const EdgeInsets.symmetric(vertical: 12),
+                                                              backgroundColor: Colors.teal.shade600,
+                                                              elevation: 0,
+                                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
+                                                            ),
+                                                          ),
+                                                        )
+                                                      ] else if (isMe && !isCoordinator && (memberStatus == 'pledged' || memberStatus == 'gathering')) ...[
+                                                        // NORMAL FARMER DROP-OFF BUTTONS
                                                         const Padding(
                                                           padding: EdgeInsets.symmetric(vertical: 12),
                                                           child: Divider(height: 1, color: Colors.black12),
@@ -588,17 +662,14 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                             Expanded(
                                                               child: OutlinedButton.icon(
                                                                 onPressed: () async {
-                                                                  // 🔥 INSTANT UI UPDATE (Optimistic State)
                                                                   setState(() { member['status'] = 'pending_audit'; });
                                                                   
-                                                                  // 🔥 Use member['pledge_id'] instead of the buggy lookup!
                                                                   final error = await _apiClient.updatePledgeStatus(member['pledge_id'], 'pending_audit');
                                                                   if (mounted) {
                                                                     if (error == null) {
-                                                                      _loadMyPledges(); // Silently sync with backend
+                                                                      _loadMyPledges(); 
                                                                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Marked as handed over!"), backgroundColor: Colors.green));
                                                                     } else {
-                                                                      // Revert if it fails
                                                                       setState(() { member['status'] = 'pledged'; });
                                                                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
                                                                     }
@@ -654,10 +725,37 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                       ),
                                       const SizedBox(height: 15),
 
-                                      if (squadStatus == 'fulfilled')
+                                      // 🔥 THE FIX: COORDINATOR MASTER DISPATCH BUTTONS
+                                      if (squadStatus == 'fulfilled' || transitState == 'completed' || transitState == 'paid')
                                         _buildPremiumButton(title: "Contract Completed", icon: LucideIcons.checkCircle, gradientColors: [Colors.green.shade400, Colors.green.shade700], onTap: null)
-                                      else if (squadStatus == 'active')
-                                        _buildPremiumButton(title: "Squad is Active", icon: LucideIcons.truck, gradientColors: [Colors.blue.shade400, Colors.blue.shade700], onTap: null)
+                                      else if (isCoordinator && !isHubPool && allReceived && (transitState == 'received' || squadStatus == 'active' && transitState != 'in_transit' && transitState != 'delivered'))
+                                        _buildPremiumButton(
+                                          title: "Dispatch Truck (Start Transit)", 
+                                          icon: LucideIcons.truck, 
+                                          gradientColors: [Colors.blue.shade500, Colors.blue.shade800], 
+                                          onTap: () async {
+                                              final error = await _apiClient.updateSquadStatus(bulkRequest['id'], 'in_transit');
+                                              if (error == null) _loadMyPledges();
+                                          },
+                                          isPulsing: true
+                                        )
+                                      else if (isCoordinator && !isHubPool && transitState == 'in_transit')
+                                        _buildPremiumButton(
+                                          title: "Mark as Delivered to Buyer", 
+                                          icon: LucideIcons.mapPin, 
+                                          gradientColors: [Colors.indigo.shade500, Colors.indigo.shade800], 
+                                          onTap: () async {
+                                              final error = await _apiClient.updateSquadStatus(bulkRequest['id'], 'delivered');
+                                              if (error == null) _loadMyPledges();
+                                          },
+                                          isPulsing: true
+                                        )
+                                      else if (squadStatus == 'active' && !allReceived)
+                                        _buildPremiumButton(title: "Loading Truck...", icon: LucideIcons.loader, gradientColors: [Colors.orange.shade400, Colors.orange.shade700], onTap: null)
+                                      else if (squadStatus == 'active' && transitState == 'in_transit')
+                                        _buildPremiumButton(title: "Squad is in Transit", icon: LucideIcons.truck, gradientColors: [Colors.blue.shade400, Colors.blue.shade700], onTap: null)
+                                      else if (squadStatus == 'active' && transitState == 'delivered')
+                                        _buildPremiumButton(title: "Awaiting Buyer QA", icon: LucideIcons.search, gradientColors: [Colors.teal.shade400, Colors.teal.shade700], onTap: null)
                                       else if (squadStatus == 'voting')
                                         _buildPremiumButton(title: "Elect Squad Coordinator", icon: LucideIcons.vote, gradientColors: [Colors.purple.shade400, Colors.deepPurple.shade700], onTap: () => _showVotingSheet(bulkRequest), isPulsing: true)
                                       else if (squadStatus == 'gathering')

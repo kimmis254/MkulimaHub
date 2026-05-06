@@ -201,7 +201,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     String title = widget.isNewUser ? "Create Profile" : (_isEditing ? "Edit Profile" : "My Profile");
 
-    // 🔥 THE FIX: Prevent hardware back button if it's a new user
     return PopScope(
       canPop: !widget.isNewUser,
       onPopInvoked: (didPop) {
@@ -237,7 +236,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
                               
                               if (!_isEditing)
-                                IconButton(icon: const Icon(LucideIcons.settings, color: Colors.white), onPressed: () { /* Settings Screen */ })
+                                // 🔥 THE FIX: Settings button navigation wired up!
+                                IconButton(icon: const Icon(LucideIcons.settings, color: Colors.white), onPressed: () {
+                                  Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+                                })
                               else if (_isEditing && !widget.isNewUser)
                                 IconButton(icon: const Icon(LucideIcons.x, color: Colors.white), onPressed: () => setState(() => _isEditing = false))
                               else
@@ -353,7 +355,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     itemCount: _myPledges.length,
                     itemBuilder: (context, index) {
                       final pledge = _myPledges[index];
-                      // 🔥 THE FIX: Properly extract the nested bulk_request data!
                       final bulkReq = pledge['bulk_request'] ?? {};
                       final cropName = bulkReq['crop_name'] ?? 'Produce';
                       final buyerName = bulkReq['buyer_name'] ?? 'Unknown Buyer';
@@ -362,7 +363,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       final payout = weight * pricePerKg;
                       final status = pledge['status'] ?? 'unknown';
 
-                      // 🔥 Dynamic UI Styling based on Enterprise Status pipeline
                       String statusText = "Pending Drop-off";
                       Color bgColor = Colors.orange.shade50;
                       Color textColor = Colors.orange.shade800;
