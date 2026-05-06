@@ -1,9 +1,9 @@
+import 'dart:convert';
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
-import 'package:mkulimahub_mobile/features/home/unattended_dropoff_screen.dart';
 import 'package:mkulimahub_mobile/features/home/delivery_squads_screen.dart'; 
 
 class MyDeliveriesScreen extends StatefulWidget {
@@ -26,6 +26,7 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
   }
 
   Future<void> _fetchMyDeliveries() async {
+    setState(() => _isLoading = true);
     final data = await _apiClient.getMyDeliveries();
     if (mounted) {
       setState(() {
@@ -34,299 +35,222 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
       });
     }
   }
-  Future<void> _handleStatusUpdate(int bulkRequestId, String newStatus) async {
-    setState(() => _isLoading = true); 
-    final error = await _apiClient.updateSquadDeliveryStatus(bulkRequestId, newStatus);
-    
-    if (mounted) {
-      if (error == null) {
-        _fetchMyDeliveries(); 
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Delivery status updated successfully!"), backgroundColor: Colors.green));
-      } else {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
-      }
-    }
-  }
-
-  Widget _buildCoordinatorButton({required String title, required IconData icon, required MaterialColor color, required VoidCallback onTap}) {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        onPressed: onTap,
-        icon: Icon(icon, color: Colors.white, size: 18),
-        label: Text(title, style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: color.shade600,
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          elevation: 4,
-          shadowColor: color.shade200
-        ),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: Column(
-        children: [
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.only(left: 20, right: 20, bottom: 25, top: MediaQuery.of(context).padding.top + 10),
-            decoration: BoxDecoration(
-              color: Colors.green.shade800,
-              borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(30), bottomRight: Radius.circular(30)),
-              boxShadow: [BoxShadow(color: Colors.green.shade900.withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 5))],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(LucideIcons.arrowLeft, color: Colors.white), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
-                    const SizedBox(width: 15),
-                    Text("Logistics", style: GoogleFonts.poppins(color: Colors.green.shade100, fontSize: 14)),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Text("My Deliveries", style: GoogleFonts.poppins(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
-                Text("Track your direct sales and bulk shipments.", style: GoogleFonts.poppins(color: Colors.green.shade50, fontSize: 13)),
-              ],
-            ),
-          ),
-          Expanded(
-            child: _isLoading 
-              ? const Center(child: CircularProgressIndicator(color: Colors.green))
-              : _myPledges.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(padding: const EdgeInsets.all(25), decoration: BoxDecoration(color: Colors.grey.shade200, shape: BoxShape.circle), child: Icon(LucideIcons.packageSearch, size: 50, color: Colors.grey.shade400)),
-                          const SizedBox(height: 15),
-                          Text("No deliveries yet", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey.shade800)),
-                          Text("Your active shipments will appear here.", style: GoogleFonts.poppins(color: Colors.grey.shade500)),
-                        ],
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(20),
-                      itemCount: _myPledges.length,
-                      itemBuilder: (context, index) {
-                        return FadeInUp(delay: Duration(milliseconds: 100 * index), child: _buildPremiumTrackingCard(_myPledges[index]));
-                      },
-                    ),
-          ),
-        ],
+      backgroundColor: Colors.grey.shade50,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent, elevation: 0,
+        leading: IconButton(icon: Icon(LucideIcons.arrowLeft, color: Colors.green.shade900), onPressed: () => Navigator.pop(context)),
+        title: Text("My Deliveries", style: GoogleFonts.poppins(color: Colors.green.shade900, fontWeight: FontWeight.bold, fontSize: 18)), centerTitle: true,
       ),
-    );
-  }
-
-  Widget _buildPremiumTrackingCard(Map<String, dynamic> pledge) {
-    final status = pledge['status'] ?? 'pending';
-    final isRejected = status == 'rejected';
-    final String orderType = pledge['type'] ?? 'Bulk Contract'; 
-    final bool isBulk = orderType.toLowerCase().contains('bulk') || orderType.toLowerCase().contains('pool');
-    
-    final bool allSquadReceived = pledge['all_squad_received'] == true;
-
-    Color primaryColor = Colors.orange;
-    Color lightColor = Colors.orange.shade50;
-    if (status == 'received') { primaryColor = Colors.blue; lightColor = Colors.blue.shade50; }
-    if (status == 'in_transit') { primaryColor = Colors.purple; lightColor = Colors.purple.shade50; }
-    if (status == 'delivered' || status == 'paid' || status == 'completed') { primaryColor = Colors.green; lightColor = Colors.green.shade50; }
-    if (isRejected) { primaryColor = Colors.red; lightColor = Colors.red.shade50; }
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.08), blurRadius: 20, offset: const Offset(0, 10))],
-        border: Border.all(color: isRejected ? Colors.red.shade200 : Colors.grey.shade100, width: isRejected ? 2 : 1),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(color: lightColor, borderRadius: const BorderRadius.only(topLeft: Radius.circular(24), topRight: Radius.circular(24))),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      margin: const EdgeInsets.only(bottom: 8),
-                      decoration: BoxDecoration(color: isBulk ? Colors.purple.shade100 : Colors.teal.shade100, borderRadius: BorderRadius.circular(6)),
-                      child: Text(isBulk ? "Bulk Squad" : "Direct Sale", style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: isBulk ? Colors.purple.shade800 : Colors.teal.shade800)),
-                    ),
-                    Text("ID: #${pledge['id']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
-                  ],
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text("Expected Payout", style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade600)),
-                    Text("KES ${pledge['expected_payout'] ?? 0}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: isRejected ? Colors.red : Colors.green.shade700, decoration: isRejected ? TextDecoration.lineThrough : null)),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: primaryColor.withOpacity(0.15), shape: BoxShape.circle), child: Icon(LucideIcons.package, color: primaryColor, size: 22)),
-                    const SizedBox(width: 15),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text("${pledge['weight_kg'] ?? 0} ${pledge['unit'] ?? 'KG'} of ${pledge['crop'] ?? 'Produce'}", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
-                          Text("Buyer: ${pledge['buyer'] ?? 'Unknown'}", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13)),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 25),
-
-                if (!isRejected) _buildModernTimeline(status),
-                const SizedBox(height: 25),
-
-                if (isBulk && pledge['bulk_request_id'] != null) ...[
-                  if (pledge['squad_status'] == 'voting')
-                    _buildCoordinatorButton(title: "Squad Election Active! Vote Now", icon: LucideIcons.vote, color: Colors.blue, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: pledge['bulk_request_id']))))
-                  else
-                    _buildCoordinatorButton(title: "Open Squad Dashboard", icon: LucideIcons.users, color: Colors.teal, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: pledge['bulk_request_id'])))),
+      body: _isLoading 
+        ? const Center(child: CircularProgressIndicator(color: Colors.green))
+        : _myPledges.isEmpty 
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(LucideIcons.packageOpen, size: 60, color: Colors.grey.shade300),
                   const SizedBox(height: 15),
+                  Text("No deliveries pending.", style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 14)),
                 ],
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(20),
+              itemCount: _myPledges.length,
+              itemBuilder: (context, index) {
+                final pledge = _myPledges[index];
+                bool isDirectSale = pledge['type'] == 'Direct Sale';
+                String status = pledge['status'] ?? 'pending';
+                String deliveryMethod = pledge['delivery_method'] ?? 'Delivery'; 
 
-                if (pledge['is_coordinator'] != true && !isRejected) ...[
-                  if (status == 'pending_audit')
-                    Container(
-                      width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 14),
-                      decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [Icon(LucideIcons.clock, size: 16, color: Colors.orange.shade700), const SizedBox(width: 8), Text("Awaiting Verification", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontWeight: FontWeight.w600))],
-                      ),
-                    )
-                ],
-
-                // 🚚 THE DRIVER CONTROLS (No Coordinator banner here either!)
-                if (pledge['is_coordinator'] == true && !isRejected) ...[
-
-                  if (status == 'pledged' || status == 'gathering' || status == 'pending_audit' || status == 'received')
-                    if (!allSquadReceived)
-                      Container(
-                        width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 14),
-                        decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(LucideIcons.shieldAlert, size: 16, color: Colors.orange.shade700),
-                            const SizedBox(width: 8),
-                            Expanded(child: Text("Waiting for Hub Admin to verify all goods...", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 11))),
-                          ],
+                return FadeInUp(
+                  delay: Duration(milliseconds: index * 100),
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 20),
+                    decoration: BoxDecoration(
+                      color: Colors.white, borderRadius: BorderRadius.circular(20),
+                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 15, offset: const Offset(0, 5))],
+                      border: Border.all(color: isDirectSale ? Colors.blue.shade100 : Colors.green.shade100)
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // HEADER
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: isDirectSale ? Colors.blue.shade50 : Colors.green.shade50,
+                            borderRadius: const BorderRadius.vertical(top: Radius.circular(20))
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(isDirectSale ? LucideIcons.shoppingBag : LucideIcons.truck, size: 16, color: isDirectSale ? Colors.blue.shade700 : Colors.green.shade700),
+                                  const SizedBox(width: 8),
+                                  Text(isDirectSale ? "Direct Sale • $deliveryMethod" : pledge['type'], style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 12, color: isDirectSale ? Colors.blue.shade800 : Colors.green.shade800)),
+                                ],
+                              ),
+                              Text(pledge['id'], style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey.shade700)),
+                            ],
+                          ),
                         ),
-                      )
-                    else 
-                      _buildCoordinatorButton(title: "Start Journey to Buyer", icon: LucideIcons.truck, color: Colors.purple, onTap: () => _handleStatusUpdate(pledge['bulk_request_id'], 'in_transit'))
-                  else if (status == 'in_transit')
-                    _buildCoordinatorButton(title: "Confirm Arrival at Buyer", icon: LucideIcons.mapPin, color: Colors.green, onTap: () => _handleStatusUpdate(pledge['bulk_request_id'], 'delivered'))
-                ],
 
-                Builder(
-                  builder: (context) {
-                    String dynamicNote = "";
-                    if (status == 'in_transit') { dynamicNote = "🚚 Goods are currently in transit to the buyer."; } 
-                    else if (status == 'delivered') { dynamicNote = "📍 Goods arrived at destination. Awaiting buyer confirmation."; } 
-                    else if (status == 'paid' || status == 'completed') { dynamicNote = "✅ Delivery successfully completed and verified."; } 
-                    else if (status == 'received') { dynamicNote = "🏢 Goods verified and safely stored."; } 
-                    else if (status == 'pending_audit') { dynamicNote = "⏳ Drop-off submitted. Awaiting Hub Admin audit."; } 
-                    else if (pledge['notes'] != null && pledge['notes'].toString().isNotEmpty) { dynamicNote = pledge['notes'].toString(); } 
-                    else { dynamicNote = "📦 Please deliver your pledged amount to the Coordinator/Hub."; }
-                    if (isRejected) { dynamicNote = pledge['notes'] ?? "Delivery Rejected."; }
+                        // BODY
+                        Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text("${pledge['weight_kg']} ${pledge['unit']} of ${pledge['crop']}", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 6),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text("Buyer: ${pledge['buyer']}", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13)),
+                                  Text("KES ${pledge['expected_payout']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.green.shade700, fontSize: 14)),
+                                ],
+                              ),
+                              
+                              if (isDirectSale) ...[
+                                const SizedBox(height: 15),
+                                Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(color: Colors.blue.shade50.withOpacity(0.5), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.blue.shade100)),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(LucideIcons.map, size: 16, color: Colors.blue.shade800),
+                                          const SizedBox(width: 8),
+                                          Text(deliveryMethod == "Pickup" ? "Buyer Contact Intel" : "Delivery Logistics", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.blue.shade900)),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 10),
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Icon(LucideIcons.phone, size: 14, color: Colors.blue.shade600),
+                                          const SizedBox(width: 8),
+                                          Expanded(child: Text(pledge['buyer_phone'] ?? "N/A", style: GoogleFonts.poppins(fontSize: 12, color: Colors.blue.shade800, fontWeight: FontWeight.w600))),
+                                        ],
+                                      ),
+                                      if (deliveryMethod == "Delivery") ...[
+                                        const SizedBox(height: 6),
+                                        Row(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Icon(LucideIcons.mapPin, size: 14, color: Colors.blue.shade600),
+                                            const SizedBox(width: 8),
+                                            Expanded(child: Text(pledge['buyer_address'] ?? "N/A", style: GoogleFonts.poppins(fontSize: 12, color: Colors.blue.shade800))),
+                                          ],
+                                        ),
+                                      ]
+                                    ],
+                                  ),
+                                ),
+                                
+                                // 🔥 THE DISPUTE RENDERER
+                                if (status == 'disputed') ...[
+                                  const SizedBox(height: 15),
+                                  Container(
+                                    padding: const EdgeInsets.all(16), width: double.infinity,
+                                    decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.red.shade200)),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(children: [const Icon(LucideIcons.alertTriangle, color: Colors.red, size: 18), const SizedBox(width: 8), Text("Buyer Raised a Dispute", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.red.shade900))]),
+                                        const SizedBox(height: 10),
+                                        Text('"${pledge['dispute_notes'] ?? 'No reason provided.'}"', style: GoogleFonts.poppins(fontStyle: FontStyle.italic, color: Colors.red.shade800, fontSize: 13)),
+                                        const SizedBox(height: 10),
+                                        if (pledge['dispute_image'] != null)
+                                          ClipRRect(
+                                            borderRadius: BorderRadius.circular(12),
+                                            child: Image.memory(base64Decode(pledge['dispute_image'].split(',').last), height: 120, width: double.infinity, fit: BoxFit.cover),
+                                          ),
+                                        const SizedBox(height: 15),
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: ElevatedButton(
+                                            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Call the buyer to resolve the dispute."))),
+                                            style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700, foregroundColor: Colors.white, elevation: 0),
+                                            child: const Text("Contact Buyer"),
+                                          ),
+                                        )
+                                      ],
+                                    ),
+                                  )
+                                ]
+                              ],
 
-                    return Container(
-                      width: double.infinity, margin: const EdgeInsets.only(top: 20), padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(color: isRejected ? Colors.red.shade50 : Colors.blue.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: isRejected ? Colors.red.shade200 : Colors.blue.shade100)),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(isRejected ? LucideIcons.alertTriangle : LucideIcons.info, size: 16, color: isRejected ? Colors.red : Colors.blue.shade700),
-                          const SizedBox(width: 10),
-                          Expanded(child: Text(dynamicNote, style: GoogleFonts.poppins(fontSize: 12, color: isRejected ? Colors.red.shade900 : Colors.blue.shade900, fontWeight: FontWeight.w500))),
-                        ],
-                      ),
-                    );
-                  }
-                )
-              ],
-            ),
-          )
-        ],
-      ),
-    );
-  }
+                              const SizedBox(height: 20),
+                              const Divider(height: 1),
+                              const SizedBox(height: 20),
 
-  Widget _buildModernTimeline(String currentStatus) {
-    int currentIndex = 0; 
-    if (currentStatus == 'received') currentIndex = 1;
-    if (currentStatus == 'in_transit') currentIndex = 2;
-    if (currentStatus == 'delivered' || currentStatus == 'fulfilled') currentIndex = 3;
-    if (currentStatus == 'paid' || currentStatus == 'completed') currentIndex = 4;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildModernTimelineStep("Drop-off", LucideIcons.store, currentIndex >= 0, currentIndex == 0, true),
-        _buildModernTimelineStep("Hub", LucideIcons.home, currentIndex >= 1, currentIndex == 1, true),
-        _buildModernTimelineStep("Transit", LucideIcons.truck, currentIndex >= 2, currentIndex == 2, true),
-        _buildModernTimelineStep("Paid", LucideIcons.wallet, currentIndex >= 4, currentIndex == 4, false),
-      ],
-    );
-  }
-
-  Widget _buildModernTimelineStep(String label, IconData icon, bool isPassed, bool isActive, bool showLine) {
-    Color nodeColor = isPassed ? Colors.green.shade500 : Colors.grey.shade200;
-    if (isActive) nodeColor = Colors.blue.shade600;
-    Widget nodeIcon = Container(
-      width: 32, height: 32,
-      decoration: BoxDecoration(
-        color: isActive ? Colors.blue.shade600 : (isPassed ? Colors.green.shade500 : Colors.grey.shade100),
-        shape: BoxShape.circle,
-        border: isActive ? null : Border.all(color: isPassed ? Colors.green.shade600 : Colors.grey.shade300, width: 1.5),
-        boxShadow: isActive ? [BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 8, offset: const Offset(0, 3))] : [],
-      ),
-      child: Icon(isPassed && !isActive ? LucideIcons.check : icon, size: 14, color: isActive || isPassed ? Colors.white : Colors.grey.shade400),
-    );
-    if (isActive) { nodeIcon = Pulse(infinite: true, child: nodeIcon); }
-    return Expanded(
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(child: Container(height: 3, color: isPassed ? Colors.green.shade400 : Colors.transparent)),
-              nodeIcon,
-              Expanded(child: Container(height: 3, color: showLine ? (isPassed && !isActive ? Colors.green.shade400 : Colors.grey.shade200) : Colors.transparent)),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(label, style: GoogleFonts.poppins(fontSize: 10, fontWeight: isActive ? FontWeight.bold : FontWeight.w600, color: isActive ? Colors.blue.shade800 : (isPassed ? Colors.green.shade700 : Colors.grey.shade500))),
-        ],
-      ),
+                              // STATUS / ACTION BUTTONS
+                              if (isDirectSale) ...[
+                                if (status == 'pending' && deliveryMethod == "Delivery")
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: ElevatedButton.icon(
+                                      onPressed: () async {
+                                        setState(() => _isLoading = true);
+                                        final error = await _apiClient.updateDirectOrderStatus(pledge['order_id'], 'in_transit');
+                                        if (error == null) {
+                                          _fetchMyDeliveries();
+                                        } else {
+                                          setState(() => _isLoading = false);
+                                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                                        }
+                                      },
+                                      icon: const Icon(LucideIcons.truck, size: 16, color: Colors.white),
+                                      label: Text("Start Delivery Transit", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.white)),
+                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade600, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                                    ),
+                                  )
+                                else if (status == 'pending' && deliveryMethod == "Pickup")
+                                  Container(
+                                    padding: const EdgeInsets.all(12), alignment: Alignment.center,
+                                    decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)),
+                                    child: Text("Awaiting Buyer Pickup.", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 12)),
+                                  )
+                                else if (status == 'in_transit')
+                                  Container(
+                                    padding: const EdgeInsets.all(12), alignment: Alignment.center,
+                                    decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)),
+                                    child: Text("In Transit. Waiting for Buyer Confirmation.", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 12)),
+                                  )
+                                else if (status == 'completed' || status == 'paid')
+                                  Container(
+                                    padding: const EdgeInsets.all(12), alignment: Alignment.center,
+                                    decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12)),
+                                    child: Text("Order Complete & Paid ✅", style: GoogleFonts.poppins(color: Colors.green.shade800, fontWeight: FontWeight.bold, fontSize: 12)),
+                                  )
+                              ] else ...[
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: OutlinedButton(
+                                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: pledge['bulk_request_id']))),
+                                    style: OutlinedButton.styleFrom(foregroundColor: Colors.green.shade700, side: BorderSide(color: Colors.green.shade300), padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                                    child: Text("View Squad Tracker", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+                                  ),
+                                )
+                              ]
+                            ],
+                          ),
+                        )
+                      ],
+                    ),
+                  ),
+                );
+              }
+            )
     );
   }
 }

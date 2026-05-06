@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -17,7 +18,7 @@ class BuyerCartScreen extends StatefulWidget {
 }
 
 class _BuyerCartScreenState extends State<BuyerCartScreen> {
-  bool _isLoading = false;
+  final bool _isLoading = false;
 
   double get _subtotal {
     return CartManager.items.fold(0, (sum, item) => sum + (item['weightKg'] * item['pricePerKg']));
@@ -39,6 +40,38 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
         builder: (_) => BuyerCheckoutScreen(cartItems: CartManager.items)
       )
     ).then((_) => setState(() {})); // Refresh cart when returning
+  }
+
+  // 🔥 THE FIX: Smart Image Decoder that handles both Base64 and Web URLs
+  Widget _buildCartImage(Map<String, dynamic> item) {
+    String? imageStr = item['image']?.toString();
+    
+    // Fallback if the key was named 'image_base64' by accident during cart addition
+    if (imageStr == null || imageStr.isEmpty) {
+      imageStr = item['image_base64']?.toString();
+    }
+
+    if (imageStr == null || imageStr.isEmpty) {
+      return Container(width: 80, height: 80, color: Colors.teal.shade50, child: const Icon(LucideIcons.imageOff, color: Colors.teal));
+    }
+
+    // Check if it is a Base64 string from the camera/gallery
+    if (imageStr.startsWith('data:image') || imageStr.length > 200) {
+      try {
+        final base64String = imageStr.split(',').last;
+        return Image.memory(base64Decode(base64String), width: 80, height: 80, fit: BoxFit.cover);
+      } catch (e) {
+        debugPrint("Error decoding Base64 image in cart: $e");
+        return Container(width: 80, height: 80, color: Colors.teal.shade50, child: const Icon(LucideIcons.imageOff, color: Colors.teal));
+      }
+    }
+
+    // Otherwise, assume it's a standard web URL
+    return Image.network(
+      imageStr,
+      width: 80, height: 80, fit: BoxFit.cover,
+      errorBuilder: (c, e, s) => Container(width: 80, height: 80, color: Colors.teal.shade50, child: const Icon(LucideIcons.imageOff, color: Colors.teal)),
+    );
   }
 
   @override
@@ -120,14 +153,10 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
                   ),
                   child: Row(
                     children: [
-                      // Item Image
+                      // 🔥 Item Image (Now uses the Smart Decoder)
                       ClipRRect(
                         borderRadius: BorderRadius.circular(16),
-                        child: Image.network(
-                          item['image'], 
-                          width: 80, height: 80, fit: BoxFit.cover,
-                          errorBuilder: (c, e, s) => Container(width: 80, height: 80, color: Colors.teal.shade50, child: const Icon(LucideIcons.imageOff, color: Colors.teal)),
-                        ),
+                        child: _buildCartImage(item),
                       ),
                       const SizedBox(width: 15),
                       // Item Details

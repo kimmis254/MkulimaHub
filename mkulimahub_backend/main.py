@@ -48,8 +48,8 @@ def scheduled_clustering_job():
     print("🤖 [SCHEDULER] Running Automatic DBSCAN Clustering...")
     db: Session = SessionLocal() 
     try:
-        # You can choose to pass a specific crop, or let the function loop through active crops
-        run_clustering_algorithm(db, crop="Maize") 
+        # 🔥 THE FIX: Tell the scheduler to cluster "All" crops, not just Maize!
+        run_clustering_algorithm(db, target_crop="All") 
         print("✅ [SCHEDULER] Clustering Complete!")
     except Exception as e:
         print(f"❌ [SCHEDULER ERROR]: {e}")
@@ -500,7 +500,10 @@ def get_my_pledges(db: Session = Depends(get_db), current_user: models.User = De
     # all at the exact same time in a single SQL query!
     pledges = db.query(models.Pledge)\
                 .options(joinedload(models.Pledge.bulk_request))\
-                .filter(models.Pledge.farmer_id == current_user.id).all()
+                .filter(
+                    models.Pledge.farmer_id == current_user.id,
+                    ~models.Pledge.status.in_(["paid", "completed", "rejected"]) 
+                ).all()
     
     result = []
     db_needs_commit = False # 🔥 Tracks if we deleted ghosts OR healed a stuck contract
@@ -666,65 +669,106 @@ def delete_pledge(pledge_id: int, db: Session = Depends(get_db), current_user: m
 # 6. HUBS, CLUSTERS, & CO-OP CHAT
 # ==========================================
 
-def run_clustering_algorithm(db: Session, crop: str = "Maize"):
+def run_clustering_algorithm(db: Session, target_crop: str = "All"):
     """
-    Core DBSCAN logic that freezes clusters into the database and appoints Coordinators.
+    Groups independent farmers by Crop, then uses DBSCAN to cluster them 
+    if they are within a 5km radius of each other.
     """
-    farmers = db.query(models.User).filter(
-        models.User.latitude.isnot(None), 
-        models.User.longitude.isnot(None),
-        models.User.hub_id == None, # Only cluster farmers not currently in a hub
-        models.User.main_crops.ilike(f"%{crop}%")
-    ).all()
+    # 1. Fetch unclustered (independent) farmers with GPS coordinates
+    query = db.query(models.User).filter(
+        models.User.role == "farmer",
+        models.User.hub_id == None,
+        models.User.latitude.isnot(None),
+        models.User.longitude.isnot(None)
+    )
 
-    if not farmers:
+    # Filter by crop if a specific one was requested
+    if target_crop != "All":
+        query = query.filter(models.User.main_crops.ilike(f"%{target_crop}%"))
+
+    independent_farmers = query.all()
+    if not independent_farmers:
         return 0
 
-    coords = np.radians([[f.latitude, f.longitude] for f in farmers])
-    dbscan = DBSCAN(eps=(10 / 6371.0088), min_samples=2, algorithm='ball_tree', metric='haversine')
-    labels = dbscan.fit_predict(coords)
+    # 2. Extract data into a list
+    data = []
+    for f in independent_farmers:
+        if f.main_crops:
+            # Assume their primary crop is the first one listed in the string
+            primary_crop = f.main_crops.split(',')[0].strip().title()
+            data.append({
+                "id": f.id,
+                "lat": float(f.latitude),
+                "lon": float(f.longitude),
+                "crop": primary_crop,
+                "ward": f.ward or "Regional"
+            })
+            
+    if not data:
+        return 0
 
-    new_hubs_created = 0
-    clusters = {}
+    df = pd.DataFrame(data)
+    total_hubs_created = 0
     
-    for i, label in enumerate(labels):
-        if label != -1: 
-            if label not in clusters:
-                clusters[label] = []
-            clusters[label].append(farmers[i])
+    # Radius of earth in km
+    EARTH_RADIUS_KM = 6371.0 
+    # Max distance between farmers to be in the same hub (5 kilometers)
+    MAX_DISTANCE_KM = 5.0 
+    epsilon = MAX_DISTANCE_KM / EARTH_RADIUS_KM
 
-    for label, cluster_farmers in clusters.items():
-        # 1. Calculate the exact geographical center of the cluster
-        avg_lat = sum(f.latitude for f in cluster_farmers) / len(cluster_farmers)
-        avg_lon = sum(f.longitude for f in cluster_farmers) / len(cluster_farmers)
-
-        # 2. Name the Hub after the first farmer's Ward
-        hub_name = f"{cluster_farmers[0].ward or 'Regional'} {crop} Hub"
-
-        # 3. Create the permanent Hub (Notice coordinator_id is completely left out!)
-        new_hub = models.Hub(
-            name=hub_name,
-            crop=crop,
-            center_latitude=avg_lat,
-            center_longitude=avg_lon
-        )
-        db.add(new_hub)
-        db.flush() # Get the new_hub.id immediately
-
-        # 4. Assign all clustered farmers to this new Hub
-        for farmer in cluster_farmers:
-            farmer.hub_id = new_hub.id
+    # 3. Run Spatial AI (DBSCAN) independently for EACH crop!
+    unique_crops = df['crop'].unique()
+    
+    for current_crop in unique_crops:
+        crop_df = df[df['crop'] == current_crop].copy()
         
-        new_hubs_created += 1
+        # Need at least 2 farmers near each other to form a viable Co-op Hub
+        if len(crop_df) < 2:
+            continue
+
+        # Convert lat/lon to radians for the Haversine formula (Earth curvature)
+        coords = np.radians(crop_df[['lat', 'lon']].values)
+        
+        # Run DBSCAN AI
+        dbscan = DBSCAN(eps=epsilon, min_samples=2, algorithm='ball_tree', metric='haversine').fit(coords)
+        crop_df['cluster'] = dbscan.labels_
+        
+        # 4. Save the new valid clusters to the Database
+        for cluster_id in crop_df['cluster'].unique():
+            if cluster_id == -1: 
+                # -1 means "Noise" (Farmer is too isolated, leave them independent)
+                continue
+                
+            cluster_farmers = crop_df[crop_df['cluster'] == cluster_id]
+            
+            # Generate the new Hub using the Ward of the first farmer
+            ward_name = cluster_farmers.iloc[0]['ward']
+            hub_name = f"{ward_name} {current_crop} Co-op"
+            
+            new_hub = models.Hub(
+                name=hub_name,
+                crop=current_crop,
+                center_latitude=float(cluster_farmers['lat'].mean()), 
+                center_longitude=float(cluster_farmers['lon'].mean())
+            )
+            db.add(new_hub)
+            db.flush() # Get the new_hub.id immediately
+            
+            # Move the independent farmers into their new Hub
+            for farmer_id in cluster_farmers['id']:
+                db.query(models.User).filter(models.User.id == farmer_id).update({"hub_id": new_hub.id})
+            
+            total_hubs_created += 1
 
     db.commit()
-    return new_hubs_created
+    return total_hubs_created
 
 @app.post("/api/admin/trigger-clustering")
-def admin_trigger_clustering(crop: str = "Maize", db: Session = Depends(get_db)):
+def admin_trigger_clustering(crop: str = "All", db: Session = Depends(get_db)):
     """Admin endpoint to manually trigger the freeze logic."""
-    created = run_clustering_algorithm(db, crop)
-    return {"message": f"Successfully created {created} new permanent Hubs."}
+    created = run_clustering_algorithm(db, target_crop=crop)
+    return {"message": f"Successfully created {created} new permanent Hubs based on proximity and crop!"}
+
 
 @app.get("/api/clusters")
 def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -799,7 +843,8 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db), current
     
     # 🔥 1. Get the raw squads from the database
     all_squads = db.query(models.BulkRequest).filter(
-        models.BulkRequest.squad_status.in_(["gathering", "voting", "active"]) 
+        models.BulkRequest.squad_status.in_(["gathering", "voting", "active"]),
+        models.BulkRequest.status != "completed" 
     ).all()
     
     squads_db = []
@@ -1388,7 +1433,10 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
     # ==========================================
     # 1. FETCH BULK SQUAD PLEDGES
     # ==========================================
-    pledges = db.query(models.Pledge).filter(models.Pledge.farmer_id == current_user.id).all()
+    pledges = db.query(models.Pledge).filter(
+        models.Pledge.farmer_id == current_user.id,
+        ~models.Pledge.status.in_(["paid", "completed", "rejected"])
+    ).all()
     
     for p in pledges:
         contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == p.bulk_request_id).first()
@@ -1437,50 +1485,42 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
     # 2. FETCH INDIVIDUAL DIRECT SALES (MarketListings & Orders)
     # ==========================================
     try:
-        my_listings = db.query(models.MarketListing).filter(models.MarketListing.farmer_id == current_user.id).all()
+        direct_orders = db.query(models.MarketOrder).join(models.MarketListing).filter(
+            models.MarketListing.farmer_id == current_user.id,
+            ~models.MarketOrder.status.in_(["paid", "completed", "rejected"]) # 🔥 THE FIX: Hides finished orders
+        ).all()
         
-        for listing in my_listings:
-            orders = db.query(models.MarketOrder).filter(models.MarketOrder.listing_id == listing.id).all()
+        for order in direct_orders:
+            listing = order.listing
+            buyer = order.buyer
             
-            if not orders:
-                 unified_deliveries.append({
-                    "id": f"LST-{listing.id:04d}",
-                    "type": "Market Listing",
-                    "crop": listing.crop_name,
-                    "weight_kg": listing.available_kg, 
-                    "unit": "KG", 
-                    "expected_payout": 0, # Hasn't sold yet
-                    "status": "pending", 
-                    "buyer": "Awaiting Buyers", 
-                    "notes": f"Inventory: {listing.available_kg} / {listing.base_inventory_kg} KG remaining.",
-                    "is_coordinator": True, 
-                    "bulk_request_id": None,
-                    "squad_status": None,
-                    "all_squad_received": True # Default to true so UI doesn't break
-                })
-            else:
-                for order in orders:
-                    # Look how we dynamically format the display text based on what they bought!
-                    display_unit = "KG" if order.order_type == "weight" else listing.unit_name
-
-                    unified_deliveries.append({
-                        "id": f"ORD-{order.id:04d}",
-                        "type": "Direct Sale",
-                        "crop": listing.crop_name,
-                        "weight_kg": order.quantity_ordered, 
-                        "unit": display_unit, # e.g., "Pieces" or "KG"
-                        "expected_payout": order.total_price, 
-                        "status": order.status, 
-                        "buyer": order.buyer.full_name if order.buyer else "Local Consumer", 
-                        "notes": f"Order for {order.quantity_ordered} {display_unit}.",
-                        "is_coordinator": True, 
-                        "bulk_request_id": None,
-                        "squad_status": None,
-                        "all_squad_received": True # Default to true so UI doesn't break
-                    })
+            # 🔥 THE FIX: Get unit name safely from the order, not the listing!
+            unit_name = order.order_type if order.order_type else "KG"
+            
+            # 🔥 NEW: Grab Buyer's Contact & Location Intel
+            buyer_contact = buyer.phone_number if buyer and buyer.phone_number else "No phone provided"
+            
+            buyer_address = "Unknown Location"
+            if buyer:
+                address_parts = [buyer.village, buyer.sub_county, buyer.county]
+                buyer_address = ", ".join([p for p in address_parts if p])
+            
+            unified_deliveries.append({
+                "id": f"ORD-{order.id:04d}", 
+                "order_id": order.id, # 🔥 Required for the farmer to trigger status updates!
+                "type": "Direct Sale",
+                "crop": listing.crop_name, "weight_kg": order.quantity_ordered, "unit": unit_name, 
+                "expected_payout": order.total_price, "status": order.status, 
+                "buyer": buyer.full_name if buyer else "Customer", 
+                "buyer_phone": buyer_contact, "buyer_address": buyer_address,
+                "delivery_method": getattr(order, 'delivery_method', 'Delivery'), # 🔥 NEW
+                "dispute_notes": getattr(order, 'dispute_notes', None),           # 🔥 NEW
+                "dispute_image": getattr(order, 'dispute_image', None),           # 🔥 NEW
+            })
     except Exception as e:
         print(f"Direct Sales fetch error: {e}")
-
+        
+    # Finally, return both lists combined
     return unified_deliveries
     
 class SquadStatusUpdate(BaseModel):
@@ -1509,6 +1549,7 @@ def update_squad_delivery_status(bulk_request_id: int, payload: SquadStatusUpdat
 class QAUpdate(BaseModel):
     status: str
     notes: Optional[str] = None
+    dispute_image: Optional[str] = None
 
 @app.put("/api/buyer/pledges/{pledge_id}/qa")
 def update_qa_status(pledge_id: int, payload: QAUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -1533,6 +1574,19 @@ def update_qa_status(pledge_id: int, payload: QAUpdate, db: Session = Depends(ge
     db.commit()
     return {"message": "Funds Released and Escrow closed!" if payload.status == "paid" else "Status updated."}
 
+@app.put("/api/buyer/orders/{order_id}/qa")
+def update_direct_order_qa(order_id: int, payload: QAUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    order = db.query(models.MarketOrder).filter(models.MarketOrder.id == order_id).first()
+    if not order: raise HTTPException(status_code=404, detail="Order not found.")
+    
+    order.status = payload.status
+    if payload.notes: getattr(order, 'dispute_notes', None) # Safety check
+    if hasattr(order, 'dispute_notes'): order.dispute_notes = payload.notes
+    if hasattr(order, 'dispute_image'): order.dispute_image = payload.dispute_image
+
+    db.commit()
+    return {"message": "QA Processed!"}
+
 @app.get("/api/buyer/dashboard")
 def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     contracts = db.query(models.BulkRequest).filter(models.BulkRequest.buyer_name == current_user.full_name).all()
@@ -1542,6 +1596,7 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
     active_contracts = []
     
     for contract in contracts:
+        # ... (Keep your existing `for contract in contracts` loop logic here exactly as it is) ...
         pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == contract.id).all()
         total_pledged_kg = sum(p.pledged_weight_kg for p in pledges if p.pledged_weight_kg)
         
@@ -1559,7 +1614,6 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
                 "status": p.status, "notes": p.notes
             })
             
-        # 🔥 THE FIX: Respect "completed" status so it flows into History!
         c_status = contract.status
         if c_status != "completed":
             c_status = "fulfilled" if total_pledged_kg >= contract.target_weight_kg else "active"
@@ -1568,17 +1622,40 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
             "contract_id": contract.id, "crop_name": contract.crop_name,
             "target_weight_kg": contract.target_weight_kg, "pledged_weight_kg": total_pledged_kg,
             "price_per_kg": contract.price_per_kg, "progress_percentage": min(progress_pct, 1.0),
-            "status": c_status, # Sent to Flutter
-            "roster": roster 
+            "status": c_status, "roster": roster 
         })
+
+    # 🔥 THE FIX: Fetch Direct Cart Orders
+    market_orders = db.query(models.MarketOrder).filter(models.MarketOrder.buyer_id == current_user.id).all()
+    direct_orders = []
+    for order in market_orders:
+        listing = order.listing
+        farmer = listing.farmer if listing else None
         
+        # Add to metrics tracking
+        total_capital_committed += order.total_price
+        if order.order_type == "KG":
+            total_tonnage_requested += order.quantity_ordered
+            
+        direct_orders.append({
+            "order_id": order.id,
+            "crop_name": listing.crop_name if listing else "Produce",
+            "quantity": order.quantity_ordered, "unit": order.order_type,
+            "total_price": order.total_price, "status": order.status,
+            "farmer_name": farmer.full_name if farmer else "Local Farmer",
+            "farmer_phone": farmer.phone_number if farmer else "N/A",
+            "delivery_method": getattr(order, 'delivery_method', 'Delivery'), # 🔥 NEW
+            "dispute_notes": getattr(order, 'dispute_notes', None),           # 🔥 NEW
+        })
+
     return {
         "metrics": {
             "total_capital_kes": total_capital_committed,
             "total_tonnage_kg": total_tonnage_requested,
-            "active_contract_count": len([c for c in active_contracts if c['status'] != 'completed'])
+            "active_contract_count": len([c for c in active_contracts if c['status'] != 'completed']) + len([o for o in direct_orders if o['status'] not in ['paid', 'completed', 'rejected']])
         },
-        "contracts": active_contracts
+        "contracts": active_contracts,
+        "direct_orders": direct_orders # 🔥 Return Direct Orders!
     }
 
 class BulkRequestCreate(BaseModel):
@@ -2129,54 +2206,78 @@ def create_market_listing(payload: MarketListingCreate, db: Session = Depends(ge
     return {"message": "Listing published to marketplace!"}
 
 class MarketOrderCreate(BaseModel):
-    order_type: str # "weight" OR the specific unit_name (e.g., "Bucket")
+    order_type: str
     quantity: float
+    delivery_method: str = "Delivery"
 
 @app.post("/api/market/listings/{listing_id}/order")
-def create_market_order(listing_id: int, payload: MarketOrderCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+def create_market_order(
+    listing_id: int, 
+    payload: MarketOrderCreate, # Ensure this matches your schema name
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    """Allows a buyer to place an order on a farmer's marketplace listing."""
     listing = db.query(models.MarketListing).filter(models.MarketListing.id == listing_id).first()
-    if not listing or listing.status == "sold_out":
-        raise HTTPException(status_code=400, detail="Listing unavailable.")
+    
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+        
+    if listing.available_kg is not None and listing.available_kg <= 0:
+        raise HTTPException(status_code=400, detail="This listing is sold out")
 
-    cost = 0.0
-    weight_to_deduct = 0.0
+    # 🔥 THE FIX: Safely unpack the JSON string back into a Python List!
+    parsed_units = []
+    if listing.unit_pricing:
+        if isinstance(listing.unit_pricing, str):
+            try:
+                parsed_units = json.loads(listing.unit_pricing)
+            except Exception:
+                try:
+                    parsed_units = json.loads(listing.unit_pricing.replace("'", '"'))
+                except Exception:
+                    pass
+        elif isinstance(listing.unit_pricing, list):
+            parsed_units = listing.unit_pricing
 
-    # SCENARIO A: Buying by the KG
-    if payload.order_type == "weight":
-        if not listing.is_selling_by_weight:
-            raise HTTPException(status_code=400, detail="Not sold by weight.")
-        weight_to_deduct = payload.quantity
-        cost = payload.quantity * listing.price_per_kg
-
-    # SCENARIO B: Buying by a Custom Unit
+    # Calculate exactly how many KGs they ordered and the total price
+    total_kg_ordered = 0
+    total_price = 0
+    
+    if payload.order_type == "KG":
+        total_kg_ordered = payload.quantity
+        total_price = payload.quantity * listing.price_per_kg
     else:
-        # Search the JSON array for the unit the buyer clicked
-        selected_unit = next((u for u in listing.unit_pricing if u["unit_name"] == payload.order_type), None)
+        # We now search through the safely unpacked parsed_units list!
+        selected_unit = next((u for u in parsed_units if u.get("unit_name") == payload.order_type), None)
         
         if not selected_unit:
-            raise HTTPException(status_code=400, detail=f"Unit '{payload.order_type}' not found.")
+            raise HTTPException(status_code=400, detail=f"Unit '{payload.order_type}' not available for this crop.")
             
-        weight_to_deduct = payload.quantity * selected_unit["kg"]
-        cost = payload.quantity * selected_unit["price"]
+        unit_kg = selected_unit.get("kg", 0)
+        unit_price = selected_unit.get("price", 0)
+        
+        total_kg_ordered = payload.quantity * unit_kg
+        total_price = payload.quantity * unit_price
 
-    if weight_to_deduct > listing.available_kg:
-        raise HTTPException(status_code=400, detail=f"Only {listing.available_kg} KG remaining.")
+    # Make sure the farmer actually has enough inventory
+    if listing.available_kg is not None and total_kg_ordered > listing.available_kg:
+        raise HTTPException(status_code=400, detail=f"Only {listing.available_kg} KG available. You ordered {total_kg_ordered} KG.")
 
+    # Create the order
     new_order = models.MarketOrder(
         listing_id=listing.id,
         buyer_id=current_user.id,
-        order_type=payload.order_type,
         quantity_ordered=payload.quantity,
-        kg_deducted=weight_to_deduct,
-        total_price=cost
+        order_type=payload.order_type,
+        total_price=total_price,
+        status="pending",
+        delivery_method=payload.delivery_method # 🔥 Save the buyer's choice!
     )
-    db.add(new_order)
     
-    listing.available_kg -= weight_to_deduct
-    if listing.available_kg <= 0:
-        listing.status = "sold_out"
-        
+    db.add(new_order)
     db.commit()
+    
     return {"message": "Order placed successfully!"}
 
 @app.get("/api/market/listings")
@@ -2302,3 +2403,14 @@ def delete_market_listing(
     db.delete(listing)
     db.commit()
     return {"message": "Listing deleted."}
+
+@app.put("/api/farmer/orders/{order_id}/status")
+def update_farmer_order_status(order_id: int, payload: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    order = db.query(models.MarketOrder).join(models.MarketListing).filter(
+        models.MarketOrder.id == order_id, models.MarketListing.farmer_id == current_user.id
+    ).first()
+    if not order: raise HTTPException(status_code=404, detail="Order not found")
+    
+    order.status = payload.get("status")
+    db.commit()
+    return {"message": f"Order status updated to {order.status}"}

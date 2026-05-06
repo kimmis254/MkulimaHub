@@ -248,7 +248,7 @@ class MarketListing(Base):
 
     farmer = relationship("User")
     orders = relationship("MarketOrder", back_populates="listing")
-    
+
 class MarketOrder(Base):
     __tablename__ = "market_orders"
 
@@ -268,3 +268,7 @@ class MarketOrder(Base):
 
     listing = relationship("MarketListing", back_populates="orders")
     buyer = relationship("User")
+
+    delivery_method = Column(String, default="Delivery") 
+    dispute_notes = Column(String, nullable=True)
+    dispute_image = Column(String, nullable=True)

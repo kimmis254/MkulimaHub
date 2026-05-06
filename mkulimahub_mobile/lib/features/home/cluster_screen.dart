@@ -29,18 +29,14 @@ class _ClusterScreenState extends State<ClusterScreen> {
   int _totalFarmersAnalyzed = 0;
   String? _errorMessage;
   
-  // Current User & Hub State
   Map<String, dynamic>? _currentUser;
   bool _isCoordinator = false;
   String? _myClusterId;
   int? _selectedSquadId;
 
-  // Election State
   String? _electionStatus;
   bool _hasVoted = false;
   List<dynamic> _candidates = [];
-
-
 
   @override
   void initState() {
@@ -79,28 +75,24 @@ class _ClusterScreenState extends State<ClusterScreen> {
           _currentUser = profileData;
 
           if (_activeSquads.isNotEmpty) {
-            // Keep current selection if it still exists, otherwise pick the first one
             if (_selectedSquadId == null || !_activeSquads.any((s) => s['id'] == _selectedSquadId)) {
               _selectedSquadId = _activeSquads.first['id'];
             }
           } else {
             _selectedSquadId = null;
           }
-          // Update Election State
+          
           if (ballotData != null) {
             _electionStatus = ballotData['status'];
             _hasVoted = ballotData['has_voted'] ?? false;
             _candidates = ballotData['candidates'] ?? [];
           }
 
-          // Check Hub & Coordinator Status
           final myHubId = profileData?['hub_id'];
           if (myHubId != null) {
             final myHub = _hubs.firstWhere((h) => h['hub_id'] == myHubId, orElse: () => <String, dynamic>{});
             _myClusterId = myHub.isNotEmpty ? myHub['hub_name'] : "My Co-op Hub";
-            
-            _isCoordinator = myHub.isNotEmpty && 
-                myHub['coordinator_id'].toString() == _currentUser?['id'].toString();
+            _isCoordinator = myHub.isNotEmpty && myHub['coordinator_id'].toString() == _currentUser?['id'].toString();
           } else {
             _myClusterId = null; 
             _isCoordinator = false;
@@ -109,20 +101,33 @@ class _ClusterScreenState extends State<ClusterScreen> {
           _isLoading = false;
         });
       } else {
-        if (mounted) {
-          setState(() {
-             _errorMessage = "Failed to load network data.";
-             _isLoading = false;
-          });
-        }
+        if (mounted) setState(() { _errorMessage = "Failed to load network data."; _isLoading = false; });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = "Connection error. Please try again.";
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() { _errorMessage = "Connection error. Please try again."; _isLoading = false; });
+    }
+  }
+
+  // 🔥 THE FIX: A dedicated function to run AI Clustering
+  Future<void> _triggerManualClustering() async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Booting up DBSCAN AI algorithm..."), duration: Duration(seconds: 2))
+    );
+    
+    // 🔥 FIXED: Now it sends exactly what is selected, including "All"!
+    final cropToCluster = _selectedCrop; 
+    
+    final error = await _apiClient.triggerAdminClustering(cropToCluster);
+    
+    if (!mounted) return;
+    
+    if (error == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Clustering Complete! Hubs formed."), backgroundColor: Colors.green)
+      );
+      _fetchClusters(); 
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
     }
   }
 
@@ -135,47 +140,21 @@ class _ClusterScreenState extends State<ClusterScreen> {
         elevation: 0,
         centerTitle: true,
         automaticallyImplyLeading: false, 
-        title: Text(
-          "MkulimaHub Network",
-          style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
+        title: Text("MkulimaHub Network", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
         actions: [
-          IconButton(
-            icon: const Icon(LucideIcons.cpu, color: Colors.white70), 
-            tooltip: "Admin: Force AI Clustering",
-            onPressed: () async {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Booting up DBSCAN AI..."), duration: Duration(seconds: 1))
-              );
-              
-              final cropToCluster = _selectedCrop == 'All' ? 'Maize' : _selectedCrop;
-              final error = await _apiClient.triggerAdminClustering(cropToCluster);
-              
-              if (!mounted) return;
-              
-              if (error == null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Clustering Complete!"), backgroundColor: Colors.green)
-                );
-                _fetchClusters(); 
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(error), backgroundColor: Colors.red)
-                );
-              }
-            },
+          // 🔥 NEW: Highly visible Top-Right Button
+          TextButton.icon(
+            icon: const Icon(LucideIcons.cpu, color: Colors.white, size: 16), 
+            label: Text("Run AI", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
+            onPressed: _triggerManualClustering,
           )
         ],
       ),
       body: Column(
         children: [
-          // Header Section
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-            decoration: BoxDecoration(
-              color: Colors.green.shade800,
-              borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(24), bottomRight: Radius.circular(24)),
-            ),
+            decoration: BoxDecoration(color: Colors.green.shade800, borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(24), bottomRight: Radius.circular(24))),
             child: Row(
               children: [
                 Expanded(
@@ -219,34 +198,23 @@ class _ClusterScreenState extends State<ClusterScreen> {
                         child: ListView(
                           padding: const EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 80),
                           children: [
-                            if (_isCoordinator)
-                              FadeInDown(child: _buildCoordinatorBanner()),
-
-                            if (_electionStatus == 'voting_active')
-                              FadeInDown(child: _buildElectionBanner()),
+                            if (_isCoordinator) FadeInDown(child: _buildCoordinatorBanner()),
+                            if (_electionStatus == 'voting_active') FadeInDown(child: _buildElectionBanner()),
 
                             _buildMyStatusCard(),
                             const SizedBox(height: 25),
 
-                            // 🔥 NEW: DISPLAY TEMPORARY DELIVERY SQUADS
                             ...(() {
                               final filteredSquads = _activeSquads.where((squad) {
                                 bool isInternalPool = squad['buyer_name'].toString().startsWith('Hub Pool:');
                                 String hubNameClean = squad['buyer_name'].toString().replaceFirst("Hub Pool: ", "").trim();
                                 bool isMyHubsPool = _myClusterId == hubNameClean;
-                                
-                                // Hide internal pools if the user doesn't belong to that Hub!
                                 return !(isInternalPool && !isMyHubsPool);
                               }).toList();
 
-                              if (filteredSquads.isEmpty) {
-                                return [const SizedBox.shrink()]; // Show nothing if no public squads are available
-                              }
+                              if (filteredSquads.isEmpty) return [const SizedBox.shrink()]; 
 
-                              // Ensure the selected ID is valid for this filtered list
-                              int currentSelection = filteredSquads.any((s) => s['id'] == _selectedSquadId) 
-                                  ? _selectedSquadId! 
-                                  : filteredSquads.first['id'];
+                              int currentSelection = filteredSquads.any((s) => s['id'] == _selectedSquadId) ? _selectedSquadId! : filteredSquads.first['id'];
 
                               return [
                                 Row(
@@ -259,57 +227,31 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                 Text("Select a team to view or join.", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
                                 const SizedBox(height: 15),
 
-                                // 1. The Dropdown Selector
                                 Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: Colors.orange.shade200),
-                                  ),
+                                  width: double.infinity, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.orange.shade200)),
                                   child: DropdownButtonHideUnderline(
                                     child: DropdownButton<int>(
-                                      value: currentSelection,
-                                      isExpanded: true,
-                                      icon: const Icon(LucideIcons.chevronDown, color: Colors.orange),
+                                      value: currentSelection, isExpanded: true, icon: const Icon(LucideIcons.chevronDown, color: Colors.orange),
                                       items: filteredSquads.map<DropdownMenuItem<int>>((squad) {
                                         bool isInternalPool = squad['buyer_name'].toString().startsWith('Hub Pool:');
-                                        String displayName = isInternalPool 
-                                            ? "${squad['target_weight_kg']}kg ${squad['crop_name']} (Internal Hub Pool)"
-                                            : "${squad['target_weight_kg']}kg ${squad['crop_name']} for ${squad['buyer_name']}";
-
-                                        return DropdownMenuItem<int>(
-                                          value: squad['id'],
-                                          child: Text(
-                                            displayName,
-                                            style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w600),
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        );
+                                        String displayName = isInternalPool ? "${squad['target_weight_kg']}kg ${squad['crop_name']} (Internal Hub Pool)" : "${squad['target_weight_kg']}kg ${squad['crop_name']} for ${squad['buyer_name']}";
+                                        return DropdownMenuItem<int>(value: squad['id'], child: Text(displayName, style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis));
                                       }).toList(),
-                                      onChanged: (int? newValue) {
-                                        if (newValue != null) {
-                                          setState(() => _selectedSquadId = newValue);
-                                        }
-                                      },
+                                      onChanged: (int? newValue) { if (newValue != null) setState(() => _selectedSquadId = newValue); },
                                     ),
                                   ),
                                 ),
                                 const SizedBox(height: 10),
 
-                                // 2. The Dynamic Action Card
                                 Builder(
                                   builder: (context) {
                                     final selectedSquad = filteredSquads.firstWhere((s) => s['id'] == currentSelection);
-                                    
                                     bool isInternalPool = selectedSquad['buyer_name'].toString().startsWith('Hub Pool:');
                                     String hubNameClean = selectedSquad['buyer_name'].toString().replaceFirst("Hub Pool: ", "").trim();
 
                                     final pledges = selectedSquad['pledges'] as List<dynamic>? ?? [];
                                     bool hasPledged = _currentUser != null && pledges.any((p) => p['farmer_id'].toString() == _currentUser?['id'].toString());
-                                    
-                                    // 🔥 THE FIX: Hub Admins get VIP Access!
                                     bool isSquadCoordinator = selectedSquad['coordinator_id']?.toString() == _currentUser?['id']?.toString();
                                     bool canViewSquad = hasPledged || isSquadCoordinator;
 
@@ -317,48 +259,30 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                       key: ValueKey(currentSelection), 
                                       child: Container(
                                         padding: const EdgeInsets.all(16),
-                                        decoration: BoxDecoration(
-                                          color: canViewSquad ? Colors.purple.shade50 : (isInternalPool ? Colors.blue.shade50 : Colors.orange.shade50), 
-                                          border: Border.all(color: canViewSquad ? Colors.purple.shade200 : (isInternalPool ? Colors.blue.shade200 : Colors.orange.shade200)),
-                                          borderRadius: BorderRadius.circular(16),
-                                        ),
+                                        decoration: BoxDecoration(color: canViewSquad ? Colors.purple.shade50 : (isInternalPool ? Colors.blue.shade50 : Colors.orange.shade50), border: Border.all(color: canViewSquad ? Colors.purple.shade200 : (isInternalPool ? Colors.blue.shade200 : Colors.orange.shade200)), borderRadius: BorderRadius.circular(16)),
                                         child: Row(
                                           children: [
-                                            Container(
-                                              padding: const EdgeInsets.all(10),
-                                              decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                                              child: Icon(canViewSquad ? LucideIcons.users : (isInternalPool ? LucideIcons.shield : LucideIcons.truck), color: canViewSquad ? Colors.purple : (isInternalPool ? Colors.blue.shade700 : Colors.orange)),
-                                            ),
+                                            Container(padding: const EdgeInsets.all(10), decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle), child: Icon(canViewSquad ? LucideIcons.users : (isInternalPool ? LucideIcons.shield : LucideIcons.truck), color: canViewSquad ? Colors.purple : (isInternalPool ? Colors.blue.shade700 : Colors.orange))),
                                             const SizedBox(width: 15),
                                             Expanded(
                                               child: Column(
                                                 crossAxisAlignment: CrossAxisAlignment.start,
                                                 children: [
                                                   Text("Target: ${selectedSquad['target_weight_kg']}kg", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
-                                                  Text(
-                                                    canViewSquad ? (isSquadCoordinator ? "You manage this squad" : "You are in this squad") : "Open for pledges", 
-                                                    style: GoogleFonts.poppins(fontSize: 12, color: canViewSquad ? Colors.purple.shade800 : (isInternalPool ? Colors.blue.shade800 : Colors.orange.shade800))
-                                                  ),
+                                                  Text(canViewSquad ? (isSquadCoordinator ? "You manage this squad" : "You are in this squad") : "Open for pledges", style: GoogleFonts.poppins(fontSize: 12, color: canViewSquad ? Colors.purple.shade800 : (isInternalPool ? Colors.blue.shade800 : Colors.orange.shade800))),
                                                 ],
                                               ),
                                             ),
-                                            
                                             canViewSquad
                                                 ? ElevatedButton(
-                                                    onPressed: () async {
-                                                      await Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: selectedSquad['id'])));
-                                                      if (mounted) _fetchClusters(); 
-                                                    },
+                                                    onPressed: () async { await Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: selectedSquad['id']))); if (mounted) _fetchClusters(); },
                                                     style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade600, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                                                     child: Text("View", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
                                                   )
                                                 : ElevatedButton(
                                                     onPressed: () async {
-                                                      if (isInternalPool) {
-                                                        await Navigator.push(context, MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubNameClean)));
-                                                      } else {
-                                                        await Navigator.push(context, MaterialPageRoute(builder: (_) => const ContractsScreen()));
-                                                      }
+                                                      if (isInternalPool) await Navigator.push(context, MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubNameClean)));
+                                                      else await Navigator.push(context, MaterialPageRoute(builder: (_) => const ContractsScreen()));
                                                       if (mounted) _fetchClusters(); 
                                                     },
                                                     style: ElevatedButton.styleFrom(backgroundColor: isInternalPool ? Colors.blue.shade600 : Colors.orange.shade600, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
@@ -373,21 +297,13 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                 const SizedBox(height: 25),
                               ];
                             }()),
-                            // EXISTING: DISPLAY PERMANENT HUBS
+                            
                             if (_hubs.isNotEmpty) ...[
                               Text("Active Co-op Hubs", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
                               const SizedBox(height: 15),
-                              ..._hubs.asMap().entries.map((entry) => FadeInUp(
-                                delay: Duration(milliseconds: 100 * entry.key),
-                                child: _buildHubCard(entry.value),
-                              )),
+                              ..._hubs.asMap().entries.map((entry) => FadeInUp(delay: Duration(milliseconds: 100 * entry.key), child: _buildHubCard(entry.value))),
                             ] else ...[
-                              Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(40.0),
-                                  child: Text("No hubs found for $_selectedCrop.", style: GoogleFonts.poppins(color: Colors.grey)),
-                                ),
-                              )
+                              Center(child: Padding(padding: const EdgeInsets.all(40.0), child: Text("No hubs found for $_selectedCrop.", style: GoogleFonts.poppins(color: Colors.grey))))
                             ],
 
                             const SizedBox(height: 30),
@@ -395,9 +311,28 @@ class _ClusterScreenState extends State<ClusterScreen> {
                             if (_independentFarmers.isNotEmpty) ...[
                               Divider(color: Colors.grey.shade300),
                               const SizedBox(height: 15),
-                              Text("Independent Farmers", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-                              Text("Outside current hub radii", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
+                              
+                              // 🔥 NEW: MASSIVE IN-BODY MANUAL CLUSTERING BUTTON
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text("Independent Farmers", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                      Text("Outside current hub radii", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
+                                    ],
+                                  ),
+                                  ElevatedButton.icon(
+                                    onPressed: _triggerManualClustering,
+                                    icon: const Icon(LucideIcons.cpu, size: 14, color: Colors.white),
+                                    label: Text("Run AI Tool", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                                  )
+                                ],
+                              ),
                               const SizedBox(height: 15),
+                              
                               ..._independentFarmers.map((farmer) => _buildIndependentFarmerTile(farmer)),
                             ]
                           ],
@@ -416,47 +351,24 @@ class _ClusterScreenState extends State<ClusterScreen> {
 
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isIndependent ? Colors.orange.shade50 : Colors.green.shade50,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: isIndependent ? Colors.orange.shade200 : Colors.green.shade200),
-      ),
+      decoration: BoxDecoration(color: isIndependent ? Colors.orange.shade50 : Colors.green.shade50, borderRadius: BorderRadius.circular(16), border: Border.all(color: isIndependent ? Colors.orange.shade200 : Colors.green.shade200)),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: isIndependent ? Colors.orange.shade100 : Colors.green.shade100,
-              shape: BoxShape.circle
-            ),
-            child: Icon(
-              isIndependent ? LucideIcons.alertCircle : LucideIcons.checkCircle, 
-              color: isIndependent ? Colors.orange.shade700 : Colors.green.shade700
-            ),
-          ),
+          Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: isIndependent ? Colors.orange.shade100 : Colors.green.shade100, shape: BoxShape.circle), child: Icon(isIndependent ? LucideIcons.alertCircle : LucideIcons.checkCircle, color: isIndependent ? Colors.orange.shade700 : Colors.green.shade700)),
           const SizedBox(width: 15),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text("Your Status", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
-                Text(
-                  isIndependent ? "Independent (Unclustered)" : "Member of $_myClusterId", 
-                  style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87)
-                ),
+                Text(isIndependent ? "Independent (Unclustered)" : "Member of $_myClusterId", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87)),
               ],
             ),
           ),
           if (isIndependent)
             ElevatedButton(
               onPressed: _showNearbyHubsBottomSheet, 
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange.shade600,
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                minimumSize: Size.zero,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade600, elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), minimumSize: Size.zero, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
               child: Text("Join a Hub", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
             )
         ],
@@ -469,23 +381,9 @@ class _ClusterScreenState extends State<ClusterScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Pulse(
-            infinite: true,
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), shape: BoxShape.circle),
-              child: const Icon(LucideIcons.radar, size: 40, color: Colors.green),
-            ),
-          ),
+          Pulse(infinite: true, child: Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), shape: BoxShape.circle), child: const Icon(LucideIcons.radar, size: 40, color: Colors.green))),
           const SizedBox(height: 25),
-          Pulse(
-            infinite: true,
-            child: Text(
-              "DBSCAN AI is analyzing spatial\nfarmer density to create optimal hubs...",
-              textAlign: TextAlign.center,
-              style: GoogleFonts.poppins(color: Colors.green[700], fontWeight: FontWeight.w500, fontSize: 13),
-            ),
-          ),
+          Pulse(infinite: true, child: Text("DBSCAN AI is analyzing spatial\nfarmer density to create optimal hubs...", textAlign: TextAlign.center, style: GoogleFonts.poppins(color: Colors.green[700], fontWeight: FontWeight.w500, fontSize: 13))),
         ],
       ),
     );
@@ -496,27 +394,18 @@ class _ClusterScreenState extends State<ClusterScreen> {
     String hubName = hub['hub_name'] ?? 'Regional Hub';
     int hubId = hub['hub_id'];
     
-    // 🔥 SECURITY CHECKS
     bool isMyHub = _currentUser?['hub_id'] == hubId;
     bool isIndependent = _currentUser?['hub_id'] == null;
     
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.08), blurRadius: 15, offset: const Offset(0, 5))],
-        border: Border.all(color: Colors.grey.shade200),
-      ),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.08), blurRadius: 15, offset: const Offset(0, 5))], border: Border.all(color: Colors.grey.shade200)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: isMyHub ? Colors.green.shade50 : Colors.grey.shade50, // Grey out if not theirs
-              borderRadius: const BorderRadius.only(topLeft: Radius.circular(20), topRight: Radius.circular(20)),
-            ),
+            decoration: BoxDecoration(color: isMyHub ? Colors.green.shade50 : Colors.grey.shade50, borderRadius: const BorderRadius.only(topLeft: Radius.circular(20), topRight: Radius.circular(20))),
             child: Row(
               children: [
                 Icon(isMyHub ? LucideIcons.mapPin : LucideIcons.shield, color: isMyHub ? Colors.green : Colors.grey, size: 24),
@@ -550,54 +439,35 @@ class _ClusterScreenState extends State<ClusterScreen> {
             child: isMyHub 
               ? Row(
                   children: [
-                    // 🔥 UNLOCKED: View Members
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () => _showFarmersBottomSheet(hub),
                         icon: const Icon(LucideIcons.list, size: 16),
                         label: Text("View Members", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600)),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.grey.shade700,
-                          side: BorderSide(color: Colors.grey.shade300),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
+                        style: OutlinedButton.styleFrom(foregroundColor: Colors.grey.shade700, side: BorderSide(color: Colors.grey.shade300), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                       ),
                     ),
                     const SizedBox(width: 10),
-                    // 🔥 UNLOCKED: Open Chat
                     Expanded(
                       child: ElevatedButton.icon(
-                        onPressed: () async {
-                          await Navigator.push(context, MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubName)));
-                          if (mounted) _fetchClusters();
-                        },
+                        onPressed: () async { await Navigator.push(context, MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubName))); if (mounted) _fetchClusters(); },
                         icon: const Icon(LucideIcons.messageSquare, size: 16, color: Colors.white),
                         label: Text("Co-op Chat", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green.shade700,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                       ),
                     ),
                   ],
                 )
               : Row(
                   children: [
-                    // 🔥 LOCKED: Private Hub
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: null, 
                         icon: const Icon(LucideIcons.lock, size: 16),
                         label: Text("Private Co-op", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600)),
-                        style: OutlinedButton.styleFrom(
-                          disabledForegroundColor: Colors.grey.shade400,
-                          side: BorderSide(color: Colors.grey.shade200),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
+                        style: OutlinedButton.styleFrom(disabledForegroundColor: Colors.grey.shade400, side: BorderSide(color: Colors.grey.shade200), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                       ),
                     ),
-                    // 🔥 INDEPENDENT PATH: Request to Join
                     if (isIndependent) ...[
                       const SizedBox(width: 10),
                       Expanded(
@@ -605,11 +475,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                           onPressed: () => _sendJoinRequest(hubId),
                           icon: const Icon(LucideIcons.userPlus, size: 16, color: Colors.white),
                           label: Text("Request to Join", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orange.shade600,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          ),
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade600, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                         ),
                       ),
                     ]
@@ -623,19 +489,11 @@ class _ClusterScreenState extends State<ClusterScreen> {
 
   Widget _buildIndependentFarmerTile(Map<String, dynamic> farmer) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
+      margin: const EdgeInsets.only(bottom: 10), padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
       child: Row(
         children: [
-          CircleAvatar(
-            backgroundColor: Colors.grey.shade100,
-            child: Icon(LucideIcons.user, color: Colors.grey.shade500, size: 18),
-          ),
+          CircleAvatar(backgroundColor: Colors.grey.shade100, child: Icon(LucideIcons.user, color: Colors.grey.shade500, size: 18)),
           const SizedBox(width: 15),
           Expanded(
             child: Column(
@@ -655,29 +513,21 @@ class _ClusterScreenState extends State<ClusterScreen> {
   void _showFarmersBottomSheet(Map<String, dynamic> hub) {
     List<dynamic> farmers = hub['farmers'] ?? [];
     String hubName = hub['hub_name'] ?? 'Regional Hub';
-
     if (farmers.isEmpty) return;
 
     showModalBottomSheet(
-      context: context,
-      isScrollControlled: true, 
-      backgroundColor: Colors.white,
+      context: context, isScrollControlled: true, backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
       builder: (context) {
         return DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          minChildSize: 0.4,
-          maxChildSize: 0.9,
-          expand: false,
+          initialChildSize: 0.6, minChildSize: 0.4, maxChildSize: 0.9, expand: false,
           builder: (_, controller) {
             return Padding(
               padding: const EdgeInsets.all(24.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Center(
-                    child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10))),
-                  ),
+                  Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
                   const SizedBox(height: 20),
                   Text("$hubName Members", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 5),
@@ -686,8 +536,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                   
                   Expanded(
                     child: ListView.builder(
-                      controller: controller,
-                      itemCount: farmers.length,
+                      controller: controller, itemCount: farmers.length,
                       itemBuilder: (context, index) {
                         final f = farmers[index];
                         return ListTile(
@@ -710,27 +559,14 @@ class _ClusterScreenState extends State<ClusterScreen> {
 
   void _showNearbyHubsBottomSheet() {
     showModalBottomSheet(
-      context: context,
+      context: context, backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
-      backgroundColor: Colors.white,
       builder: (context) {
         return FutureBuilder<List<dynamic>?>(
           future: _apiClient.getNearbyHubs(),
           builder: (context, snapshot) {
-            
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const SizedBox(
-                height: 300,
-                child: Center(child: CircularProgressIndicator(color: Colors.green)),
-              );
-            }
-
-            if (snapshot.hasError || snapshot.data == null) {
-              return const SizedBox(
-                height: 300,
-                child: Center(child: Text("Failed to load nearby hubs.")),
-              );
-            }
+            if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox(height: 300, child: Center(child: CircularProgressIndicator(color: Colors.green)));
+            if (snapshot.hasError || snapshot.data == null) return const SizedBox(height: 300, child: Center(child: Text("Failed to load nearby hubs.")));
 
             final hubs = snapshot.data!;
             if (hubs.isEmpty) {
@@ -753,17 +589,13 @@ class _ClusterScreenState extends State<ClusterScreen> {
             return Container(
               padding: const EdgeInsets.all(24.0),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Center(
-                    child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10))),
-                  ),
+                  Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
                   const SizedBox(height: 20),
                   Text("Nearby Hubs", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
                   Text("Select a co-op to send a join request.", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
                   const SizedBox(height: 15),
-                  
                   ...hubs.map((hub) => _buildNearbyHubTile(hub)).toList(),
                 ],
               ),
@@ -777,26 +609,15 @@ class _ClusterScreenState extends State<ClusterScreen> {
   Widget _buildNearbyHubTile(Map<String, dynamic> hub) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200)
-      ),
+      decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: CircleAvatar(
-          backgroundColor: Colors.green.shade100,
-          child: const Icon(LucideIcons.mapPin, color: Colors.green),
-        ),
+        leading: CircleAvatar(backgroundColor: Colors.green.shade100, child: const Icon(LucideIcons.mapPin, color: Colors.green)),
         title: Text(hub['hub_name'] ?? 'Unknown Hub', style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
         subtitle: Text("${hub['distance_km']} km away • ${hub['crop']}", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
         trailing: ElevatedButton(
           onPressed: () => _sendJoinRequest(hub['hub_id']),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.orange.shade600,
-            elevation: 0,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          ),
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade600, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
           child: Text("Request", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
         ),
       ),
@@ -806,63 +627,46 @@ class _ClusterScreenState extends State<ClusterScreen> {
   void _sendJoinRequest(int hubId) async {
     Navigator.pop(context); 
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Sending request..."), duration: Duration(seconds: 1)));
-    
     final error = await _apiClient.joinHub(hubId);
-    
     if (!mounted) return;
 
-    if (error == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Join request sent successfully!"), backgroundColor: Colors.green));
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
-    }
+    if (error == null) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Join request sent successfully!"), backgroundColor: Colors.green));
+    else ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
   }
 
   Widget _buildCoordinatorBanner() {
     return GestureDetector(
       onTap: () {
         showModalBottomSheet(
-          context: context,
-          backgroundColor: Colors.white,
+          context: context, backgroundColor: Colors.white,
           shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
           builder: (context) {
             return Padding(
               padding: const EdgeInsets.all(24.0),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
                   const SizedBox(height: 20),
                   Text("Coordinator Actions", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 15),
                   
-                  // Option 1: Manage Join Requests
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: CircleAvatar(backgroundColor: Colors.blue.shade50, child: const Icon(LucideIcons.users, color: Colors.blue)),
                     title: Text("Manage Join Requests", style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
                     subtitle: Text("${_pendingRequests.length} pending approvals", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
                     trailing: const Icon(LucideIcons.chevronRight, size: 16),
-                    onTap: () {
-                      Navigator.pop(context); 
-                      _showCoordinatorBottomSheet(); 
-                    },
+                    onTap: () { Navigator.pop(context); _showCoordinatorBottomSheet(); },
                   ),
-                  
                   Divider(color: Colors.grey.shade200),
-                  
-                  // Option 2: Process Crop Deliveries
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: CircleAvatar(backgroundColor: Colors.green.shade50, child: const Icon(LucideIcons.scale, color: Colors.green)),
                     title: Text("Process Deliveries", style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
                     subtitle: Text("Weigh and receive pledged crops", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
                     trailing: const Icon(LucideIcons.chevronRight, size: 16),
-                    onTap: () {
-                      Navigator.pop(context); 
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => ReceivingDashboard())); 
-                    },
+                    onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => ReceivingDashboard())); },
                   ),
                 ],
               ),
@@ -871,30 +675,18 @@ class _ClusterScreenState extends State<ClusterScreen> {
         );
       },
       child: Container(
-        margin: const EdgeInsets.only(bottom: 20),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [Colors.blue.shade800, Colors.blue.shade600]),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))],
-        ),
+        margin: const EdgeInsets.only(bottom: 20), padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(gradient: LinearGradient(colors: [Colors.blue.shade800, Colors.blue.shade600]), borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))]),
         child: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
-              child: const Icon(LucideIcons.shieldCheck, color: Colors.white),
-            ),
+            Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle), child: const Icon(LucideIcons.shieldCheck, color: Colors.white)),
             const SizedBox(width: 15),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text("👑 Co-op Coordinator", style: GoogleFonts.poppins(fontSize: 12, color: Colors.blue.shade100, fontWeight: FontWeight.bold)),
-                  Text(
-                    "Manage Hub Operations", 
-                    style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white)
-                  ),
+                  Text("Manage Hub Operations", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white)),
                 ],
               ),
             ),
@@ -907,16 +699,13 @@ class _ClusterScreenState extends State<ClusterScreen> {
 
   void _showCoordinatorBottomSheet() {
     showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
+      context: context, isScrollControlled: true, backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
             return Container(
-              height: MediaQuery.of(context).size.height * 0.6,
-              padding: const EdgeInsets.all(24.0),
+              height: MediaQuery.of(context).size.height * 0.6, padding: const EdgeInsets.all(24.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -926,8 +715,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                   Text("Review farmers who want to aggregate with your hub.", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
                   const SizedBox(height: 15),
                   
-                  if (_pendingRequests.isEmpty)
-                    const Expanded(child: Center(child: Text("All caught up! No pending requests.")))
+                  if (_pendingRequests.isEmpty) const Expanded(child: Center(child: Text("All caught up! No pending requests.")))
                   else
                     Expanded(
                       child: ListView.builder(
@@ -935,12 +723,8 @@ class _ClusterScreenState extends State<ClusterScreen> {
                         itemBuilder: (context, index) {
                           final req = _pendingRequests[index];
                           return Container(
-                            margin: const EdgeInsets.only(bottom: 12),
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey.shade200),
-                              borderRadius: BorderRadius.circular(12)
-                            ),
+                            margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade200), borderRadius: BorderRadius.circular(12)),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -967,10 +751,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                       child: OutlinedButton(
                                         onPressed: () async {
                                           final error = await _apiClient.respondToHubRequest(req['request_id'], "reject");
-                                          if (error == null) {
-                                            setSheetState(() => _pendingRequests.removeAt(index));
-                                            _fetchClusters(); 
-                                          }
+                                          if (error == null) { setSheetState(() => _pendingRequests.removeAt(index)); _fetchClusters(); }
                                         },
                                         style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
                                         child: const Text("Decline"),
@@ -982,8 +763,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                         onPressed: () async {
                                           final error = await _apiClient.respondToHubRequest(req['request_id'], "approve");
                                           if (error == null) {
-                                            setSheetState(() => _pendingRequests.removeAt(index));
-                                            _fetchClusters(); 
+                                            setSheetState(() => _pendingRequests.removeAt(index)); _fetchClusters(); 
                                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Farmer added to your Hub!"), backgroundColor: Colors.green));
                                           }
                                         },
@@ -1010,45 +790,26 @@ class _ClusterScreenState extends State<ClusterScreen> {
 
   Widget _buildElectionBanner() {
     bool isEmpty = _candidates.isEmpty;
-    
     return GestureDetector(
       onTap: _showElectionSheet,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 20),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [Colors.purple.shade800, Colors.deepPurple.shade600]),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: Colors.purple.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))],
-        ),
+        margin: const EdgeInsets.only(bottom: 20), padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(gradient: LinearGradient(colors: [Colors.purple.shade800, Colors.deepPurple.shade600]), borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.purple.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))]),
         child: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
-              child: Icon(isEmpty ? LucideIcons.megaphone : LucideIcons.vote, color: Colors.white),
-            ),
+            Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle), child: Icon(isEmpty ? LucideIcons.megaphone : LucideIcons.vote, color: Colors.white)),
             const SizedBox(width: 15),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text("🏛️ Hub Democracy", style: GoogleFonts.poppins(fontSize: 12, color: Colors.purple.shade100, fontWeight: FontWeight.bold)),
-                  Text(
-                    isEmpty ? "Step up as Coordinator!" : "Election in Progress", 
-                    style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white)
-                  ),
+                  Text(isEmpty ? "Step up as Coordinator!" : "Election in Progress", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white)),
                 ],
               ),
             ),
-            if (!isEmpty && !_hasVoted)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(color: Colors.orange, borderRadius: BorderRadius.circular(10)),
-                child: Text("Vote Now", style: GoogleFonts.poppins(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-              )
-            else
-              const Icon(LucideIcons.chevronRight, color: Colors.white)
+            if (!isEmpty && !_hasVoted) Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Colors.orange, borderRadius: BorderRadius.circular(10)), child: Text("Vote Now", style: GoogleFonts.poppins(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)))
+            else const Icon(LucideIcons.chevronRight, color: Colors.white)
           ],
         ),
       ),
@@ -1060,25 +821,20 @@ class _ClusterScreenState extends State<ClusterScreen> {
     bool isSubmitting = false;
 
     showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
+      context: context, isScrollControlled: true, backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            
             bool hasPitched = _currentUser != null && _candidates.any((c) => c['farmer_id'] == _currentUser!['id']);
 
             return Padding(
               padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
               child: Container(
-                constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
-                padding: const EdgeInsets.all(24.0),
+                constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8), padding: const EdgeInsets.all(24.0),
                 child: SingleChildScrollView(
                   child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
                       const SizedBox(height: 20),
@@ -1088,8 +844,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                       
                       if (_hasVoted)
                         Container(
-                          padding: const EdgeInsets.all(12),
-                          margin: const EdgeInsets.only(bottom: 15),
+                          padding: const EdgeInsets.all(12), margin: const EdgeInsets.only(bottom: 15),
                           decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.green.shade200)),
                           child: Row(
                             children: [
@@ -1104,13 +859,8 @@ class _ClusterScreenState extends State<ClusterScreen> {
                         Text("Current Candidates:", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.grey.shade700)),
                         const SizedBox(height: 10),
                         ..._candidates.map((c) => Container(
-                          margin: const EdgeInsets.only(bottom: 15),
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.purple.shade100),
-                            borderRadius: BorderRadius.circular(16),
-                            color: Colors.purple.shade50.withOpacity(0.3)
-                          ),
+                          margin: const EdgeInsets.only(bottom: 15), padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(border: Border.all(color: Colors.purple.shade100), borderRadius: BorderRadius.circular(16), color: Colors.purple.shade50.withOpacity(0.3)),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -1133,28 +883,16 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                         final error = await _apiClient.castVote(c['candidate_id']);
                                         if (mounted) {
                                           if (error == null) {
-                                            Navigator.pop(context);
-                                            _fetchClusters(); 
+                                            Navigator.pop(context); _fetchClusters(); 
                                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vote cast successfully!"), backgroundColor: Colors.green));
                                           } else {
                                             showDialog(
                                               context: context,
                                               builder: (ctx) => AlertDialog(
                                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                                                title: Row(
-                                                  children: [
-                                                    const Icon(LucideIcons.alertOctagon, color: Colors.red),
-                                                    const SizedBox(width: 10),
-                                                    Text("Wait a minute!", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16)),
-                                                  ],
-                                                ),
+                                                title: Row(children: [const Icon(LucideIcons.alertOctagon, color: Colors.red), const SizedBox(width: 10), Text("Wait a minute!", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16))]),
                                                 content: Text(error, style: GoogleFonts.poppins()),
-                                                actions: [
-                                                  TextButton(
-                                                    onPressed: () => Navigator.pop(ctx),
-                                                    child: Text("Got it", style: GoogleFonts.poppins(color: Colors.blue, fontWeight: FontWeight.bold)),
-                                                  )
-                                                ],
+                                                actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: Text("Got it", style: GoogleFonts.poppins(color: Colors.blue, fontWeight: FontWeight.bold)))]
                                               )
                                             );
                                           }
@@ -1167,8 +905,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                               ),
                               const SizedBox(height: 12),
                               Container(
-                                padding: const EdgeInsets.all(12),
-                                width: double.infinity,
+                                padding: const EdgeInsets.all(12), width: double.infinity,
                                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
                                 child: Text('"${c['pitch']}"', style: GoogleFonts.poppins(fontStyle: FontStyle.italic, fontSize: 12, color: Colors.black87)),
                               )
@@ -1185,16 +922,8 @@ class _ClusterScreenState extends State<ClusterScreen> {
                         Text("Want to lead? Pitch yourself!", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.blue.shade800, fontSize: 16)),
                         const SizedBox(height: 10),
                         TextField(
-                          controller: pitchController,
-                          maxLines: 2,
-                          maxLength: 150,
-                          decoration: InputDecoration(
-                            hintText: "E.g., I have a secure storehouse and a pickup truck. Vote for me!",
-                            hintStyle: GoogleFonts.poppins(fontSize: 12, color: Colors.grey),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            filled: true,
-                            fillColor: Colors.grey.shade50,
-                          ),
+                          controller: pitchController, maxLines: 2, maxLength: 150,
+                          decoration: InputDecoration(hintText: "E.g., I have a secure storehouse and a pickup truck. Vote for me!", hintStyle: GoogleFonts.poppins(fontSize: 12, color: Colors.grey), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), filled: true, fillColor: Colors.grey.shade50),
                         ),
                         const SizedBox(height: 10),
                         SizedBox(
@@ -1202,10 +931,8 @@ class _ClusterScreenState extends State<ClusterScreen> {
                           child: ElevatedButton(
                             onPressed: isSubmitting ? null : () async {
                               if (pitchController.text.trim().isEmpty) return;
-                              
                               setSheetState(() => isSubmitting = true);
                               final error = await _apiClient.runForCoordinator(pitchController.text.trim());
-                              
                               if (mounted) {
                                 Navigator.pop(context);
                                 if (error == null) {
@@ -1216,23 +943,12 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                 }
                               }
                             },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.purple.shade700,
-                              padding: const EdgeInsets.symmetric(vertical: 15),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            ),
-                            child: isSubmitting 
-                              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                              : Text("Submit Candidacy", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade700, padding: const EdgeInsets.symmetric(vertical: 15), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                            child: isSubmitting ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : Text("Submit Candidacy", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
                           ),
                         )
                       ] else if (_candidates.isNotEmpty) ...[
-                        Center(
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 10),
-                            child: Text("You are running in this election! Good luck.", style: GoogleFonts.poppins(color: Colors.green.shade700, fontWeight: FontWeight.bold)),
-                          ),
-                        )
+                        Center(child: Padding(padding: const EdgeInsets.only(top: 10), child: Text("You are running in this election! Good luck.", style: GoogleFonts.poppins(color: Colors.green.shade700, fontWeight: FontWeight.bold))))
                       ]
                     ],
                   ),

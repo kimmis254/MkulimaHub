@@ -1232,14 +1232,17 @@ class ApiClient {
   }
 
   // 🔥 CREATE A DIRECT MARKET ORDER
-  Future<String?> createMarketOrder(int listingId, String orderType, double quantity) async {
-    final token = await getToken();
-    if (token == null) return "Please login first.";
+  Future<String?> createMarketOrder(int listingId, String orderType, double quantity, String deliveryMethod) async {
     try {
+      final token = await getToken();
       final response = await http.post(
         Uri.parse('$baseUrl/api/market/listings/$listingId/order'),
         headers: {"Content-Type": "application/json", "Authorization": "Bearer $token"},
-        body: jsonEncode({"order_type": orderType, "quantity": quantity}),
+        body: jsonEncode({
+          "order_type": orderType, 
+          "quantity": quantity,
+          "delivery_method": deliveryMethod 
+        }),
       );
       if (response.statusCode == 200) return null; // Success!
       return jsonDecode(response.body)['detail'] ?? "Failed to place order.";
@@ -1252,6 +1255,12 @@ class ApiClient {
     return _put('/api/buyer/pledges/$pledgeId/qa', {
       "status": status,
       "notes": notes
+    });
+  }
+  Future<String?> updateDirectOrderQA(int orderId, String status) async {
+    return _put('/api/buyer/orders/$orderId/qa', {
+      "status": status,
+      "notes": "Direct Order Inspected and Approved"
     });
   }
 
@@ -1278,6 +1287,20 @@ class ApiClient {
     } catch (e) {
       return 'Connection error. Please check your internet.';
     }
+  }
+  Future<String?> updateDirectOrderStatus(int orderId, String status) async {
+    return _put('/api/farmer/orders/$orderId/status', {
+      "status": status,
+    });
+  }
+
+  // 🔥 Buyer: Uploads dispute photo and notes
+  Future<String?> disputeDirectOrder(int orderId, String notes, String? imageBase64) async {
+    return _put('/api/buyer/orders/$orderId/qa', {
+      "status": "disputed",
+      "notes": notes,
+      "dispute_image": imageBase64
+    });
   }
 
   

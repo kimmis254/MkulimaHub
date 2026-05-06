@@ -58,7 +58,6 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
     _loadLocationData();
   }
 
-  // 🔥 Load Kenya Locations JSON
   Future<void> _loadLocationData() async {
     try {
       final String response = await rootBundle.loadString('assets/data/kenya_locations.json');
@@ -77,7 +76,7 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
   void _applyVoucher() {
     FocusScope.of(context).unfocus();
     if (_voucherController.text.toUpperCase() == "MKULIMA10") {
-      setState(() => _discountAmount = _subtotal * 0.10); // 10% Off
+      setState(() => _discountAmount = _subtotal * 0.10); 
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("10% Discount Applied!"), backgroundColor: Colors.green));
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Invalid Voucher Code"), backgroundColor: Colors.red));
@@ -92,14 +91,25 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
 
     setState(() => _isLoading = true);
 
-    // Loop through cart and create orders!
+    // 🔥 THE FIX: Sync the newly typed Address to the Profile so the Farmer sees it!
+    if (_deliveryMethod == "doorstep") {
+      await _apiClient.updateProfile({
+        "county": _selectedCounty,
+        "sub_county": _selectedSubCounty,
+        "ward": _selectedWard,
+        "village": _addressController.text.trim(),
+      });
+    }
+
+    String methodString = _deliveryMethod == "doorstep" ? "Delivery" : "Pickup";
+
     bool success = true;
     for (var item in widget.cartItems) {
       if (item['type'] == 'individual') {
-        final error = await _apiClient.createMarketOrder(item['id'], item['format'], item['qty']);
+        // 🔥 THE FIX: Pass the Pickup vs Delivery string to Python!
+        final error = await _apiClient.createMarketOrder(item['id'], item['format'], item['qty'], methodString);
         if (error != null) success = false;
       } else {
-        // Handle Hub Pool Orders (If you have a separate API for Hub Pools, call it here)
         await Future.delayed(const Duration(milliseconds: 500)); 
       }
     }
@@ -108,7 +118,7 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
 
     if (mounted) {
       if (success) {
-        CartManager.items.clear(); // Empty the global cart
+        CartManager.items.clear(); 
         
         showDialog(
           context: context,
@@ -122,7 +132,7 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                 Text("Order Successful!", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
                 const SizedBox(height: 10),
                 Text(
-                  "Your total of KES ${_total.toStringAsFixed(0)} has been processed via $_paymentMode. The farmers have been notified and transport is arranging.",
+                  "Your total of KES ${_total.toStringAsFixed(0)} has been processed. The farmers have been notified and are preparing your produce.",
                   textAlign: TextAlign.center,
                   style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey.shade600),
                 ),
@@ -134,9 +144,9 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                 height: 50,
                 child: ElevatedButton(
                   onPressed: () {
-                    Navigator.pop(context); // Close dialog
-                    Navigator.pop(context); // Close checkout
-                    Navigator.pop(context); // Close cart (Back to Dashboard)
+                    Navigator.pop(context); 
+                    Navigator.pop(context); 
+                    Navigator.pop(context); 
                   },
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.teal.shade700, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
                   child: Text("Back to Dashboard", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -253,7 +263,6 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                                   _buildAddressField(_nameController, "Full Name"),
                                   _buildAddressField(_phoneController, "Phone Number", isPhone: true),
                                   
-                                  // 🔥 THE SMART CASCADING DROPDOWNS
                                   _buildDropdownField("County / Region", _selectedCounty, _counties, (val) {
                                     setState(() {
                                       _selectedCounty = val;

@@ -44,6 +44,7 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
     }
   }
 
+  // --- Voting Sheet (Kept exactly as is) ---
   void _showVotingSheet(Map<String, dynamic> bulkRequest) {
     final TextEditingController pitchController = TextEditingController();
     bool isSubmitting = false;
@@ -84,7 +85,6 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                         ],
                       ),
                       const SizedBox(height: 20),
-                      
                       if (hasVoted)
                         Container(
                           padding: const EdgeInsets.all(12), margin: const EdgeInsets.only(bottom: 15),
@@ -97,7 +97,6 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                             ],
                           ),
                         ),
-
                       if (candidates.isNotEmpty) ...[
                         Text("Current Candidates:", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.grey.shade700)),
                         const SizedBox(height: 10),
@@ -160,7 +159,6 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                           ),
                         ),
                       ],
-
                       const SizedBox(height: 25),
                       if (!hasPitched) ...[
                         const Divider(),
@@ -212,6 +210,7 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
     );
   }
   
+  // --- Edit Pledge Sheet (Kept exactly as is) ---
   void _showEditPledgeSheet(int pledgeId, double currentWeight) {
     final TextEditingController weightController = TextEditingController(text: currentWeight.toStringAsFixed(0));
     bool isSubmitting = false;
@@ -371,7 +370,8 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                       ),
                     )
                   : ListView.builder(
-                      padding: const EdgeInsets.all(20), itemCount: _myPledges.length,
+                      padding: const EdgeInsets.all(16), // Reduced padding for breathing room
+                      itemCount: _myPledges.length,
                       itemBuilder: (context, index) {
                         final pledge = _myPledges[index];
                         final bulkRequest = pledge['bulk_request'] ?? {}; 
@@ -380,7 +380,6 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                         String cropName = bulkRequest['crop_name'] ?? 'Crop';
                         String county = bulkRequest['county'] ?? 'Unknown Location';
                         
-                        // 🔥 Identify if this is a Corporate Contract vs Hub Pool
                         bool isHubPool = buyerName.toLowerCase().contains('hub pool'); 
                         bool isCoordinator = bulkRequest['coordinator_id'] == _currentUserId;
 
@@ -388,7 +387,6 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                         double pricePerKg = (bulkRequest['price_per_kg'] ?? 0).toDouble();
                         double totalSquadWeight = 0;
                         
-                        // 🔥 Determine overall truck status
                         bool allReceived = true;
                         String transitState = 'active';
 
@@ -420,15 +418,16 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                // TOP STATUS BAR
                                 Container(
-                                  padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
                                   child: Row(
                                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: [
                                       Expanded(
                                         child: Row(
                                           children: [
-                                            CircleAvatar(radius: 14, backgroundColor: Colors.orange.shade200, child: Icon(LucideIcons.building, color: Colors.orange.shade800, size: 14)),
+                                            Icon(LucideIcons.building, color: Colors.orange.shade800, size: 14),
                                             const SizedBox(width: 8),
                                             Expanded(child: Text(buyerName, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.orange.shade900), maxLines: 1, overflow: TextOverflow.ellipsis)),
                                           ],
@@ -439,30 +438,92 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                     ],
                                   ),
                                 ),
+                                
                                 Padding(
-                                  padding: const EdgeInsets.all(20.0),
+                                  padding: const EdgeInsets.all(16.0), // Reduced from 20
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
+                                      // CONTRACT DETAILS
                                       Text("Contract #BR-${bulkRequest['id'].toString().padLeft(4, '0')}", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.orange.shade700)),
                                       const SizedBox(height: 4),
                                       Text("${targetWeight}kg of $cropName", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
-                                      const SizedBox(height: 8),
-                                      Row(
-                                        children: [
-                                          Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(6)), child: Text("KES $pricePerKg / kg", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade700))),
-                                          const SizedBox(width: 10),
-                                          Text("Total: KES ${targetWeight * pricePerKg}", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
-                                        ],
-                                      ),
                                       const SizedBox(height: 12),
-                                      Row(
-                                        children: [
-                                          const Icon(LucideIcons.mapPin, size: 14, color: Colors.grey),
-                                          const SizedBox(width: 5),
-                                          Text("Deliver to: $county", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
-                                        ],
+
+                                      // 🔥 CLEAN STACKED INFO TO PREVENT OVERFLOW
+                                      Container(
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12)),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                              children: [
+                                                Text("Price per KG:", style: GoogleFonts.poppins(fontSize: 12, color: Colors.green.shade800)),
+                                                Text("KES $pricePerKg", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade900)),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Row(
+                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                              children: [
+                                                Text("Total Value:", style: GoogleFonts.poppins(fontSize: 12, color: Colors.green.shade800)),
+                                                Text("KES ${targetWeight * pricePerKg}", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade900)),
+                                              ],
+                                            ),
+                                            const Divider(height: 16),
+                                            Row(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Icon(LucideIcons.mapPin, size: 14, color: Colors.green.shade700),
+                                                const SizedBox(width: 5),
+                                                Expanded(child: Text("Deliver to: $county", style: GoogleFonts.poppins(fontSize: 12, color: Colors.green.shade800, fontWeight: FontWeight.w500))),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
                                       ),
+
+                                      // DELIVERY INTEL CARD
+                                      if (!isHubPool) ...[
+                                        const SizedBox(height: 15),
+                                        Container(
+                                          padding: const EdgeInsets.all(16),
+                                          decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.blue.shade200)),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Icon(LucideIcons.map, size: 16, color: Colors.blue.shade800),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(child: Text("Delivery Logistics Intel", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.blue.shade900))),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 10),
+                                              Text(
+                                                (bulkRequest['ward'] != null && bulkRequest['ward'].toString().isNotEmpty) 
+                                                    ? bulkRequest['ward'] 
+                                                    : "No exact address provided. Use chat to confirm.", 
+                                                style: GoogleFonts.poppins(fontSize: 12, color: Colors.blue.shade800, height: 1.5)
+                                              ),
+                                              if (!isCoordinator) ...[
+                                                const SizedBox(height: 10),
+                                                Row(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Icon(LucideIcons.lock, size: 12, color: Colors.blue.shade700),
+                                                    const SizedBox(width: 6),
+                                                    Expanded(child: Text("Master dispatch controls unlock for the Coordinator.", style: GoogleFonts.poppins(fontSize: 10, color: Colors.blue.shade700, fontStyle: FontStyle.italic))),
+                                                  ],
+                                                )
+                                              ]
+                                            ],
+                                          ),
+                                        )
+                                      ],
+
                                       const SizedBox(height: 20),
                                       Column(
                                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -478,27 +539,6 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                           ClipRRect(borderRadius: BorderRadius.circular(10), child: LinearProgressIndicator(value: progress, minHeight: 8, backgroundColor: Colors.grey.shade100, color: Colors.orange.shade400)),
                                         ],
                                       ),
-                                      if (isCoordinator && !isHubPool) ...[
-                                        const SizedBox(height: 15),
-                                        Container(
-                                          padding: const EdgeInsets.all(16),
-                                          decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.blue.shade200)),
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Row(
-                                                children: [
-                                                  Icon(LucideIcons.map, size: 16, color: Colors.blue.shade800),
-                                                  const SizedBox(width: 8),
-                                                  Text("Coordinator Delivery Intel", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.blue.shade900)),
-                                                ],
-                                              ),
-                                              const SizedBox(height: 10),
-                                              Text(bulkRequest['ward'] ?? "No explicit address provided. Use chat.", style: GoogleFonts.poppins(fontSize: 12, color: Colors.blue.shade800, height: 1.5)),
-                                            ],
-                                          ),
-                                        )
-                                      ],
                                       
                                       const Divider(height: 30),
                                       Text("Squad Roster", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87)),
@@ -509,18 +549,16 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                           bool isMe = member['farmer_id'] == _currentUserId; 
                                           String memberStatus = member['status'] ?? 'unknown';
 
-                                          String pendingLabel = isHubPool ? "Awaiting Hub Admin ⏳" : "Awaiting Coordinator ⏳";
-                                          String verifiedLabel = isHubPool ? "Verified by Admin ✅" : "Verified by Coordinator ✅";
+                                          String pendingLabel = isHubPool ? "Awaiting Admin ⏳" : "Awaiting Coordinator ⏳";
+                                          String verifiedLabel = isHubPool ? "Verified ✅" : "Verified ✅";
 
-                                          return AnimatedContainer(
-                                            duration: const Duration(milliseconds: 200),
-                                            margin: const EdgeInsets.only(bottom: 10),
+                                          // 🔥 CLEAN REDESIGNED ROSTER TILE TO PREVENT CRUSHING
+                                          return Container(
+                                            margin: const EdgeInsets.only(bottom: 12),
                                             decoration: BoxDecoration(
-                                              gradient: isMe ? LinearGradient(colors: [Colors.green.shade50, Colors.teal.shade50], begin: Alignment.topLeft, end: Alignment.bottomRight) : null,
-                                              color: isMe ? null : Colors.white,
+                                              color: isMe ? Colors.green.shade50 : Colors.white,
                                               borderRadius: BorderRadius.circular(16),
-                                              border: Border.all(color: isMe ? Colors.green.shade300 : Colors.grey.shade100, width: isMe ? 1.5 : 1),
-                                              boxShadow: isMe ? [BoxShadow(color: Colors.green.shade700.withOpacity(0.12), blurRadius: 12, offset: const Offset(0, 4))] : [],
+                                              border: Border.all(color: isMe ? Colors.green.shade300 : Colors.grey.shade200, width: isMe ? 1.5 : 1),
                                             ),
                                             child: Material(
                                               color: Colors.transparent, 
@@ -528,103 +566,87 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                 onTap: isMe ? () => _showEditPledgeSheet(member['pledge_id'], member['pledge_kg'].toDouble()) : null,
                                                 borderRadius: BorderRadius.circular(16),
                                                 child: Padding(
-                                                  padding: const EdgeInsets.all(14),
+                                                  padding: const EdgeInsets.all(12),
                                                   child: Column(
                                                     crossAxisAlignment: CrossAxisAlignment.start,
                                                     children: [
+                                                      // ROW 1: Avatar, Name, Status Badge
                                                       Row(
-                                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                                        crossAxisAlignment: CrossAxisAlignment.center,
                                                         children: [
-                                                          CircleAvatar(radius: 18, backgroundColor: isMe ? Colors.green.shade200 : Colors.orange.shade50, child: Icon(LucideIcons.user, size: 18, color: isMe ? Colors.green.shade800 : Colors.orange.shade400)),
-                                                          const SizedBox(width: 15),
+                                                          CircleAvatar(radius: 16, backgroundColor: isMe ? Colors.green.shade200 : Colors.grey.shade100, child: Icon(LucideIcons.user, size: 16, color: isMe ? Colors.green.shade800 : Colors.grey.shade600)),
+                                                          const SizedBox(width: 10),
                                                           Expanded(
-                                                            child: Column(
-                                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                                              children: [
-                                                                Wrap(
-                                                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                                                  spacing: 6,
-                                                                  runSpacing: 4,
-                                                                  children: [
-                                                                    Text(
-                                                                      isMe ? "You" : member['name'], 
-                                                                      style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: isMe ? Colors.green.shade900 : Colors.black87),
-                                                                    ),
-                                                                    if (isMe) Icon(LucideIcons.edit2, size: 14, color: Colors.green.shade700),
-                                                                    
-                                                                    // 🔥 DELEGATION LOGIC
-                                                                    if (!isMe && !isHubPool && isCoordinator)
-                                                                      GestureDetector(
-                                                                        onTap: () async {
-                                                                          bool confirm = await showDialog(
-                                                                            context: context,
-                                                                            builder: (ctx) => AlertDialog(
-                                                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                                                              title: const Text("Pass the Crown? 👑"),
-                                                                              content: Text("Are you sure you want to make ${member['name']} the new Squad Coordinator?\n\nYou will lose your transit privileges."),
-                                                                              actions: [
-                                                                                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-                                                                                ElevatedButton(onPressed: () => Navigator.pop(ctx, true), style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade600), child: const Text("Yes, Delegate", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)))
-                                                                              ]
-                                                                            )
-                                                                          ) ?? false;
-                                                                          if (confirm) {
-                                                                            final error = await _apiClient.delegateCoordinator(bulkRequest['id'], member['farmer_id']);
-                                                                            if (mounted) {
-                                                                              if (error == null) {
-                                                                                _loadMyPledges(); 
-                                                                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Leadership delegated successfully!"), backgroundColor: Colors.green));
-                                                                              } else {
-                                                                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
-                                                                              }
-                                                                            }
-                                                                          }
-                                                                        },
-                                                                        child: Container(
-                                                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                                                          decoration: BoxDecoration(color: Colors.purple.shade50, border: Border.all(color: Colors.purple.shade200), borderRadius: BorderRadius.circular(8)),
-                                                                          child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(LucideIcons.userPlus, size: 10, color: Colors.purple.shade700), const SizedBox(width: 4), Text("Delegate", style: GoogleFonts.poppins(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.purple.shade700))])
-                                                                        ),
-                                                                      )
-                                                                  ]
-                                                                ),
-                                                                const SizedBox(height: 4),
-                                                                Text("${member['pledge_kg']} KG Contributed", style: GoogleFonts.poppins(fontSize: 12, color: isMe ? Colors.teal.shade800 : Colors.grey.shade500, fontWeight: FontWeight.w500)),
-                                                              ],
+                                                            child: Text(
+                                                              isMe ? "You" : member['name'], 
+                                                              style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 13, color: isMe ? Colors.green.shade900 : Colors.black87),
+                                                              maxLines: 1, overflow: TextOverflow.ellipsis,
                                                             ),
                                                           ),
-                                                          Column(
-                                                            crossAxisAlignment: CrossAxisAlignment.end,
-                                                            children: [
-                                                              Text("Est. Payout", style: GoogleFonts.poppins(fontSize: 10, color: Colors.teal.shade600, fontWeight: FontWeight.w600)),
-                                                              if (isMe)
-                                                                Text("KES ${member['payout_kes']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.green.shade800))
-                                                              else
-                                                                Text("Hidden", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.grey.shade400)),
-                                                              
-                                                              const SizedBox(height: 6),
-
-                                                              if (isMe) ...[
-                                                                if (memberStatus == 'pending_audit') Text("Awaiting Approval ⏳", style: GoogleFonts.poppins(fontSize: 11, color: Colors.orange.shade700, fontWeight: FontWeight.bold))
-                                                                else if (memberStatus == 'received') Text("Verified ✅", style: GoogleFonts.poppins(fontSize: 12, color: Colors.green.shade700, fontWeight: FontWeight.bold))
-                                                                else if (memberStatus == 'in_transit' || memberStatus == 'delivered' || memberStatus == 'completed' || memberStatus == 'paid') Text("Dispatched 🚚", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade700))
-                                                              ] else ...[
-                                                                if (memberStatus == 'pending_audit') Text(pendingLabel, style: GoogleFonts.poppins(fontSize: 10, color: Colors.orange.shade700, fontWeight: FontWeight.bold))
-                                                                else if (memberStatus == 'received') Text(verifiedLabel, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade700))
-                                                                else if (memberStatus == 'in_transit' || memberStatus == 'delivered' || memberStatus == 'completed' || memberStatus == 'paid') Text("Dispatched 🚚", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade700))
-                                                                else Text("Waiting Drop-off 📦", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade500))
-                                                              ]
-                                                            ],
-                                                          ),
+                                                          // Status Badge Top Right
+                                                          if (isMe) ...[
+                                                            if (memberStatus == 'pending_audit') Text("Awaiting Approval ⏳", style: GoogleFonts.poppins(fontSize: 10, color: Colors.orange.shade700, fontWeight: FontWeight.bold))
+                                                            else if (memberStatus == 'received') Text("Verified ✅", style: GoogleFonts.poppins(fontSize: 10, color: Colors.green.shade700, fontWeight: FontWeight.bold))
+                                                            else if (memberStatus == 'in_transit' || memberStatus == 'delivered' || memberStatus == 'completed' || memberStatus == 'paid') Text("Dispatched 🚚", style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue.shade700))
+                                                          ] else ...[
+                                                            if (memberStatus == 'pending_audit') Text(pendingLabel, style: GoogleFonts.poppins(fontSize: 10, color: Colors.orange.shade700, fontWeight: FontWeight.bold))
+                                                            else if (memberStatus == 'received') Text(verifiedLabel, style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green.shade700))
+                                                            else if (memberStatus == 'in_transit' || memberStatus == 'delivered' || memberStatus == 'completed' || memberStatus == 'paid') Text("Dispatched 🚚", style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue.shade700))
+                                                            else Text("Waiting Drop-off", style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade500))
+                                                          ]
+                                                        ],
+                                                      ),
+                                                      const SizedBox(height: 10),
+                                                      
+                                                      // ROW 2: Weight and Payout
+                                                      Row(
+                                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                        children: [
+                                                          Text("${member['pledge_kg']} KG Contributed", style: GoogleFonts.poppins(fontSize: 11, color: isMe ? Colors.teal.shade800 : Colors.grey.shade600, fontWeight: FontWeight.w600)),
+                                                          Text(isMe ? "Payout: KES ${member['payout_kes']}" : "Payout Hidden", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 11, color: isMe ? Colors.green.shade800 : Colors.grey.shade400)),
                                                         ],
                                                       ),
 
-                                                      // 🔥 THE FIX: COORDINATOR VERIFICATION BUTTON
+                                                      // ROW 3: Actions (Delegate, Handover)
+                                                      if (!isMe && !isHubPool && isCoordinator) ...[
+                                                        const SizedBox(height: 10),
+                                                        GestureDetector(
+                                                          onTap: () async {
+                                                            bool confirm = await showDialog(
+                                                              context: context,
+                                                              builder: (ctx) => AlertDialog(
+                                                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                                                title: const Text("Pass the Crown? 👑"),
+                                                                content: Text("Make ${member['name']} the new Squad Coordinator?"),
+                                                                actions: [
+                                                                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+                                                                  ElevatedButton(onPressed: () => Navigator.pop(ctx, true), style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade600), child: const Text("Yes, Delegate", style: TextStyle(color: Colors.white)))
+                                                                ]
+                                                              )
+                                                            ) ?? false;
+                                                            if (confirm) {
+                                                              final error = await _apiClient.delegateCoordinator(bulkRequest['id'], member['farmer_id']);
+                                                              if (mounted) {
+                                                                if (error == null) {
+                                                                  _loadMyPledges(); 
+                                                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Leadership delegated!"), backgroundColor: Colors.green));
+                                                                } else {
+                                                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                                                                }
+                                                              }
+                                                            }
+                                                          },
+                                                          child: Container(
+                                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                                            decoration: BoxDecoration(color: Colors.purple.shade50, borderRadius: BorderRadius.circular(8)),
+                                                            child: Text("👑 Delegate Leadership", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.purple.shade700))
+                                                          ),
+                                                        )
+                                                      ],
+
+                                                      // COORDINATOR APPROVE BUTTON
                                                       if (isCoordinator && !isHubPool && (memberStatus == 'pledged' || memberStatus == 'gathering' || memberStatus == 'pending_audit')) ...[
-                                                        const Padding(
-                                                          padding: EdgeInsets.symmetric(vertical: 12),
-                                                          child: Divider(height: 1, color: Colors.black12),
-                                                        ),
+                                                        const SizedBox(height: 10),
                                                         SizedBox(
                                                           width: double.infinity,
                                                           child: ElevatedButton.icon(
@@ -634,41 +656,35 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                               if (mounted) {
                                                                 if (error == null) {
                                                                   _loadMyPledges(); 
-                                                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Goods verified and loaded!"), backgroundColor: Colors.green));
                                                                 } else {
-                                                                  setState(() { member['status'] = memberStatus; }); // Revert
+                                                                  setState(() { member['status'] = memberStatus; }); 
                                                                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
                                                                 }
                                                               }
                                                             },
                                                             icon: const Icon(LucideIcons.clipboardCheck, size: 14, color: Colors.white),
-                                                            label: Text("Verify & Receive Goods", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                                                            label: Text("Verify & Receive Goods", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white)),
                                                             style: ElevatedButton.styleFrom(
-                                                              padding: const EdgeInsets.symmetric(vertical: 12),
-                                                              backgroundColor: Colors.teal.shade600,
-                                                              elevation: 0,
-                                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
+                                                              padding: const EdgeInsets.symmetric(vertical: 10),
+                                                              backgroundColor: Colors.teal.shade600, elevation: 0,
+                                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
                                                             ),
                                                           ),
                                                         )
                                                       ] else if (isMe && !isCoordinator && (memberStatus == 'pledged' || memberStatus == 'gathering')) ...[
-                                                        // NORMAL FARMER DROP-OFF BUTTONS
-                                                        const Padding(
-                                                          padding: EdgeInsets.symmetric(vertical: 12),
-                                                          child: Divider(height: 1, color: Colors.black12),
-                                                        ),
-                                                        Row(
+                                                        // NORMAL DROP OFF BUTTONS
+                                                        const SizedBox(height: 10),
+                                                        Column(
                                                           children: [
-                                                            Expanded(
+                                                            SizedBox(
+                                                              width: double.infinity,
                                                               child: OutlinedButton.icon(
                                                                 onPressed: () async {
                                                                   setState(() { member['status'] = 'pending_audit'; });
-                                                                  
                                                                   final error = await _apiClient.updatePledgeStatus(member['pledge_id'], 'pending_audit');
                                                                   if (mounted) {
                                                                     if (error == null) {
                                                                       _loadMyPledges(); 
-                                                                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Marked as handed over!"), backgroundColor: Colors.green));
                                                                     } else {
                                                                       setState(() { member['status'] = 'pledged'; });
                                                                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
@@ -676,17 +692,17 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                                   }
                                                                 },
                                                                 icon: const Icon(LucideIcons.userCheck, size: 14),
-                                                                label: Text("Handed Over", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold)),
+                                                                label: Text("Handed Over (In Person)", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold)),
                                                                 style: OutlinedButton.styleFrom(
-                                                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                                                  foregroundColor: Colors.green.shade700,
-                                                                  side: BorderSide(color: Colors.green.shade300),
-                                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
+                                                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                                                  foregroundColor: Colors.green.shade700, side: BorderSide(color: Colors.green.shade300),
+                                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
                                                                 ),
                                                               ),
                                                             ),
-                                                            const SizedBox(width: 10),
-                                                            Expanded(
+                                                            const SizedBox(height: 6),
+                                                            SizedBox(
+                                                              width: double.infinity,
                                                               child: ElevatedButton.icon(
                                                                 onPressed: () async {
                                                                   final didSubmit = await Navigator.push(context, MaterialPageRoute(builder: (_) => UnattendedDropoffScreen(squadId: bulkRequest['id'], cropName: cropName)));
@@ -696,13 +712,11 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                                   }
                                                                 },
                                                                 icon: const Icon(LucideIcons.camera, size: 14),
-                                                                label: Text("Digital Drop-off", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold)),
+                                                                label: Text("Digital Drop-off", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold)),
                                                                 style: ElevatedButton.styleFrom(
-                                                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                                                  backgroundColor: Colors.red.shade600, 
-                                                                  foregroundColor: Colors.white,
-                                                                  elevation: 0,
-                                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
+                                                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                                                  backgroundColor: Colors.red.shade600, foregroundColor: Colors.white, elevation: 0,
+                                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
                                                                 ),
                                                               ),
                                                             ),
@@ -725,12 +739,11 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                       ),
                                       const SizedBox(height: 15),
 
-                                      // 🔥 THE FIX: COORDINATOR MASTER DISPATCH BUTTONS
                                       if (squadStatus == 'fulfilled' || transitState == 'completed' || transitState == 'paid')
                                         _buildPremiumButton(title: "Contract Completed", icon: LucideIcons.checkCircle, gradientColors: [Colors.green.shade400, Colors.green.shade700], onTap: null)
                                       else if (isCoordinator && !isHubPool && allReceived && (transitState == 'received' || squadStatus == 'active' && transitState != 'in_transit' && transitState != 'delivered'))
                                         _buildPremiumButton(
-                                          title: "Dispatch Truck (Start Transit)", 
+                                          title: "Dispatch Truck", 
                                           icon: LucideIcons.truck, 
                                           gradientColors: [Colors.blue.shade500, Colors.blue.shade800], 
                                           onTap: () async {
@@ -741,7 +754,7 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                         )
                                       else if (isCoordinator && !isHubPool && transitState == 'in_transit')
                                         _buildPremiumButton(
-                                          title: "Mark as Delivered to Buyer", 
+                                          title: "Mark as Delivered", 
                                           icon: LucideIcons.mapPin, 
                                           gradientColors: [Colors.indigo.shade500, Colors.indigo.shade800], 
                                           onTap: () async {

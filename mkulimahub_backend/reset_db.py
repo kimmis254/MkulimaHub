@@ -14,9 +14,7 @@ tables_to_drop = [
     "squad_votes",
     "squad_candidates",
     "squad_messages",
-    "bulk_requests",
-    "hub_messages",
-    "users"
+    "bulk_requests"
 ]
 
 for table in tables_to_drop:

@@ -14,6 +14,7 @@ import 'package:mkulimahub_mobile/features/buyer/buyer_create_order_screen.dart'
 import 'package:mkulimahub_mobile/features/buyer/buyer_cart_screen.dart';
 
 final GlobalKey<BuyerMarketplaceViewState> buyerMarketplaceKey = GlobalKey<BuyerMarketplaceViewState>();
+final GlobalKey<BuyerOrdersScreenState> buyerOrdersKey = GlobalKey<BuyerOrdersScreenState>();
 
 class BuyerDashboard extends StatefulWidget {
   const BuyerDashboard({super.key});
@@ -30,7 +31,8 @@ class _BuyerDashboardState extends State<BuyerDashboard> {
   void initState() {
     super.initState();
     _screens = [
-      BuyerMarketplaceView(key: buyerMarketplaceKey), 
+      BuyerMarketplaceView(key: buyerMarketplaceKey),
+      BuyerOrdersScreen(key: buyerOrdersKey), 
       const BuyerOrdersScreen(),                      
       const BuyerInsightsScreen(),                    
       const BuyerWalletScreen(),                      
@@ -71,7 +73,7 @@ class _BuyerDashboardState extends State<BuyerDashboard> {
                     onTap: () async {
                       final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => const BuyerCreateOrderScreen()));
                       if (result == true) {
-                        setState(() => _selectedIndex = 1);
+                        buyerOrdersKey.currentState?.fetchLiveOrders();
                       }
                     },
                     child: Container(
