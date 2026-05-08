@@ -91,21 +91,20 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
 
     setState(() => _isLoading = true);
 
-    String methodString = _deliveryMethod == "doorstep" ? "Delivery" : "Pickup";
+    // 🔥 THE FIX: Capture the exact custom address they typed in the checkout form!
+    String customAddress = "${_selectedCounty ?? ''}, ${_selectedSubCounty ?? ''}, ${_selectedWard ?? ''} - ${_addressController.text.trim()}";
 
     bool success = true;
     for (var item in widget.cartItems) {
       if (item['type'] == 'individual') {
-        // 🔥 Route 1: Individual Farmer Orders
+        // 🔥 THE HACK: Inject the custom address into the delivery string separated by a pipe '|'
+        String methodString = _deliveryMethod == "doorstep" ? "Delivery|$customAddress" : "Pickup|Buyer will pickup from your location.";
         final error = await _apiClient.createMarketOrder(item['id'], item['format'], item['qty'], methodString);
         if (error != null) success = false;
       } else if (item['type'] == 'pool') {
-        // 🔥 Route 2: Hub Pool Purchases!
+        // Hub Pools already have dedicated columns, so we pass it normally
         String finalCounty = _deliveryMethod == "doorstep" ? (_selectedCounty ?? "Kenya") : "Pickup Location";
-        String finalWard = _deliveryMethod == "doorstep" 
-            ? "${_selectedSubCounty ?? ''}, ${_selectedWard ?? ''} - ${_addressController.text.trim()}" 
-            : "Buyer will arrange pickup from the Hub.";
-        
+        String finalWard = _deliveryMethod == "doorstep" ? customAddress : "Buyer will arrange pickup from the Hub.";
         final error = await _apiClient.purchaseHubPool(item['id'], finalCounty, finalWard);
         if (error != null) success = false;
       }
@@ -115,7 +114,7 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
 
     if (mounted) {
       if (success) {
-        CartManager.items.clear(); // Empty the global cart
+        CartManager.items.clear(); 
         
         showDialog(
           context: context,
@@ -129,7 +128,7 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                 Text("Order Successful!", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
                 const SizedBox(height: 10),
                 Text(
-                  "Your total of KES ${_total.toStringAsFixed(0)} has been processed via $_paymentMode. The farmers have been notified and transport is arranging.",
+                  "Your total of KES ${_total.toStringAsFixed(0)} has been processed via $_paymentMode. Logistics have been notified.",
                   textAlign: TextAlign.center,
                   style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey.shade600),
                 ),

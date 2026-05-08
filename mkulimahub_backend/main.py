@@ -1444,18 +1444,12 @@ def process_hub_delivery(squad_id: int, payload: ProcessDeliveryPayload, db: Ses
 
 @app.get("/api/my-deliveries")
 def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Fetches the logged-in farmer's personal pledges AND direct sales."""
-    
     unified_deliveries = []
-    db_needs_commit = False
-
+    
     # ==========================================
     # 1. FETCH BULK SQUAD PLEDGES
     # ==========================================
-    pledges = db.query(models.Pledge).filter(
-        models.Pledge.farmer_id == current_user.id,
-        ~models.Pledge.status.in_(["paid", "completed", "rejected"])
-    ).all()
+    pledges = db.query(models.Pledge).filter(models.Pledge.farmer_id == current_user.id).all()
     
     for p in pledges:
         contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == p.bulk_request_id).first()
@@ -1464,7 +1458,6 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
             
         is_internal_pool = contract.buyer_name.startswith("Hub Pool:")
 
-        # Dynamically assign the correct auditor text based on the contract type!
         display_notes = p.notes
         if display_notes and str(display_notes).startswith("EVIDENCE_LOG|"):
             if is_internal_pool:
@@ -1477,15 +1470,12 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
             else:
                 display_notes = "Deliver to Squad Coordinator."
 
-        # Check if EVERY farmer in the squad is verified!
         all_squad_received = True
         squad_pledges_check = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == contract.id).all()
         for sp in squad_pledges_check:
-            # If anyone is still pending_audit, pledged, or gathering, the truck can't leave!
             if sp.status not in ['received', 'in_transit', 'delivered', 'completed', 'paid']:
                 all_squad_received = False
 
-        # 🔥 THE FIX: Dynamically pass the actual_kg and adjust the expected payout!
         final_kg = p.actual_weight_kg if p.actual_weight_kg is not None else p.pledged_weight_kg
 
         unified_deliveries.append({
@@ -1493,9 +1483,9 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
             "type": "Co-op Pool" if is_internal_pool else "Bulk Contract",
             "crop": contract.crop_name, 
             "weight_kg": p.pledged_weight_kg,
-            "actual_kg": p.actual_weight_kg, # 🔥 NEW: Send Actual KG
+            "actual_kg": p.actual_weight_kg, 
             "unit": "KG", 
-            "expected_payout": final_kg * contract.price_per_kg, # 🔥 NEW: Adjusted Payout
+            "expected_payout": final_kg * contract.price_per_kg, 
             "status": p.status, 
             "buyer": "Your Local Co-op" if is_internal_pool else contract.buyer_name, 
             "notes": display_notes,
@@ -1504,46 +1494,47 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
             "squad_status": contract.squad_status,
             "all_squad_received": all_squad_received 
         })
+
     # ==========================================
-    # 2. FETCH INDIVIDUAL DIRECT SALES (MarketListings & Orders)
+    # 2. FETCH DIRECT SALES (🔥 WHERE THE ERROR WAS)
     # ==========================================
     try:
         direct_orders = db.query(models.MarketOrder).join(models.MarketListing).filter(
-            models.MarketListing.farmer_id == current_user.id,
-            ~models.MarketOrder.status.in_(["paid", "completed", "rejected"]) # 🔥 THE FIX: Hides finished orders
+            models.MarketListing.farmer_id == current_user.id
         ).all()
         
         for order in direct_orders:
             listing = order.listing
-            buyer = order.buyer
+            buyer = db.query(models.User).filter(models.User.id == order.buyer_id).first()
             
-            # 🔥 THE FIX: Get unit name safely from the order, not the listing!
-            unit_name = order.order_type if order.order_type else "KG"
-            
-            # 🔥 NEW: Grab Buyer's Contact & Location Intel
-            buyer_contact = buyer.phone_number if buyer and buyer.phone_number else "No phone provided"
-            
-            buyer_address = "Unknown Location"
-            if buyer:
-                address_parts = [buyer.village, buyer.sub_county, buyer.county]
-                buyer_address = ", ".join([p for p in address_parts if p])
-            
+            raw_method = str(getattr(order, 'delivery_method', 'Delivery'))
+            if "|" in raw_method:
+                clean_method, custom_address = raw_method.split("|", 1)
+            else:
+                clean_method = raw_method
+                custom_address = f"{buyer.village}, {buyer.ward}" if buyer else "Address Pending"
+
+            # 🔥 THE FIX: Safely extract the quantity using the correct column name!
+            qty = getattr(order, 'quantity_ordered', getattr(order, 'quantity', 0))
+
             unified_deliveries.append({
-                "id": f"ORD-{order.id:04d}", 
-                "order_id": order.id, # 🔥 Required for the farmer to trigger status updates!
+                "id": f"ORD-{order.id:04d}",
+                "order_id": order.id,
                 "type": "Direct Sale",
-                "crop": listing.crop_name, "weight_kg": order.quantity_ordered, "unit": unit_name, 
-                "expected_payout": order.total_price, "status": order.status, 
-                "buyer": buyer.full_name if buyer else "Customer", 
-                "buyer_phone": buyer_contact, "buyer_address": buyer_address,
-                "delivery_method": getattr(order, 'delivery_method', 'Delivery'), # 🔥 NEW
-                "dispute_notes": getattr(order, 'dispute_notes', None),           # 🔥 NEW
-                "dispute_image": getattr(order, 'dispute_image', None),           # 🔥 NEW
+                "crop": listing.crop_name if listing else "Produce",
+                "weight_kg": qty, # 🔥 Applies the safe quantity
+                "unit": getattr(order, 'order_type', 'KG'),
+                "expected_payout": order.total_price,
+                "status": order.status,
+                "buyer": buyer.full_name if buyer else "Unknown",
+                "buyer_phone": buyer.phone_number if buyer else "No phone",
+                "buyer_address": custom_address, 
+                "delivery_method": clean_method,
+                "notes": getattr(order, 'dispute_notes', "Direct order from marketplace.")
             })
     except Exception as e:
         print(f"Direct Sales fetch error: {e}")
         
-    # Finally, return both lists combined
     return unified_deliveries
     
 class SquadStatusUpdate(BaseModel):
@@ -1655,6 +1646,10 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
         original_price = contract.target_weight_kg * contract.price_per_kg
         adjusted_price = actual_weight * contract.price_per_kg
 
+        # Add contract metrics
+        total_capital_committed += adjusted_price if c_status in ['fulfilled', 'completed'] else original_price
+        total_tonnage_requested += contract.target_weight_kg
+
         active_contracts.append({
             "contract_id": contract.id, 
             "crop_name": contract.crop_name,
@@ -1666,31 +1661,46 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
             "roster": roster,
             "coordinator_phone": coord_phone, 
             "pickup_location": pickup_loc,
-            "original_price": original_price,  # NEW
-            "adjusted_price": adjusted_price   # NEW
+            "original_price": original_price,  
+            "adjusted_price": adjusted_price   
         })
 
     # 🔥 THE FIX: Fetch Direct Cart Orders
     market_orders = db.query(models.MarketOrder).filter(models.MarketOrder.buyer_id == current_user.id).all()
     direct_orders = []
+    
     for order in market_orders:
         listing = order.listing
         farmer = listing.farmer if listing else None
         
         # Add to metrics tracking
         total_capital_committed += order.total_price
-        if order.order_type == "KG":
-            total_tonnage_requested += order.quantity_ordered
+        
+        # Safely handle quantity mapping (Supports both quantity_ordered and quantity)
+        qty = getattr(order, 'quantity_ordered', getattr(order, 'quantity', 0))
+        unit_type = getattr(order, 'order_type', 'KG')
+        
+        if unit_type == "KG":
+            total_tonnage_requested += qty
+            
+        # 🔥 THE FIX: Clean the delivery_method string so the Flutter UI logic works perfectly!
+        raw_method = str(getattr(order, 'delivery_method', 'Delivery'))
+        if "|" in raw_method:
+            clean_method, _ = raw_method.split("|", 1)
+        else:
+            clean_method = raw_method
             
         direct_orders.append({
             "order_id": order.id,
             "crop_name": listing.crop_name if listing else "Produce",
-            "quantity": order.quantity_ordered, "unit": order.order_type,
-            "total_price": order.total_price, "status": order.status,
+            "quantity": qty, 
+            "unit": unit_type,
+            "total_price": order.total_price, 
+            "status": order.status,
             "farmer_name": farmer.full_name if farmer else "Local Farmer",
             "farmer_phone": farmer.phone_number if farmer else "N/A",
-            "delivery_method": getattr(order, 'delivery_method', 'Delivery'), # 🔥 NEW
-            "dispute_notes": getattr(order, 'dispute_notes', None),           # 🔥 NEW
+            "delivery_method": clean_method, # 🔥 STRIPPED OF THE ADDRESS FOR THE UI!
+            "dispute_notes": getattr(order, 'dispute_notes', None),           
         })
 
     return {
@@ -1700,7 +1710,7 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
             "active_contract_count": len([c for c in active_contracts if c['status'] != 'completed']) + len([o for o in direct_orders if o['status'] not in ['paid', 'completed', 'rejected']])
         },
         "contracts": active_contracts,
-        "direct_orders": direct_orders # 🔥 Return Direct Orders!
+        "direct_orders": direct_orders 
     }
 
 class BulkRequestCreate(BaseModel):
@@ -2498,15 +2508,31 @@ def delete_market_listing(
     return {"message": "Listing deleted."}
 
 @app.put("/api/farmer/orders/{order_id}/status")
-def update_farmer_order_status(order_id: int, payload: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+def update_direct_order_status(order_id: int, payload: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # 1. Fetch the order without the strict Farmer-only filter
     order = db.query(models.MarketOrder).join(models.MarketListing).filter(
-        models.MarketOrder.id == order_id, models.MarketListing.farmer_id == current_user.id
+        models.MarketOrder.id == order_id
     ).first()
-    if not order: raise HTTPException(status_code=404, detail="Order not found")
     
+    if not order: 
+        raise HTTPException(status_code=404, detail="Order not found")
+        
+    # 🔥 THE FIX: Check if the user is EITHER the Farmer OR the Buyer
+    is_farmer = order.listing.farmer_id == current_user.id if order.listing else False
+    is_buyer = order.buyer_id == current_user.id
+    
+    if not (is_farmer or is_buyer):
+        raise HTTPException(status_code=403, detail="You are not authorized to update this order.")
+    
+    # 3. Update the status
     order.status = payload.get("status")
+    
+    # 4. Safely handle disputes if the buyer rejects the quality
+    if payload.get("dispute_notes"):
+        order.dispute_notes = payload.get("dispute_notes")
+        
     db.commit()
-    return {"message": f"Order status updated to {order.status}"}
+    return {"message": f"Order status successfully updated to {order.status}"}
 
 @app.post("/api/admin/fix-orphans")
 def fix_orphaned_farmers(db: Session = Depends(get_db)):

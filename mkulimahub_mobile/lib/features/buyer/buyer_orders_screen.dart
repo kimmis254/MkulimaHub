@@ -11,11 +11,9 @@ class BuyerOrdersScreen extends StatefulWidget {
   const BuyerOrdersScreen({super.key});
 
   @override
-  // 🔥 THE FIX: Removed the underscore to make the State public!
   State<BuyerOrdersScreen> createState() => BuyerOrdersScreenState();
 }
 
-// 🔥 THE FIX: Removed the underscore to make the State public!
 class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
   int _selectedTab = 0; 
   final ApiClient _apiClient = ApiClient();
@@ -29,10 +27,9 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
   @override
   void initState() {
     super.initState();
-    fetchLiveOrders(); // Updated method name
+    fetchLiveOrders(); 
   }
 
-  // 🔥 THE FIX: Made this method public so the Dashboard can call it!
   Future<void> fetchLiveOrders() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
@@ -43,14 +40,20 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
         final List<dynamic> contracts = data['contracts'] ?? [];
         final List<dynamic> directOrders = data['direct_orders'] ?? [];
         
+        bool isContractInTransit(Map<String, dynamic> c) {
+            if (c['status'] == 'completed') return false;
+            List roster = c['roster'] ?? [];
+            return roster.any((p) => p['status'] == 'in_transit' || p['status'] == 'delivered');
+        }
+
         setState(() {
           _gatheringOrders = [
-            ...contracts.where((c) => c['status'] == 'active'),
+            ...contracts.where((c) => c['status'] == 'active' && !isContractInTransit(c)),
             ...directOrders.where((o) => o['status'] == 'pending').map((o) => {...o as Map<String,dynamic>, 'is_direct': true})
           ];
 
           _transitOrders = [
-            ...contracts.where((c) => c['status'] == 'fulfilled'),
+            ...contracts.where((c) => c['status'] == 'fulfilled' || (c['status'] == 'active' && isContractInTransit(c))),
             ...directOrders.where((o) => o['status'] == 'in_transit' || o['status'] == 'delivered' || o['status'] == 'disputed').map((o) => {...o as Map<String,dynamic>, 'is_direct': true})
           ];
 
@@ -71,13 +74,12 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
-      // 🔥 THE FIX: Added Pull-to-Refresh!
       body: RefreshIndicator(
         onRefresh: fetchLiveOrders,
         color: Colors.teal.shade700,
         backgroundColor: Colors.white,
         child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(), // Required for pull-to-refresh
+          physics: const AlwaysScrollableScrollPhysics(), 
           slivers: [
             SliverToBoxAdapter(
               child: Container(
@@ -141,7 +143,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                         if (_historyOrders.isEmpty) return _buildEmptyState("No completed orders yet.");
                         final item = _historyOrders[index];
                         if (item['is_direct'] == true) return _buildDirectOrderCard(item, index, "Closed Archival", Colors.green);
-                        return _buildHistoryCard(item, index);
+                        return _buildHistoryCard(item, index); // 🔥 THIS WAS MISSING
                       }
                       return const SizedBox.shrink();
                     },
@@ -175,9 +177,15 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
   }
 
   // ==========================================
-  // DIRECT CART ORDERS
+  // DIRECT CART ORDERS (Gathering / History Tab)
   // ==========================================
   Widget _buildDirectOrderCard(Map<String, dynamic> order, int index, String label, MaterialColor color) {
+    // 🔥 THE FIX: Properly initialize variables so the buttons show up!
+    String deliveryMethod = order['delivery_method'] ?? 'Delivery';
+    bool isDisputed = order['status'] == 'disputed';
+    bool needsInspection = order['status'] == 'in_transit' || order['status'] == 'delivered' || deliveryMethod == 'Pickup';
+    bool isFinished = order['status'] == 'paid' || order['status'] == 'completed' || order['status'] == 'rejected';
+
     return FadeInUp(
       delay: Duration(milliseconds: index * 100),
       child: Container(
@@ -197,14 +205,70 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
             Text("${order['quantity']} ${order['unit']} of ${order['crop_name']}", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
             const SizedBox(height: 4),
             Row(children: [Icon(LucideIcons.user, size: 14, color: Colors.grey.shade500), const SizedBox(width: 6), Text(order['farmer_name'], style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13))]),
+            
+            if (deliveryMethod == "Pickup") ...[
+              const SizedBox(height: 15),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.blue.shade100)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(LucideIcons.mapPin, size: 14, color: Colors.blue.shade800),
+                        const SizedBox(width: 8),
+                        Text("Farmer Pickup Intel", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue.shade900)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(LucideIcons.phone, size: 14, color: Colors.blue.shade800),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text("${order['farmer_name']} • ${order['farmer_phone'] ?? 'No Phone'}", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade900), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             const Padding(padding: EdgeInsets.symmetric(vertical: 15), child: Divider(height: 1)),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("Total Price", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)), Text("KES ${order['total_price']}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16))]),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("Total Price", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)), Text("KES ${order['total_price']}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14))]),
+                
+                if (isFinished)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12)),
+                    child: Text(order['status'] == 'rejected' ? "Cancelled" : "Payment Released ✅", style: GoogleFonts.poppins(color: Colors.green.shade800, fontSize: 12, fontWeight: FontWeight.bold)),
+                  )
+                else if (deliveryMethod == "Pickup" && (order['status'] == 'pending' || order['status'] == 'in_transit'))
+                  ElevatedButton(
+                    onPressed: () => _confirmPickupAction(order),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
+                    child: Text("Confirm Pickup", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  )
+                else
+                  ElevatedButton(
+                    onPressed: needsInspection && !isDisputed ? () => _showDirectOrderQA(order) : null,
+                    style: ElevatedButton.styleFrom(backgroundColor: isDisputed ? Colors.grey.shade300 : (needsInspection ? Colors.orange.shade600 : Colors.grey.shade400), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
+                    child: Text(isDisputed ? "Waiting on Farmer" : (needsInspection ? "Inspect & Pay" : "Waiting for Dispatch"), style: GoogleFonts.poppins(color: isDisputed ? Colors.grey.shade600 : Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  ),
+              ],
+            ),
           ],
         ),
       ),
     );
   }
 
+  // ==========================================
+  // DIRECT TRANSIT CARD (Deliveries Tab)
+  // ==========================================
   Widget _buildDirectTransitCard(Map<String, dynamic> order, int index) {
     String deliveryMethod = order['delivery_method'] ?? 'Delivery';
     bool isDisputed = order['status'] == 'disputed';
@@ -225,16 +289,53 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("${order['quantity']} ${order['unit']} of ${order['crop_name']}", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)), Text(isDisputed ? "Dispute Active" : (deliveryMethod == "Pickup" ? "Ready for Pickup" : "In Transit to You"), style: GoogleFonts.poppins(color: isDisputed ? Colors.red.shade800 : Colors.blue.shade700, fontSize: 12, fontWeight: FontWeight.bold))])),
               ],
             ),
+            
+            const SizedBox(height: 15),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.blue.shade100)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(deliveryMethod == "Pickup" ? LucideIcons.mapPin : LucideIcons.truck, size: 14, color: Colors.blue.shade800),
+                      const SizedBox(width: 8),
+                      Text(deliveryMethod == "Pickup" ? "Farmer Pickup Intel" : "Delivery Contact", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue.shade900)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(deliveryMethod == "Pickup" ? "Arrange pickup directly with the farmer." : "Farmer will contact you upon arrival.", style: GoogleFonts.poppins(fontSize: 11, color: Colors.blue.shade800)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(LucideIcons.phone, size: 14, color: Colors.blue.shade800),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text("${order['farmer_name']} • ${order['farmer_phone'] ?? 'No Phone'}", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade900), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
             const Padding(padding: EdgeInsets.symmetric(vertical: 15), child: Divider(height: 1)),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("Total Price", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)), Text("KES ${order['total_price']}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14))]),
-                ElevatedButton(
-                  onPressed: needsInspection && !isDisputed ? () => _showDirectOrderQA(order) : null,
-                  style: ElevatedButton.styleFrom(backgroundColor: isDisputed ? Colors.grey.shade300 : Colors.orange.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
-                  child: Text(isDisputed ? "Waiting on Farmer" : "Inspect & Pay", style: GoogleFonts.poppins(color: isDisputed ? Colors.grey.shade600 : Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                ),
+                
+                if (deliveryMethod == "Pickup" && (order['status'] == 'pending' || order['status'] == 'in_transit'))
+                  ElevatedButton(
+                    onPressed: () => _confirmPickupAction(order),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
+                    child: Text("Confirm Pickup", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  )
+                else
+                  ElevatedButton(
+                    onPressed: needsInspection && !isDisputed ? () => _showDirectOrderQA(order) : null,
+                    style: ElevatedButton.styleFrom(backgroundColor: isDisputed ? Colors.grey.shade300 : Colors.orange.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
+                    child: Text(isDisputed ? "Waiting on Farmer" : "Inspect & Pay", style: GoogleFonts.poppins(color: isDisputed ? Colors.grey.shade600 : Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  ),
               ],
             )
           ],
@@ -243,6 +344,35 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
     );
   }
 
+  // Extracted confirmation logic to keep code clean
+  Future<void> _confirmPickupAction(Map<String, dynamic> order) async {
+    bool confirm = await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text("Confirm Pickup"),
+        content: const Text("Have you physically received these goods from the farmer? This will instantly release the escrow funds to them."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), style: ElevatedButton.styleFrom(backgroundColor: Colors.green), child: const Text("Yes, I have them")),
+        ]
+      )
+    ) ?? false;
+    
+    if (confirm) {
+      final error = await _apiClient.updateDirectOrderStatus(order['order_id'], 'paid');
+      if (error == null) {
+        fetchLiveOrders();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pickup confirmed! Funds released."), backgroundColor: Colors.green));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+      }
+    }
+  }
+
+  // ==========================================
+  // QA SHEETS
+  // ==========================================
   void _showDirectOrderQA(Map<String, dynamic> order) {
     showModalBottomSheet(
       context: context,
@@ -425,8 +555,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
               ],
             ),
             
-            // 🔥 THE FIX: Inject Hub Pickup Intel right here!
-            if (order['pickup_location'] != null) ...[
+            if (order['pickup_location'] != null && order['pickup_location'].toString().isNotEmpty) ...[
               const SizedBox(height: 15),
               Container(
                 padding: const EdgeInsets.all(12),
@@ -464,8 +593,6 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start, 
                   children: [
                     Text("Total Escrow Bound", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)), 
-                    
-                    // 🔥 THE FIX: Dynamic Price Display based on No-Shows
                     if (order['adjusted_price'] != null && order['adjusted_price'] < order['original_price']) ...[
                       Text("KES ${order['original_price']}", style: GoogleFonts.poppins(color: Colors.red.shade300, fontWeight: FontWeight.bold, fontSize: 12, decoration: TextDecoration.lineThrough)),
                       Row(
@@ -493,6 +620,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
     );
   }
 
+  // 🔥 THE FIX: RESTORED HISTORY CARD!
   Widget _buildHistoryCard(Map<String, dynamic> order, int index) {
     return FadeInUp(
       delay: Duration(milliseconds: index * 100),
@@ -513,7 +641,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("Total Capital Released", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)), Text("KES ${order['target_weight_kg'] * order['price_per_kg']}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14))]),
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("Total Capital Released", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)), Text("KES ${order['adjusted_price'] ?? (order['target_weight_kg'] * order['price_per_kg'])}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14))]),
                 ElevatedButton(
                   onPressed: () => _showContractQASheet(order), 
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade200, foregroundColor: Colors.black87, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
@@ -552,7 +680,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                         final member = roster[index];
                         final memberStatus = member['status'] ?? '';
                         final isDelivered = memberStatus == 'delivered';
-                        final isPassed = memberStatus == 'paid'; 
+                        final isPassed = memberStatus == 'paid' || memberStatus == 'completed'; 
                         final isFailed = memberStatus == 'rejected';
 
                         return Container(
@@ -569,8 +697,8 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text(member['farmer_name'], style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-                                        Text("Weight: ${member['actual_kg']} KG", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
+                                        Text(member['farmer_name'], style: GoogleFonts.poppins(fontWeight: FontWeight.bold, decoration: isFailed ? TextDecoration.lineThrough : null)),
+                                        Text(isFailed ? "Farmer No-Show" : "Status: $memberStatus", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
                                       ],
                                     ),
                                   ),

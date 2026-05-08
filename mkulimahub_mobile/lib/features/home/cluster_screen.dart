@@ -665,13 +665,19 @@ class _ClusterScreenState extends State<ClusterScreen> {
                     onTap: () { Navigator.pop(context); _showCoordinatorBottomSheet(); },
                   ),
                   Divider(color: Colors.grey.shade200),
+                  
+                  // 🔥 THE FIX: Give the Hub Admin their true power (Managing Hub Pools!)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: CircleAvatar(backgroundColor: Colors.green.shade50, child: const Icon(LucideIcons.scale, color: Colors.green)),
-                    title: Text("Process Deliveries", style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-                    subtitle: Text("Weigh and receive pledged crops", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
+                    leading: CircleAvatar(backgroundColor: Colors.green.shade50, child: const Icon(LucideIcons.store, color: Colors.green)),
+                    title: Text("Manage Hub Pools", style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                    subtitle: Text("Create wholesale pools in Co-op Chat", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
                     trailing: const Icon(LucideIcons.chevronRight, size: 16),
-                    onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => ReceivingDashboard())); },
+                    onTap: () { 
+                      Navigator.pop(context); 
+                      // Route them directly to their Hub Chat to post POOL_REQ commands
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => HubChatScreen(hubName: _myClusterId ?? "Co-op"))); 
+                    },
                   ),
                 ],
               ),
