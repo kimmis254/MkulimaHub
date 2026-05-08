@@ -5,7 +5,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/features/buyer/buyer_checkout_screen.dart';
 
-// 🔥 THE GLOBAL CART MANAGER: Stores all items across the app!
 class CartManager {
   static final List<Map<String, dynamic>> items = [];
 }
@@ -24,29 +23,27 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
     return CartManager.items.fold(0, (sum, item) => sum + (item['weightKg'] * item['pricePerKg']));
   }
 
-  void _removeItem(String id) {
+  // 🔥 THE FIX: Changed from (String id) to (dynamic id) to handle integers safely!
+  void _removeItem(dynamic id) {
     setState(() {
-      CartManager.items.removeWhere((item) => item['id'] == id);
+      CartManager.items.removeWhere((item) => item['id'].toString() == id.toString());
     });
   }
 
   void _checkout() {
     if (CartManager.items.isEmpty) return;
     
-    // 🔥 Pass the actual items to the massive new Checkout Screen!
     Navigator.push(
       context, 
       MaterialPageRoute(
         builder: (_) => BuyerCheckoutScreen(cartItems: CartManager.items)
       )
-    ).then((_) => setState(() {})); // Refresh cart when returning
+    ).then((_) => setState(() {})); 
   }
 
-  // 🔥 THE FIX: Smart Image Decoder that handles both Base64 and Web URLs
   Widget _buildCartImage(Map<String, dynamic> item) {
     String? imageStr = item['image']?.toString();
     
-    // Fallback if the key was named 'image_base64' by accident during cart addition
     if (imageStr == null || imageStr.isEmpty) {
       imageStr = item['image_base64']?.toString();
     }
@@ -55,18 +52,15 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
       return Container(width: 80, height: 80, color: Colors.teal.shade50, child: const Icon(LucideIcons.imageOff, color: Colors.teal));
     }
 
-    // Check if it is a Base64 string from the camera/gallery
     if (imageStr.startsWith('data:image') || imageStr.length > 200) {
       try {
         final base64String = imageStr.split(',').last;
         return Image.memory(base64Decode(base64String), width: 80, height: 80, fit: BoxFit.cover);
       } catch (e) {
-        debugPrint("Error decoding Base64 image in cart: $e");
         return Container(width: 80, height: 80, color: Colors.teal.shade50, child: const Icon(LucideIcons.imageOff, color: Colors.teal));
       }
     }
 
-    // Otherwise, assume it's a standard web URL
     return Image.network(
       imageStr,
       width: 80, height: 80, fit: BoxFit.cover,
@@ -133,7 +127,6 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
   Widget _buildCartContent() {
     return Column(
       children: [
-        // ITEM LIST
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.all(20),
@@ -153,13 +146,11 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
                   ),
                   child: Row(
                     children: [
-                      // 🔥 Item Image (Now uses the Smart Decoder)
                       ClipRRect(
                         borderRadius: BorderRadius.circular(16),
                         child: _buildCartImage(item),
                       ),
                       const SizedBox(width: 15),
-                      // Item Details
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -185,7 +176,6 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
                           ],
                         ),
                       ),
-                      // Remove Button
                       IconButton(
                         icon: Icon(LucideIcons.xCircle, color: Colors.grey.shade400),
                         onPressed: () => _removeItem(item['id']),
@@ -197,8 +187,6 @@ class _BuyerCartScreenState extends State<BuyerCartScreen> {
             },
           ),
         ),
-
-        // CHECKOUT SUMMARY FOOTER
         Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(

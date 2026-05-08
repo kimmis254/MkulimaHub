@@ -1241,11 +1241,29 @@ class ApiClient {
         body: jsonEncode({
           "order_type": orderType, 
           "quantity": quantity,
-          "delivery_method": deliveryMethod 
+          "delivery_method": deliveryMethod // 🔥 Sent to Python!
         }),
       );
-      if (response.statusCode == 200) return null; // Success!
+      if (response.statusCode == 200) return null; 
       return jsonDecode(response.body)['detail'] ?? "Failed to place order.";
+    } catch (e) {
+      return "Connection error.";
+    }
+  }
+
+  Future<String?> purchaseHubPool(int poolId, String county, String ward) async {
+    try {
+      final token = await getToken();
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/market/pools/$poolId/purchase'),
+        headers: {"Content-Type": "application/json", "Authorization": "Bearer $token"},
+        body: jsonEncode({
+          "county": county,
+          "ward": ward
+        }),
+      );
+      if (response.statusCode == 200) return null;
+      return jsonDecode(response.body)['detail'] ?? "Failed to purchase pool.";
     } catch (e) {
       return "Connection error.";
     }

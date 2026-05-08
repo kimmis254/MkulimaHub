@@ -6,7 +6,8 @@ import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/home/hub_chat_screen.dart';
 import 'package:mkulimahub_mobile/features/home/receiving_dashboard.dart'; 
 import 'package:mkulimahub_mobile/features/home/delivery_squads_screen.dart'; 
-import 'package:mkulimahub_mobile/features/home/contracts_screen.dart';       
+import 'package:mkulimahub_mobile/features/home/contracts_screen.dart';  
+import 'package:mkulimahub_mobile/features/home/home_screen.dart';     
 
 class ClusterScreen extends StatefulWidget {
   const ClusterScreen({super.key});
@@ -280,14 +281,18 @@ class _ClusterScreenState extends State<ClusterScreen> {
                                                     child: Text("View", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
                                                   )
                                                 : ElevatedButton(
-                                                    onPressed: () async {
-                                                      if (isInternalPool) await Navigator.push(context, MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubNameClean)));
-                                                      else await Navigator.push(context, MaterialPageRoute(builder: (_) => const ContractsScreen()));
-                                                      if (mounted) _fetchClusters(); 
-                                                    },
-                                                    style: ElevatedButton.styleFrom(backgroundColor: isInternalPool ? Colors.blue.shade600 : Colors.orange.shade600, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-                                                    child: Text(isInternalPool ? "Open Chat" : "Join", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-                                                  )
+      onPressed: () async {
+        if (isInternalPool) await Navigator.push(context, MaterialPageRoute(builder: (_) => HubChatScreen(hubName: hubNameClean)));
+        else await Navigator.push(context, MaterialPageRoute(builder: (_) => const ContractsScreen()));
+        
+        if (mounted) {
+          _fetchClusters(); 
+          dashboardKey.currentState?.loadDashboardData(); 
+        }
+      },
+      style: ElevatedButton.styleFrom(backgroundColor: isInternalPool ? Colors.blue.shade600 : Colors.orange.shade600, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+      child: Text(isInternalPool ? "Open Chat" : "Join", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+    )
                                           ],
                                         ),
                                       ),

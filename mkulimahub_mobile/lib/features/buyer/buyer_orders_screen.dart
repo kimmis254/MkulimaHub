@@ -424,11 +424,62 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("${order['target_weight_kg']}kg of ${order['crop_name']}", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)), Text(needsInspection ? "$deliveredCount Drops Arrived!" : "Contract Fulfillment Pipeline", style: GoogleFonts.poppins(color: needsInspection ? Colors.orange.shade800 : Colors.teal.shade700, fontSize: 12, fontWeight: FontWeight.bold))])),
               ],
             ),
+            
+            // 🔥 THE FIX: Inject Hub Pickup Intel right here!
+            if (order['pickup_location'] != null) ...[
+              const SizedBox(height: 15),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.teal.shade100)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(LucideIcons.mapPin, size: 14, color: Colors.teal.shade800),
+                        const SizedBox(width: 8),
+                        Text("Hub Pickup Location", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.teal.shade900)),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(order['pickup_location'] ?? 'Location Pending', style: GoogleFonts.poppins(fontSize: 12, color: Colors.teal.shade800)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(LucideIcons.phone, size: 14, color: Colors.teal.shade800),
+                        const SizedBox(width: 8),
+                        Text("Coordinator: ${order['coordinator_phone'] ?? 'Pending'}", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.teal.shade900)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             const Padding(padding: EdgeInsets.symmetric(vertical: 15), child: Divider(height: 1)),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("Total Escrow Bound", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)), Text("KES ${order['target_weight_kg'] * order['price_per_kg']}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14))]),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start, 
+                  children: [
+                    Text("Total Escrow Bound", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)), 
+                    
+                    // 🔥 THE FIX: Dynamic Price Display based on No-Shows
+                    if (order['adjusted_price'] != null && order['adjusted_price'] < order['original_price']) ...[
+                      Text("KES ${order['original_price']}", style: GoogleFonts.poppins(color: Colors.red.shade300, fontWeight: FontWeight.bold, fontSize: 12, decoration: TextDecoration.lineThrough)),
+                      Row(
+                        children: [
+                          Text("KES ${order['adjusted_price']}", style: GoogleFonts.poppins(color: Colors.green.shade700, fontWeight: FontWeight.bold, fontSize: 14)),
+                          const SizedBox(width: 6),
+                          Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(4)), child: Text("Adjusted for Drop-offs", style: GoogleFonts.poppins(fontSize: 8, color: Colors.green.shade800, fontWeight: FontWeight.bold)))
+                        ],
+                      )
+                    ] else ...[
+                      Text("KES ${order['original_price'] ?? (order['target_weight_kg'] * order['price_per_kg'])}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14)),
+                    ]
+                  ]
+                ),
                 ElevatedButton(
                   onPressed: () => _showContractQASheet(order),
                   style: ElevatedButton.styleFrom(backgroundColor: needsInspection ? Colors.orange.shade600 : Colors.black, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),

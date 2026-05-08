@@ -772,9 +772,8 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                       Text("KES ${pool['asking_price_per_kg']}/KG", style: GoogleFonts.poppins(color: Colors.amber.shade400, fontWeight: FontWeight.bold, fontSize: 16)),
                       GestureDetector(
                         onTap: () {
-                          // 🔥 THE FIX: Push data into the Global Cart Manager!
                           CartManager.items.add({
-                            "id": pool['id'] ?? "pool",
+                            "id": pool['pool_id'], // 🔥 THE FIX: Changed from pool['id']
                             "type": "pool",
                             "crop": pool['crop'],
                             "farmer": pool['hub_name'],
@@ -783,9 +782,8 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                             "pricePerKg": pool['asking_price_per_kg'].toDouble(),
                             "image": _getImageForCrop(pool['crop']),
                             "format": "weight",
-                            "qty": pool['available_weight_kg']
+                            "qty": 1 
                           });
-
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Hub Pool added to Cart!"), backgroundColor: Colors.green));
                         },
                         child: Container(

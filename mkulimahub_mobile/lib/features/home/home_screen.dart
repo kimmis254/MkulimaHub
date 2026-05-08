@@ -72,7 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     onTap: () async {
                       final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddHarvestScreen()));
                       if (result == true) {
-                        dashboardKey.currentState?._loadDashboardData(); 
+                        dashboardKey.currentState?.loadDashboardData(); 
                         if (_selectedIndex != 0) setState(() => _selectedIndex = 0);
                       }
                     },
@@ -144,7 +144,7 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
   
   List<dynamic> _myListings = []; 
   List<dynamic> _activeBulkRequests = []; 
-  List<dynamic> _myHubPools = []; 
+  List<dynamic> _mySquadsAndPools = []; 
   
   bool _isLoading = true;
   String _userName = "Farmer";
@@ -152,7 +152,7 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
   @override
   void initState() {
     super.initState();
-    _loadDashboardData();
+    loadDashboardData();
   }
 
   String _getGreeting() {
@@ -162,7 +162,7 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
     return "Good Evening,"; 
   }
 
-  Future<void> _loadDashboardData() async {
+  Future<void> loadDashboardData() async {
     setState(() => _isLoading = true);
     
     final profile = await _apiClient.getProfile();
@@ -179,25 +179,45 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
     if (mounted) {
       setState(() {
         _myListings = results[0] as List<dynamic>;
-        
         final bulkData = results[1] as List<dynamic>;
-        _activeBulkRequests = bulkData.where((req) {
-           double target = (req['target_weight_kg'] ?? 1).toDouble();
-           double pledged = (req['total_pledged'] ?? 0).toDouble();
-           bool hasPledged = req['has_pledged'] == true;
-           return (pledged < target) || hasPledged; 
-        }).toList();
-
         final pledgesData = results[2] as List<dynamic>;
-        _myHubPools = pledgesData.where((p) {
+        
+        // 🔥 FIX 1: Map all contracts the farmer has ALREADY joined
+        Map<int, dynamic> myActiveSquads = {};
+        for (var p in pledgesData) {
            final br = p['bulk_request'];
-           if (br == null) return false;
-           final isPool = br['buyer_name'].toString().toLowerCase().contains('hub pool');
+           if (br == null) continue;
+           
            final status = p['status']?.toString().toLowerCase() ?? '';
            final isCompleted = status == 'completed' || status == 'paid';
-           return isPool && !isCompleted; 
+           
+           if (!isCompleted) {
+              myActiveSquads[br['id']] = p; 
+           }
+        }
+
+        // 🔥 FIX 2: Check for unpledged Hub Pools (to move them to the bottom grid instead of hot requests)
+        for (var req in bulkData) {
+           final isPool = req['buyer_name'].toString().toLowerCase().contains('hub pool');
+           if (isPool && !myActiveSquads.containsKey(req['id'])) {
+              myActiveSquads[req['id']] = {
+                 "bulk_request": req,
+                 "pledged_weight_kg": req['total_pledged'] ?? 0.0,
+                 "status": "gathering" 
+              };
+           }
+        }
+
+        // 🔥 FIX 3: Hot Bulk Requests ONLY show Corporate Contracts you haven't joined yet
+        _activeBulkRequests = bulkData.where((req) {
+           if (myActiveSquads.containsKey(req['id'])) return false; 
+           
+           double target = (req['target_weight_kg'] ?? 1).toDouble();
+           double pledged = (req['total_pledged'] ?? 0).toDouble();
+           return pledged < target; 
         }).toList();
 
+        _mySquadsAndPools = myActiveSquads.values.toList();
         _isLoading = false;
       });
     }
@@ -302,7 +322,7 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                         if (mounted) {
                           Navigator.pop(context);
                           if (error == null) {
-                            _loadDashboardData();
+                            loadDashboardData();
                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pledged successfully!"), backgroundColor: Colors.green));
                           } else {
                             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
@@ -385,7 +405,6 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
     final TextEditingController inventoryController = TextEditingController(text: (listing['available_kg'] ?? 0).toString());
     final TextEditingController wholesalePriceController = TextEditingController(text: (listing['price_per_kg'] ?? 0).toString());
     
-    // 🔥 THE FIX: Bulletproof string replacement to convert Python dicts to proper JSON!
     List<dynamic> parsedUnits = [];
     if (listing['unit_pricing'] is String) {
       try { 
@@ -505,7 +524,7 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                           if (mounted) {
                             Navigator.pop(context);
                             if (error == null) {
-                              _loadDashboardData(); 
+                              loadDashboardData(); 
                               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Listing updated successfully!"), backgroundColor: Colors.green));
                             } else {
                               ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
@@ -570,7 +589,7 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                             final error = await _apiClient.deleteMarketListing(listing['id']);
                             if (mounted) {
                                if (error == null) {
-                                 _loadDashboardData(); 
+                                 loadDashboardData(); 
                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Listing removed from market."), backgroundColor: Colors.red));
                                } else {
                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
@@ -597,8 +616,13 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
-      body: CustomScrollView(
-        slivers: [
+      body: RefreshIndicator(
+        onRefresh: loadDashboardData,
+        color: Colors.green,
+        backgroundColor: Colors.white,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(), // Important!
+          slivers: [
           SliverToBoxAdapter(
             child: Container(
               padding: const EdgeInsets.only(top: 50, left: 20, right: 20, bottom: 35),
@@ -649,7 +673,7 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                     children: [
                       _buildStatCard("Active Market", _myListings.length.toString(), LucideIcons.layoutList),
                       const SizedBox(width: 15),
-                      _buildStatCard("Active Hub Pools", _myHubPools.length.toString(), LucideIcons.users),
+                      _buildStatCard("Active Squads", _mySquadsAndPools.length.toString(), LucideIcons.users),
                     ],
                   )
                 ],
@@ -710,7 +734,6 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                                     Row(
                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
-                                        // 🔥 Applying the dynamic urgency style
                                         Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: uBgColor, borderRadius: BorderRadius.circular(8)), child: Text("$urgency Priority", style: GoogleFonts.poppins(color: uTextColor, fontSize: 10, fontWeight: FontWeight.bold))),
                                         Icon(uIcon, color: uTextColor.withOpacity(0.7), size: 18),
                                       ],
@@ -726,17 +749,11 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                                     const SizedBox(height: 8),
                                     SizedBox(
                                       width: double.infinity, height: 38,
-                                      child: req['has_pledged'] == true
-                                          ? ElevatedButton(
-                                              onPressed: () async { await Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: req['id']))); if (mounted) _loadDashboardData(); },
-                                              style: ElevatedButton.styleFrom(backgroundColor: Colors.purple.shade50, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                                              child: Text("View Squad", style: GoogleFonts.poppins(color: Colors.purple.shade800, fontWeight: FontWeight.bold, fontSize: 12)),
-                                            )
-                                          : ElevatedButton(
-                                              onPressed: () => _showPledgeSheet(req),
-                                              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade50, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                                              child: Text("Join Squad", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 12)),
-                                            ),
+                                      child: ElevatedButton(
+                                        onPressed: () => _showPledgeSheet(req),
+                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade50, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                                        child: Text("Join Squad", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 12)),
+                                      ),
                                     )
                                   ],
                                 ),
@@ -754,13 +771,13 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.only(left: 20, right: 20, top: 15, bottom: 15),
-              child: Text("My Market & Hub Pools", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+              child: Text("My Market & Active Squads", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
             ),
           ),
           
           if (_isLoading)
             const SliverFillRemaining(child: Center(child: CircularProgressIndicator(color: Colors.green)))
-          else if (_myListings.isEmpty && _myHubPools.isEmpty)
+          else if (_myListings.isEmpty && _mySquadsAndPools.isEmpty)
             SliverToBoxAdapter(
               child: Center(
                 child: Padding(
@@ -769,7 +786,7 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                     children: [
                       Icon(LucideIcons.store, size: 50, color: Colors.grey.shade300),
                       const SizedBox(height: 10),
-                      Text("You have no active listings or pools.", style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 14)),
+                      Text("You have no active listings or squads.", style: GoogleFonts.poppins(color: Colors.grey.shade500, fontSize: 14)),
                     ],
                   ),
                 )
@@ -780,7 +797,7 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
               padding: const EdgeInsets.symmetric(horizontal: 20),
               sliver: SliverGrid(
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2, childAspectRatio: 0.72, crossAxisSpacing: 15, mainAxisSpacing: 15
+                  crossAxisCount: 2, childAspectRatio: 0.70, crossAxisSpacing: 15, mainAxisSpacing: 15
                 ),
                 delegate: SliverChildBuilderDelegate((context, index) {
                   
@@ -854,13 +871,18 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                     );
                   } 
                   else {
-                    final poolData = _myHubPools[index - _myListings.length];
+                    final poolData = _mySquadsAndPools[index - _myListings.length];
                     final bulkRequest = poolData['bulk_request'] ?? {};
                     
                     String cropName = _formatCropName(bulkRequest['crop_name'] ?? 'Produce');
                     double targetWeight = (bulkRequest['target_weight_kg'] ?? 0).toDouble();
                     double price = (bulkRequest['price_per_kg'] ?? 0).toDouble();
                     
+                    final isPool = bulkRequest['buyer_name'].toString().toLowerCase().contains('hub pool');
+                    final badgeColor = isPool ? Colors.purple : Colors.blue;
+                    final badgeIcon = isPool ? LucideIcons.users : LucideIcons.building;
+                    final badgeText = isPool ? "Hub Pool" : "Corp Squad";
+
                     double totalSquadWeight = 0;
                     if (bulkRequest['squad_roster'] != null) {
                       for (var member in bulkRequest['squad_roster']) totalSquadWeight += (member['pledge_kg'] ?? 0).toDouble();
@@ -876,14 +898,14 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                       child: InkWell(
                         onTap: () async {
                            await Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: bulkRequest['id'])));
-                           _loadDashboardData(); 
+                           loadDashboardData(); 
                         },
                         borderRadius: BorderRadius.circular(20),
                         child: Container(
                           decoration: BoxDecoration(
                             color: Colors.white, borderRadius: BorderRadius.circular(20), 
                             boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 15, offset: const Offset(0, 8))],
-                            border: Border.all(color: Colors.purple.shade100, width: 1.5)
+                            border: Border.all(color: badgeColor.shade100, width: 1.5)
                           ),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(20),
@@ -901,8 +923,8 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                                         top: 8, left: 8,
                                         child: Container(
                                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                          decoration: BoxDecoration(color: Colors.purple.shade600, borderRadius: BorderRadius.circular(8), boxShadow: [BoxShadow(color: Colors.purple.withOpacity(0.3), blurRadius: 5)]),
-                                          child: Row(children: [const Icon(LucideIcons.users, size: 10, color: Colors.white), const SizedBox(width: 4), Text("Hub Pool", style: GoogleFonts.poppins(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold))]),
+                                          decoration: BoxDecoration(color: badgeColor.shade600, borderRadius: BorderRadius.circular(8), boxShadow: [BoxShadow(color: badgeColor.withOpacity(0.3), blurRadius: 5)]),
+                                          child: Row(children: [Icon(badgeIcon, size: 10, color: Colors.white), const SizedBox(width: 4), Text(badgeText, style: GoogleFonts.poppins(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold))]),
                                         ),
                                       ),
                                     ],
@@ -918,9 +940,9 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                                         Text(cropName, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis),
                                         const SizedBox(height: 6),
                                         
-                                        Text("${totalSquadWeight.toStringAsFixed(0)} / ${targetWeight.toStringAsFixed(0)} KG", style: GoogleFonts.poppins(color: Colors.purple.shade700, fontSize: 10, fontWeight: FontWeight.bold)),
+                                        Text("${totalSquadWeight.toStringAsFixed(0)} / ${targetWeight.toStringAsFixed(0)} KG", style: GoogleFonts.poppins(color: badgeColor.shade700, fontSize: 10, fontWeight: FontWeight.bold)),
                                         const SizedBox(height: 3),
-                                        ClipRRect(borderRadius: BorderRadius.circular(10), child: LinearProgressIndicator(value: progress, minHeight: 4, backgroundColor: Colors.purple.shade50, color: Colors.purple.shade400)),
+                                        ClipRRect(borderRadius: BorderRadius.circular(10), child: LinearProgressIndicator(value: progress, minHeight: 4, backgroundColor: badgeColor.shade50, color: badgeColor.shade400)),
                                         
                                         const Spacer(),
                                         Text("KES $price/KG", style: GoogleFonts.poppins(color: Colors.green.shade700, fontWeight: FontWeight.w800, fontSize: 13)),
@@ -935,13 +957,14 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                       ),
                     );
                   }
-                }, childCount: _myListings.length + _myHubPools.length),
+                }, childCount: _myListings.length + _mySquadsAndPools.length),
               ),
             ),
           
           const SliverToBoxAdapter(child: SizedBox(height: 120)),
         ],
       ),
+    ),
     );
   }
 

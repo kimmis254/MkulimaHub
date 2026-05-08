@@ -5,6 +5,8 @@ import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:mkulimahub_mobile/features/home/squad_chat_screen.dart';
 import 'package:mkulimahub_mobile/features/home/unattended_dropoff_screen.dart';
+// 🔥 THE FIX: Import the Receiving Station!
+import 'package:mkulimahub_mobile/features/home/receiving_dashboard.dart';
 
 class DeliverySquadsScreen extends StatefulWidget {
   final int? targetSquadId;
@@ -44,7 +46,6 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
     }
   }
 
-  // --- Voting Sheet (Kept exactly as is) ---
   void _showVotingSheet(Map<String, dynamic> bulkRequest) {
     final TextEditingController pitchController = TextEditingController();
     bool isSubmitting = false;
@@ -210,7 +211,6 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
     );
   }
   
-  // --- Edit Pledge Sheet (Kept exactly as is) ---
   void _showEditPledgeSheet(int pledgeId, double currentWeight) {
     final TextEditingController weightController = TextEditingController(text: currentWeight.toStringAsFixed(0));
     bool isSubmitting = false;
@@ -370,7 +370,7 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                       ),
                     )
                   : ListView.builder(
-                      padding: const EdgeInsets.all(16), // Reduced padding for breathing room
+                      padding: const EdgeInsets.all(16), 
                       itemCount: _myPledges.length,
                       itemBuilder: (context, index) {
                         final pledge = _myPledges[index];
@@ -381,7 +381,16 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                         String county = bulkRequest['county'] ?? 'Unknown Location';
                         
                         bool isHubPool = buyerName.toLowerCase().contains('hub pool'); 
+                        
+                        // 🔥 THE ELECTION LOCK: Does this squad have a Coordinator yet?
                         bool isCoordinator = bulkRequest['coordinator_id'] == _currentUserId;
+                        bool hasCoordinator = bulkRequest['coordinator_id'] != null;
+                        
+                        bool isPickup = bulkRequest['ward']?.toString().toLowerCase().contains('pickup') ?? false;
+                        
+                        // THE MASTER LOCK: Has a buyer purchased this pool yet?
+                        bool isOrdered = bulkRequest['ward'] != null && !bulkRequest['ward'].toString().contains('Hub Internal') && bulkRequest['ward'].toString().isNotEmpty;
+                        bool canFulfill = !isHubPool || isOrdered;
 
                         double targetWeight = (bulkRequest['target_weight_kg'] ?? 0).toDouble();
                         double pricePerKg = (bulkRequest['price_per_kg'] ?? 0).toDouble();
@@ -396,14 +405,20 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                              transitState = roster[0]['status'] ?? 'active';
                           }
                           for (var member in roster) {
-                             totalSquadWeight += (member['pledge_kg'] ?? 0).toDouble();
+                             // 🔥 THE FIX: Use actual_kg for the progress bar if the goods have been weighed!
+                             double actualKg = member['actual_kg'] != null ? (member['actual_kg'] as num).toDouble() : (member['pledge_kg'] ?? 0).toDouble();
+                             
+                             if (member['status'] != 'rejected') {
+                               totalSquadWeight += actualKg;
+                             }
+                             
                              String s = member['status'] ?? 'unknown';
-                             if (s != 'received' && s != 'in_transit' && s != 'delivered' && s != 'completed' && s != 'paid') {
+                             if (s != 'received' && s != 'in_transit' && s != 'delivered' && s != 'completed' && s != 'paid' && s != 'rejected') {
                                allReceived = false;
                              }
                           }
                         } else {
-                          totalSquadWeight = (pledge['pledged_weight_kg'] ?? 0).toDouble();
+                          totalSquadWeight = (pledge['actual_weight_kg'] ?? pledge['pledged_weight_kg'] ?? 0).toDouble();
                           allReceived = false;
                         }
                         
@@ -440,7 +455,7 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                 ),
                                 
                                 Padding(
-                                  padding: const EdgeInsets.all(16.0), // Reduced from 20
+                                  padding: const EdgeInsets.all(16.0), 
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
@@ -450,7 +465,6 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                       Text("${targetWeight}kg of $cropName", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
                                       const SizedBox(height: 12),
 
-                                      // 🔥 CLEAN STACKED INFO TO PREVENT OVERFLOW
                                       Container(
                                         padding: const EdgeInsets.all(12),
                                         decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12)),
@@ -485,8 +499,7 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                         ),
                                       ),
 
-                                      // DELIVERY INTEL CARD
-                                      if (!isHubPool) ...[
+                                      if (canFulfill && bulkRequest['ward'] != null && bulkRequest['ward'].toString().isNotEmpty) ...[
                                         const SizedBox(height: 15),
                                         Container(
                                           padding: const EdgeInsets.all(16),
@@ -503,11 +516,21 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                               ),
                                               const SizedBox(height: 10),
                                               Text(
-                                                (bulkRequest['ward'] != null && bulkRequest['ward'].toString().isNotEmpty) 
-                                                    ? bulkRequest['ward'] 
-                                                    : "No exact address provided. Use chat to confirm.", 
+                                                bulkRequest['ward'], 
                                                 style: GoogleFonts.poppins(fontSize: 12, color: Colors.blue.shade800, height: 1.5)
                                               ),
+                                              
+                                              if (isCoordinator) ...[
+                                                const SizedBox(height: 10),
+                                                Row(
+                                                  children: [
+                                                    Icon(LucideIcons.phoneCall, size: 14, color: Colors.blue.shade700),
+                                                    const SizedBox(width: 8),
+                                                    Text(bulkRequest['buyer_phone'] ?? 'No Phone', style: GoogleFonts.poppins(fontSize: 12, color: Colors.blue.shade900, fontWeight: FontWeight.bold)),
+                                                  ],
+                                                ),
+                                              ],
+
                                               if (!isCoordinator) ...[
                                                 const SizedBox(height: 10),
                                                 Row(
@@ -515,7 +538,7 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                   children: [
                                                     Icon(LucideIcons.lock, size: 12, color: Colors.blue.shade700),
                                                     const SizedBox(width: 6),
-                                                    Expanded(child: Text("Master dispatch controls unlock for the Coordinator.", style: GoogleFonts.poppins(fontSize: 10, color: Colors.blue.shade700, fontStyle: FontStyle.italic))),
+                                                    Expanded(child: Text("Master dispatch controls and Buyer contacts unlock for the Coordinator.", style: GoogleFonts.poppins(fontSize: 10, color: Colors.blue.shade700, fontStyle: FontStyle.italic))),
                                                   ],
                                                 )
                                               ]
@@ -552,7 +575,6 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                           String pendingLabel = isHubPool ? "Awaiting Admin ⏳" : "Awaiting Coordinator ⏳";
                                           String verifiedLabel = isHubPool ? "Verified ✅" : "Verified ✅";
 
-                                          // 🔥 CLEAN REDESIGNED ROSTER TILE TO PREVENT CRUSHING
                                           return Container(
                                             margin: const EdgeInsets.only(bottom: 12),
                                             decoration: BoxDecoration(
@@ -579,12 +601,13 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                           Expanded(
                                                             child: Text(
                                                               isMe ? "You" : member['name'], 
-                                                              style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 13, color: isMe ? Colors.green.shade900 : Colors.black87),
+                                                              style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 13, color: memberStatus == 'rejected' ? Colors.grey.shade500 : (isMe ? Colors.green.shade900 : Colors.black87), decoration: memberStatus == 'rejected' ? TextDecoration.lineThrough : null),
                                                               maxLines: 1, overflow: TextOverflow.ellipsis,
                                                             ),
                                                           ),
-                                                          // Status Badge Top Right
-                                                          if (isMe) ...[
+                                                          if (memberStatus == 'rejected')
+                                                            Text("No-Show", style: GoogleFonts.poppins(fontSize: 10, color: Colors.red.shade700, fontWeight: FontWeight.bold))
+                                                          else if (isMe) ...[
                                                             if (memberStatus == 'pending_audit') Text("Awaiting Approval ⏳", style: GoogleFonts.poppins(fontSize: 10, color: Colors.orange.shade700, fontWeight: FontWeight.bold))
                                                             else if (memberStatus == 'received') Text("Verified ✅", style: GoogleFonts.poppins(fontSize: 10, color: Colors.green.shade700, fontWeight: FontWeight.bold))
                                                             else if (memberStatus == 'in_transit' || memberStatus == 'delivered' || memberStatus == 'completed' || memberStatus == 'paid') Text("Dispatched 🚚", style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue.shade700))
@@ -598,17 +621,32 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                       ),
                                                       const SizedBox(height: 10),
                                                       
-                                                      // ROW 2: Weight and Payout
+                                                      // 🔥 THE FIX: ROW 2: Weight and Payout (Shows Actual vs Pledged)
                                                       Row(
                                                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                                         children: [
-                                                          Text("${member['pledge_kg']} KG Contributed", style: GoogleFonts.poppins(fontSize: 11, color: isMe ? Colors.teal.shade800 : Colors.grey.shade600, fontWeight: FontWeight.w600)),
-                                                          Text(isMe ? "Payout: KES ${member['payout_kes']}" : "Payout Hidden", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 11, color: isMe ? Colors.green.shade800 : Colors.grey.shade400)),
+                                                          Expanded(
+                                                            child: Text( 
+                                                              memberStatus == 'rejected' 
+                                                                ? "Contributed: 0 KG"
+                                                                : (member['actual_kg'] != null 
+                                                                    ? "Actual: ${member['actual_kg']} KG / Pledged: ${member['pledge_kg']} KG" 
+                                                                    : "Pledged: ${member['pledge_kg']} KG"), 
+                                                              style: GoogleFonts.poppins(
+                                                                fontSize: 11, 
+                                                                color: memberStatus == 'rejected' ? Colors.red.shade600 : (isMe ? Colors.teal.shade800 : Colors.grey.shade600), 
+                                                                fontWeight: FontWeight.w600
+                                                              ),
+                                                              overflow: TextOverflow.ellipsis,
+                                                            ),
+                                                          ),
+                                                          const SizedBox(width: 10),
+                                                          Text(isMe ? "Payout: KES ${member['payout_kes']}" : "Payout Hidden", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 11, color: isMe && memberStatus != 'rejected' ? Colors.green.shade800 : Colors.grey.shade400)),
                                                         ],
                                                       ),
 
                                                       // ROW 3: Actions (Delegate, Handover)
-                                                      if (!isMe && !isHubPool && isCoordinator) ...[
+                                                      if (!isMe && isCoordinator) ...[
                                                         const SizedBox(height: 10),
                                                         GestureDetector(
                                                           onTap: () async {
@@ -644,84 +682,121 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                         )
                                                       ],
 
-                                                      // COORDINATOR APPROVE BUTTON
-                                                      if (isCoordinator && !isHubPool && (memberStatus == 'pledged' || memberStatus == 'gathering' || memberStatus == 'pending_audit')) ...[
+                                                      // HANDOVER FOR FARMER
+                                                      if (isMe && (memberStatus == 'pledged' || memberStatus == 'gathering')) ...[
                                                         const SizedBox(height: 10),
-                                                        SizedBox(
-                                                          width: double.infinity,
-                                                          child: ElevatedButton.icon(
-                                                            onPressed: () async {
-                                                              setState(() { member['status'] = 'received'; });
-                                                              final error = await _apiClient.updatePledgeStatus(member['pledge_id'], 'received');
-                                                              if (mounted) {
-                                                                if (error == null) {
-                                                                  _loadMyPledges(); 
-                                                                } else {
-                                                                  setState(() { member['status'] = memberStatus; }); 
-                                                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
-                                                                }
-                                                              }
-                                                            },
-                                                            icon: const Icon(LucideIcons.clipboardCheck, size: 14, color: Colors.white),
-                                                            label: Text("Verify & Receive Goods", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white)),
-                                                            style: ElevatedButton.styleFrom(
-                                                              padding: const EdgeInsets.symmetric(vertical: 10),
-                                                              backgroundColor: Colors.teal.shade600, elevation: 0,
-                                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
-                                                            ),
-                                                          ),
-                                                        )
-                                                      ] else if (isMe && !isCoordinator && (memberStatus == 'pledged' || memberStatus == 'gathering')) ...[
-                                                        // NORMAL DROP OFF BUTTONS
-                                                        const SizedBox(height: 10),
-                                                        Column(
-                                                          children: [
-                                                            SizedBox(
-                                                              width: double.infinity,
-                                                              child: OutlinedButton.icon(
-                                                                onPressed: () async {
-                                                                  setState(() { member['status'] = 'pending_audit'; });
-                                                                  final error = await _apiClient.updatePledgeStatus(member['pledge_id'], 'pending_audit');
-                                                                  if (mounted) {
-                                                                    if (error == null) {
-                                                                      _loadMyPledges(); 
-                                                                    } else {
-                                                                      setState(() { member['status'] = 'pledged'; });
-                                                                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
-                                                                    }
-                                                                  }
-                                                                },
-                                                                icon: const Icon(LucideIcons.userCheck, size: 14),
-                                                                label: Text("Handed Over (In Person)", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold)),
-                                                                style: OutlinedButton.styleFrom(
-                                                                  padding: const EdgeInsets.symmetric(vertical: 10),
-                                                                  foregroundColor: Colors.green.shade700, side: BorderSide(color: Colors.green.shade300),
-                                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
-                                                                ),
-                                                              ),
-                                                            ),
-                                                            const SizedBox(height: 6),
-                                                            SizedBox(
-                                                              width: double.infinity,
-                                                              child: ElevatedButton.icon(
-                                                                onPressed: () async {
-                                                                  final didSubmit = await Navigator.push(context, MaterialPageRoute(builder: (_) => UnattendedDropoffScreen(squadId: bulkRequest['id'], cropName: cropName)));
-                                                                  if (didSubmit == true && mounted) {
+                                                        if (!canFulfill)
+                                                          Container(
+                                                            padding: const EdgeInsets.symmetric(vertical: 8),
+                                                            child: Text("Hold your crops. Handover opens once a Buyer purchases this pool.", style: GoogleFonts.poppins(fontSize: 11, color: Colors.orange.shade800, fontStyle: FontStyle.italic)),
+                                                          )
+                                                        else if (!hasCoordinator)
+                                                          Container(
+                                                            padding: const EdgeInsets.symmetric(vertical: 8),
+                                                            child: Text("Hold your crops. Handover opens once the squad elects a Coordinator.", style: GoogleFonts.poppins(fontSize: 11, color: Colors.orange.shade800, fontStyle: FontStyle.italic)),
+                                                          )
+                                                        else
+                                                          Column(
+                                                            children: [
+                                                              SizedBox(
+                                                                width: double.infinity,
+                                                                child: OutlinedButton.icon(
+                                                                  onPressed: () async {
                                                                     setState(() { member['status'] = 'pending_audit'; });
-                                                                    _loadMyPledges();
-                                                                  }
-                                                                },
-                                                                icon: const Icon(LucideIcons.camera, size: 14),
-                                                                label: Text("Digital Drop-off", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold)),
-                                                                style: ElevatedButton.styleFrom(
-                                                                  padding: const EdgeInsets.symmetric(vertical: 10),
-                                                                  backgroundColor: Colors.red.shade600, foregroundColor: Colors.white, elevation: 0,
-                                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
+                                                                    
+                                                                    final error = await _apiClient.updatePledgeStatus(member['pledge_id'], 'pending_audit');
+                                                                    if (mounted) {
+                                                                      if (error == null) {
+                                                                        _loadMyPledges(); 
+                                                                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Marked as handed over!"), backgroundColor: Colors.green));
+                                                                      } else {
+                                                                        setState(() { member['status'] = 'pledged'; });
+                                                                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                                                                      }
+                                                                    }
+                                                                  },
+                                                                  icon: const Icon(LucideIcons.userCheck, size: 14),
+                                                                  label: Text("Handed Over (In Person)", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold)),
+                                                                  style: OutlinedButton.styleFrom(
+                                                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                                                    foregroundColor: Colors.green.shade700, side: BorderSide(color: Colors.green.shade300),
+                                                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
+                                                                  ),
                                                                 ),
                                                               ),
+                                                              const SizedBox(height: 6),
+                                                              SizedBox(
+                                                                width: double.infinity,
+                                                                child: ElevatedButton.icon(
+                                                                  onPressed: () async {
+                                                                    final didSubmit = await Navigator.push(context, MaterialPageRoute(builder: (_) => UnattendedDropoffScreen(squadId: bulkRequest['id'], cropName: cropName)));
+                                                                    if (didSubmit == true && mounted) {
+                                                                      setState(() { member['status'] = 'pending_audit'; });
+                                                                      _loadMyPledges();
+                                                                    }
+                                                                  },
+                                                                  icon: const Icon(LucideIcons.camera, size: 14),
+                                                                  label: Text("Digital Drop-off (Remote)", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold)),
+                                                                  style: ElevatedButton.styleFrom(
+                                                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                                                    backgroundColor: Colors.red.shade600, foregroundColor: Colors.white, elevation: 0,
+                                                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ],
+                                                          )
+                                                      ]
+                                                      
+                                                      // 🔥 THE FIX: The new actionable view for the Coordinator!
+                                                      else if (isCoordinator && !isMe) ...[
+                                                        const SizedBox(height: 10),
+                                                        if (memberStatus == 'pledged' || memberStatus == 'gathering')
+                                                          Container(
+                                                            padding: const EdgeInsets.all(12),
+                                                            decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade200)),
+                                                            child: Row(
+                                                              children: [
+                                                                Icon(LucideIcons.clock, size: 14, color: Colors.grey.shade500),
+                                                                const SizedBox(width: 8),
+                                                                Expanded(child: Text("Waiting for the farmer to initiate handover or digital drop-off.", style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade600, fontStyle: FontStyle.italic))),
+                                                              ],
                                                             ),
-                                                          ],
-                                                        )
+                                                          )
+                                                        else if (memberStatus == 'pending_audit')
+                                                          Column(
+                                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                                            children: [
+                                                              Container(
+                                                                padding: const EdgeInsets.all(12),
+                                                                decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.orange.shade200)),
+                                                                child: Row(
+                                                                  children: [
+                                                                    Icon(LucideIcons.alertCircle, size: 14, color: Colors.orange.shade700),
+                                                                    const SizedBox(width: 8),
+                                                                    Expanded(child: Text("Farmer handed over! Ready for scale verification.", style: GoogleFonts.poppins(fontSize: 11, color: Colors.orange.shade800, fontWeight: FontWeight.bold))),
+                                                                  ],
+                                                                ),
+                                                              ),
+                                                              const SizedBox(height: 8),
+                                                              SizedBox(
+                                                                width: double.infinity,
+                                                                child: ElevatedButton.icon(
+                                                                  onPressed: () async {
+                                                                    await Navigator.push(context, MaterialPageRoute(builder: (_) => const ReceivingDashboard()));
+                                                                    _loadMyPledges();
+                                                                  },
+                                                                  icon: const Icon(LucideIcons.scale, size: 14, color: Colors.white),
+                                                                  label: Text("Open Receiving Station", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white)),
+                                                                  style: ElevatedButton.styleFrom(
+                                                                    backgroundColor: Colors.blue.shade600,
+                                                                    elevation: 0,
+                                                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
+                                                                  ),
+                                                                ),
+                                                              )
+                                                            ]
+                                                          )
                                                       ]
                                                     ],
                                                   ),
@@ -739,32 +814,47 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                       ),
                                       const SizedBox(height: 15),
 
+                                      // DISPATCH CONTROLS
                                       if (squadStatus == 'fulfilled' || transitState == 'completed' || transitState == 'paid')
                                         _buildPremiumButton(title: "Contract Completed", icon: LucideIcons.checkCircle, gradientColors: [Colors.green.shade400, Colors.green.shade700], onTap: null)
-                                      else if (isCoordinator && !isHubPool && allReceived && (transitState == 'received' || squadStatus == 'active' && transitState != 'in_transit' && transitState != 'delivered'))
-                                        _buildPremiumButton(
-                                          title: "Dispatch Truck", 
-                                          icon: LucideIcons.truck, 
-                                          gradientColors: [Colors.blue.shade500, Colors.blue.shade800], 
-                                          onTap: () async {
-                                              final error = await _apiClient.updateSquadStatus(bulkRequest['id'], 'in_transit');
-                                              if (error == null) _loadMyPledges();
-                                          },
-                                          isPulsing: true
-                                        )
-                                      else if (isCoordinator && !isHubPool && transitState == 'in_transit')
-                                        _buildPremiumButton(
-                                          title: "Mark as Delivered", 
-                                          icon: LucideIcons.mapPin, 
-                                          gradientColors: [Colors.indigo.shade500, Colors.indigo.shade800], 
-                                          onTap: () async {
-                                              final error = await _apiClient.updateSquadStatus(bulkRequest['id'], 'delivered');
-                                              if (error == null) _loadMyPledges();
-                                          },
-                                          isPulsing: true
-                                        )
+                                      else if (isCoordinator && allReceived && (transitState == 'received' || squadStatus == 'active' && transitState != 'in_transit' && transitState != 'delivered'))
+                                        if (isPickup)
+                                          _buildPremiumButton(
+                                            title: "Mark as Picked Up by Buyer", 
+                                            icon: LucideIcons.store, 
+                                            gradientColors: [Colors.blue.shade500, Colors.blue.shade800], 
+                                            onTap: () async {
+                                                final error = await _apiClient.updateSquadStatus(bulkRequest['id'], 'delivered');
+                                                if (error == null) _loadMyPledges();
+                                            },
+                                            isPulsing: true
+                                          )
+                                        else
+                                          _buildPremiumButton(
+                                            title: "Dispatch Truck", 
+                                            icon: LucideIcons.truck, 
+                                            gradientColors: [Colors.blue.shade500, Colors.blue.shade800], 
+                                            onTap: () async {
+                                                final error = await _apiClient.updateSquadStatus(bulkRequest['id'], 'in_transit');
+                                                if (error == null) _loadMyPledges();
+                                            },
+                                            isPulsing: true
+                                          )
                                       else if (squadStatus == 'active' && !allReceived)
-                                        _buildPremiumButton(title: "Loading Truck...", icon: LucideIcons.loader, gradientColors: [Colors.orange.shade400, Colors.orange.shade700], onTap: null)
+                                        // 🔥 THE FIX: Master Open Station button!
+                                        if (isCoordinator && (bulkRequest['squad_roster'] as List? ?? []).any((m) => m['status'] == 'pending_audit'))
+                                          _buildPremiumButton(
+                                            title: "Open Receiving Station", 
+                                            icon: LucideIcons.scale, 
+                                            gradientColors: [Colors.blue.shade500, Colors.blue.shade800], 
+                                            onTap: () async {
+                                                await Navigator.push(context, MaterialPageRoute(builder: (_) => const ReceivingDashboard()));
+                                                _loadMyPledges();
+                                            },
+                                            isPulsing: true
+                                          )
+                                        else
+                                          _buildPremiumButton(title: "Waiting for Drop-offs...", icon: LucideIcons.loader, gradientColors: [Colors.orange.shade400, Colors.orange.shade700], onTap: null)
                                       else if (squadStatus == 'active' && transitState == 'in_transit')
                                         _buildPremiumButton(title: "Squad is in Transit", icon: LucideIcons.truck, gradientColors: [Colors.blue.shade400, Colors.blue.shade700], onTap: null)
                                       else if (squadStatus == 'active' && transitState == 'delivered')

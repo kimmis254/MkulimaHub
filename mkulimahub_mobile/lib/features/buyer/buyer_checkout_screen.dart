@@ -91,26 +91,23 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
 
     setState(() => _isLoading = true);
 
-    // 🔥 THE FIX: Sync the newly typed Address to the Profile so the Farmer sees it!
-    if (_deliveryMethod == "doorstep") {
-      await _apiClient.updateProfile({
-        "county": _selectedCounty,
-        "sub_county": _selectedSubCounty,
-        "ward": _selectedWard,
-        "village": _addressController.text.trim(),
-      });
-    }
-
     String methodString = _deliveryMethod == "doorstep" ? "Delivery" : "Pickup";
 
     bool success = true;
     for (var item in widget.cartItems) {
       if (item['type'] == 'individual') {
-        // 🔥 THE FIX: Pass the Pickup vs Delivery string to Python!
+        // 🔥 Route 1: Individual Farmer Orders
         final error = await _apiClient.createMarketOrder(item['id'], item['format'], item['qty'], methodString);
         if (error != null) success = false;
-      } else {
-        await Future.delayed(const Duration(milliseconds: 500)); 
+      } else if (item['type'] == 'pool') {
+        // 🔥 Route 2: Hub Pool Purchases!
+        String finalCounty = _deliveryMethod == "doorstep" ? (_selectedCounty ?? "Kenya") : "Pickup Location";
+        String finalWard = _deliveryMethod == "doorstep" 
+            ? "${_selectedSubCounty ?? ''}, ${_selectedWard ?? ''} - ${_addressController.text.trim()}" 
+            : "Buyer will arrange pickup from the Hub.";
+        
+        final error = await _apiClient.purchaseHubPool(item['id'], finalCounty, finalWard);
+        if (error != null) success = false;
       }
     }
 
@@ -118,7 +115,7 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
 
     if (mounted) {
       if (success) {
-        CartManager.items.clear(); 
+        CartManager.items.clear(); // Empty the global cart
         
         showDialog(
           context: context,
@@ -132,7 +129,7 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                 Text("Order Successful!", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
                 const SizedBox(height: 10),
                 Text(
-                  "Your total of KES ${_total.toStringAsFixed(0)} has been processed. The farmers have been notified and are preparing your produce.",
+                  "Your total of KES ${_total.toStringAsFixed(0)} has been processed via $_paymentMode. The farmers have been notified and transport is arranging.",
                   textAlign: TextAlign.center,
                   style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey.shade600),
                 ),
@@ -140,13 +137,10 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
             ),
             actions: [
               SizedBox(
-                width: double.infinity,
-                height: 50,
+                width: double.infinity, height: 50,
                 child: ElevatedButton(
                   onPressed: () {
-                    Navigator.pop(context); 
-                    Navigator.pop(context); 
-                    Navigator.pop(context); 
+                    Navigator.pop(context); Navigator.pop(context); Navigator.pop(context); 
                   },
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.teal.shade700, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
                   child: Text("Back to Dashboard", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),

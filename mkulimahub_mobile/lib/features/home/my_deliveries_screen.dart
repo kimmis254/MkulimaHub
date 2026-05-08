@@ -107,13 +107,21 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text("${pledge['weight_kg']} ${pledge['unit']} of ${pledge['crop']}", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                              // 🔥 THE FIX: Display actual weight if verified!
+                              if (!isDirectSale && status == 'rejected')
+                                Text("0 ${pledge['unit']} of ${pledge['crop']} (No-Show)", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.red.shade700, decoration: TextDecoration.lineThrough))
+                              else if (!isDirectSale && pledge['actual_kg'] != null)
+                                Text("Actual: ${pledge['actual_kg']} KG / Pledged: ${pledge['weight_kg']} KG of ${pledge['crop']}", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.teal.shade800))
+                              else
+                                Text("${pledge['weight_kg']} ${pledge['unit']} of ${pledge['crop']}", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                              
                               const SizedBox(height: 6),
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text("Buyer: ${pledge['buyer']}", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13)),
-                                  Text("KES ${pledge['expected_payout']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.green.shade700, fontSize: 14)),
+                                  // 🔥 THE FIX: Explicitly mark hidden payouts for rejected deliveries
+                                  Text(status == 'rejected' ? "Payout Hidden" : "KES ${pledge['expected_payout']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: status == 'rejected' ? Colors.grey.shade400 : Colors.green.shade700, fontSize: 14)),
                                 ],
                               ),
                               
@@ -156,7 +164,6 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
                                   ),
                                 ),
                                 
-                                // 🔥 THE DISPUTE RENDERER
                                 if (status == 'disputed') ...[
                                   const SizedBox(height: 15),
                                   Container(
