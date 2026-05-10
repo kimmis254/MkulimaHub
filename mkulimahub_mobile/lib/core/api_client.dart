@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart'; 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mkulimahub_mobile/features/home/harvest_model.dart';
+import 'package:flutter/foundation.dart';
 
 class ApiClient {
   // 🔥 Dynamic base URL! No more hardcoded IPs. 
@@ -1319,6 +1320,76 @@ class ApiClient {
       "notes": notes,
       "dispute_image": imageBase64
     });
+  }
+
+  Future<Map<String, dynamic>?> getBuyerInsights() async {
+      try {
+        final token = await getToken();
+        final response = await http.get(
+          Uri.parse('$baseUrl/api/buyer/insights'),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+        if (response.statusCode == 200) {
+          return jsonDecode(response.body);
+        }
+        return null;
+      } catch (e) {
+        debugPrint("Get Insights Error: $e");
+        return null;
+      }
+    }
+
+    Future<Map<String, dynamic>?> getFarmerWallet() async {
+        try {
+          final token = await getToken();
+          final response = await http.get(
+            Uri.parse('$baseUrl/api/farmer/wallet'),
+            headers: {'Authorization': 'Bearer $token'},
+          );
+          if (response.statusCode == 200) return jsonDecode(response.body);
+          return null;
+        } catch (e) {
+          print("Wallet Fetch Error: $e");
+          return null;
+        }
+      }
+
+      // Secret DEV-Mode STK Push Simulator
+      Future<String?> simulateDevPayment(int orderId) async {
+        try {
+          final token = await getToken();
+          final response = await http.post(
+            Uri.parse('$baseUrl/api/dev/pay-now/$orderId'),
+            headers: {'Authorization': 'Bearer $token'},
+          );
+          if (response.statusCode == 200) return null; // Success!
+          return jsonDecode(response.body)['detail'] ?? "Payment failed";
+        } catch (e) {
+          return "Network error";
+        }
+      }
+
+  Future<String?> triggerMpesaPayment(int orderId) async {
+    try {
+      final token = await getToken();
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/buyer/orders/$orderId/pay/mpesa'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200) {
+        return null; // Success! The prompt is on its way to their phone.
+      }
+      return data['detail'] ?? "Payment failed to initiate";
+    } catch (e) {
+      print("M-Pesa Trigger Error: $e");
+      return "Network error. Please check your connection.";
+    }
   }
 
   

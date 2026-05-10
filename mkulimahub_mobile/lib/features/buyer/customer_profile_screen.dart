@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // 🔥 Added for local caching!
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:mkulimahub_mobile/core/api_client.dart';
 import 'package:mkulimahub_mobile/features/buyer/buyer_dashboard.dart';
@@ -23,15 +23,17 @@ class CustomerProfileScreen extends StatefulWidget {
 class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   final ApiClient _apiClient = ApiClient();
   final _picker = ImagePicker();
-  
+
   late bool _isEditing;
 
-  String _customerType = 'business'; 
+  String _customerType = 'business';
 
   final _bioController = TextEditingController();
   final _villageController = TextEditingController();
+  // 🔥 NEW: Phone Number Controller for M-Pesa STK Push
+  final _phoneController = TextEditingController();
 
-  List<dynamic> _locationsData = []; 
+  List<dynamic> _locationsData = [];
   List<String> _counties = [];
   List<String> _subCounties = [];
   List<String> _wards = [];
@@ -78,45 +80,45 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
 
   Future<void> _loadProfile() async {
     final data = await _apiClient.getProfile();
-    
-    // 🔥 THE FIX: Check the phone's local storage for the cached customer type!
+
     final prefs = await SharedPreferences.getInstance();
     final cachedType = prefs.getString('cached_customer_type');
-    
+
     setState(() {
       _isLoading = false;
 
       if (data != null) {
         _profileData = data;
-        
+
         _bioController.text = data['bio'] ?? "";
-        _villageController.text = data['village'] ?? ""; 
-        
-        // Restore their cached choice, default to 'business' if brand new
+        _villageController.text = data['village'] ?? "";
+        // 🔥 Read the phone number from the backend
+        _phoneController.text = data['phone_number'] ?? "";
+
         if (cachedType != null) {
           _customerType = cachedType;
         } else if (data['customer_type'] != null) {
           _customerType = data['customer_type'];
         }
-        
-        final backendCounty = data['county']; 
+
+        final backendCounty = data['county'];
         if (backendCounty != null && _counties.contains(backendCounty)) {
           _selectedCounty = backendCounty;
-          
+
           var countyObj = _locationsData.firstWhere((c) => c['county_name'] == backendCounty);
           var constituencies = countyObj['constituencies'] as List<dynamic>;
           _subCounties = constituencies.map((c) => c['constituency_name'].toString()).toList();
-          
-          final backendSub = data['sub_county']; 
+
+          final backendSub = data['sub_county'];
           if (backendSub != null && _subCounties.contains(backendSub)) {
             _selectedSubCounty = backendSub;
-            
+
             var constituencyObj = constituencies.firstWhere((c) => c['constituency_name'] == backendSub);
             _wards = List<String>.from(constituencyObj['wards']);
-            
+
             final backendWard = data['ward'];
             if (backendWard != null && _wards.contains(backendWard)) {
-               _selectedWard = backendWard;
+              _selectedWard = backendWard;
             }
           }
         }
@@ -130,9 +132,14 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
       return;
     }
 
+    // Basic validation for phone number length
+    if (_phoneController.text.trim().length < 9) {
+      if (mounted) _showSnackBar("Please enter a valid M-Pesa phone number.", Colors.redAccent);
+      return;
+    }
+
     setState(() => _isLoading = true);
 
-    // 🔥 THE FIX: Cache their selection permanently on the phone!
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('cached_customer_type', _customerType);
 
@@ -142,6 +149,8 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
       "sub_county": _selectedSubCounty,
       "ward": _selectedWard,
       "village": _villageController.text,
+      // 🔥 Send the updated phone number to the backend
+      "phone_number": _phoneController.text.trim(),
     };
 
     final error = await _apiClient.updateProfile(data);
@@ -149,14 +158,14 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     if (error == null) {
       if (widget.isNewUser) {
         if (mounted) {
-           Navigator.pushAndRemoveUntil(
-            context, 
-            MaterialPageRoute(builder: (_) => const BuyerDashboard()),
-            (route) => false
+          Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => const BuyerDashboard()),
+                  (route) => false
           );
         }
       } else {
-        await _loadProfile(); 
+        await _loadProfile();
         setState(() {
           _isLoading = false;
           _isEditing = false;
@@ -172,7 +181,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   void _showSnackBar(String message, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: GoogleFonts.poppins()), 
+        content: Text(message, style: GoogleFonts.poppins()),
         backgroundColor: color,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -196,83 +205,112 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
         body: _isLoading && _profileData == null && !widget.isNewUser
             ? const Center(child: CircularProgressIndicator(color: Colors.teal))
             : Stack(
+          children: [
+            Container(
+              height: MediaQuery.of(context).size.height * 0.35,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.teal.shade900, Colors.teal.shade600],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+            ),
+
+            SafeArea(
+              child: Column(
                 children: [
-                  Container(
-                    height: MediaQuery.of(context).size.height * 0.35,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Colors.teal.shade900, Colors.teal.shade600],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                    ),
-                  ),
-                  
-                  SafeArea(
-                    child: Column(
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              if (!widget.isNewUser)
+                        // ⬅️ LEFT SIDE: Back Button (Fixed width to keep title centered)
+                        if (!widget.isNewUser)
+                          SizedBox(
+                            width: 96,
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: IconButton(
+                                icon: const Icon(LucideIcons.arrowLeft, color: Colors.white),
+                                onPressed: () => Navigator.pop(context),
+                              ),
+                            ),
+                          )
+                        else
+                          const SizedBox(width: 96),
+
+                        // 📌 CENTER: Title
+                        Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+
+                        // ➡️ RIGHT SIDE: Action Buttons
+                        if (!_isEditing)
+                          SizedBox(
+                            width: 96,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                // The Edit Pencil
                                 IconButton(
-                                  icon: const Icon(LucideIcons.arrowLeft, color: Colors.white),
-                                  onPressed: () => Navigator.pop(context),
-                                )
-                              else
-                                const SizedBox(width: 48), 
-                              
-                              Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                              
-                              if (!_isEditing)
+                                  icon: const Icon(LucideIcons.edit2, color: Colors.white),
+                                  onPressed: () => setState(() => _isEditing = true),
+                                ),
+                                // The Settings Gear
                                 IconButton(
                                   icon: const Icon(LucideIcons.settings, color: Colors.white),
                                   onPressed: () {
                                     Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
                                   },
-                                )
-                              else if (_isEditing && !widget.isNewUser)
-                                IconButton(
-                                  icon: const Icon(LucideIcons.x, color: Colors.white),
-                                  onPressed: () => setState(() => _isEditing = false),
-                                )
-                              else
-                                const SizedBox(width: 48), 
-                            ],
-                          ),
-                        ),
-                        
-                        Expanded(
-                          child: SingleChildScrollView(
-                            padding: const EdgeInsets.only(left: 24, right: 24, bottom: 40, top: 20),
-                            child: Column(
-                              children: [
-                                _buildProfileImage(),
-                                const SizedBox(height: 30),
-                                AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 300),
-                                  child: _isEditing ? _buildEditForm() : _buildViewMode(),
                                 ),
                               ],
                             ),
-                          ),
-                        ),
+                          )
+                        else if (_isEditing && !widget.isNewUser)
+                          SizedBox(
+                            width: 96,
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: IconButton(
+                                icon: const Icon(LucideIcons.x, color: Colors.white),
+                                onPressed: () => setState(() => _isEditing = false),
+                              ),
+                            ),
+                          )
+                        else
+                          const SizedBox(width: 96),
                       ],
+                    ),
+                  ),
+
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.only(left: 24, right: 24, bottom: 40, top: 20),
+                      child: Column(
+                        children: [
+                          _buildProfileImage(),
+                          const SizedBox(height: 30),
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 300),
+                            child: _isEditing ? _buildEditForm() : _buildViewMode(),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
               ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildViewMode() {
-    final location = (_profileData?['county'] != null) 
+    final location = (_profileData?['county'] != null)
         ? "${_profileData?['village'] ?? ''}, ${_profileData?['county']}"
         : "Location not set";
-        
+
     final isBusiness = _customerType == 'business';
 
     return Column(
@@ -294,10 +332,20 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(10)),
-                // 🔥 THE FIX: Now perfectly reflects "Individual Buyer" if they selected it!
                 child: Text(isBusiness ? "Corporate Buyer" : "Individual Buyer", style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.teal.shade800)),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
+
+              // 🔥 Display Phone Number and Location side by side (or stacked)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(LucideIcons.phone, size: 16, color: Colors.teal.shade700),
+                  const SizedBox(width: 6),
+                  Text(_profileData?['phone_number'] ?? "Add Phone Number", style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 14)),
+                ],
+              ),
+              const SizedBox(height: 6),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -310,13 +358,13 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
           ),
         ),
         const SizedBox(height: 30),
-        
+
         _buildInfoCard(
-          isBusiness ? "Business Details" : "About Me", 
-          _profileData?['bio'] ?? "No details added yet.", 
-          isBusiness ? LucideIcons.store : LucideIcons.user
+            isBusiness ? "Business Details" : "About Me",
+            _profileData?['bio'] ?? "No details added yet.",
+            isBusiness ? LucideIcons.store : LucideIcons.user
         ),
-        
+
         Container(
           width: double.infinity,
           margin: const EdgeInsets.only(bottom: 25),
@@ -338,6 +386,19 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
             _buildLocationRow("Ward", _profileData?['ward']),
             _buildLocationRow("Landmark", _profileData?['village']),
           ]),
+        ),
+        SizedBox(
+          width: double.infinity,
+          height: 55,
+          child: OutlinedButton.icon(
+            onPressed: () => setState(() => _isEditing = true),
+            icon: Icon(LucideIcons.edit2, size: 18, color: Colors.teal.shade700),
+            label: Text("Edit Profile Details", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.teal.shade700)),
+            style: OutlinedButton.styleFrom(
+                side: BorderSide(color: Colors.teal.shade700, width: 1.5),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))
+            ),
+          ),
         ),
       ],
     );
@@ -362,84 +423,95 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
 
         FadeInDown(delay: const Duration(milliseconds: 100), child: _buildSectionTitle(isBusiness ? "Business Info" : "Personal Info")),
         const SizedBox(height: 10),
+
+        // 🔥 NEW: Phone Number Field added to edit form
         _buildModernField(
-          _bioController, 
-          isBusiness ? "Business Type & Details" : "Buying Preferences", 
-          isBusiness ? LucideIcons.store : LucideIcons.shoppingBag, 
-          maxLines: 3, 
-          hint: isBusiness ? "E.g. Wholesaler looking for fresh veg..." : "E.g. Buying fresh produce for my family..."
+            _phoneController,
+            "M-Pesa Phone Number",
+            LucideIcons.phone,
+            hint: "e.g. 254712345678",
+            keyboardType: TextInputType.phone
         ),
-        
+        const SizedBox(height: 15),
+
+        _buildModernField(
+            _bioController,
+            isBusiness ? "Business Type & Details" : "Buying Preferences",
+            isBusiness ? LucideIcons.store : LucideIcons.shoppingBag,
+            maxLines: 3,
+            hint: isBusiness ? "E.g. Wholesaler looking for fresh veg..." : "E.g. Buying fresh produce for my family..."
+        ),
+
         const SizedBox(height: 30),
-        
+
         FadeInDown(delay: const Duration(milliseconds: 150), child: _buildSectionTitle("Logistics & Delivery")),
         const SizedBox(height: 10),
-        
+
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white, 
+            color: Colors.white,
             borderRadius: BorderRadius.circular(15),
             border: Border.all(color: Colors.grey.shade200),
             boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
           ),
           child: Column(children: [
-             _buildDropdown("County", _selectedCounty, _counties, (val) {
-               setState(() { 
-                 _selectedCounty = val; 
-                 _selectedSubCounty = null; 
-                 _selectedWard = null; 
-                 _wards = [];
-                 
-                 var countyObj = _locationsData.firstWhere((c) => c['county_name'] == val);
-                 var constituencies = countyObj['constituencies'] as List<dynamic>;
-                 _subCounties = constituencies.map((c) => c['constituency_name'].toString()).toList();
-               });
-             }),
-             Divider(color: Colors.grey.shade200, height: 1),
-             _buildDropdown("Sub-County", _selectedSubCounty, _subCounties, (val) {
-               setState(() { 
-                 _selectedSubCounty = val; 
-                 _selectedWard = null; 
-                 
-                 var countyObj = _locationsData.firstWhere((c) => c['county_name'] == _selectedCounty);
-                 var constituencies = countyObj['constituencies'] as List<dynamic>;
-                 var constituencyObj = constituencies.firstWhere((c) => c['constituency_name'] == val);
-                 _wards = List<String>.from(constituencyObj['wards']);
-               });
-             }),
-             Divider(color: Colors.grey.shade200, height: 1),
-             _buildDropdown("Ward", _selectedWard, _wards, (val) => setState(() => _selectedWard = val)),
-             Divider(color: Colors.grey.shade200, height: 1),
-             TextFormField(
-                controller: _villageController,
-                style: GoogleFonts.poppins(fontSize: 14),
-                decoration: InputDecoration(
-                  labelText: isBusiness ? "Warehouse / Business Landmark" : "Estate / Home Landmark",
-                  labelStyle: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 13),
-                  prefixIcon: Icon(LucideIcons.mapPin, color: Colors.teal[700], size: 18),
-                  border: InputBorder.none,
-                ),
-             )
+            _buildDropdown("County", _selectedCounty, _counties, (val) {
+              setState(() {
+                _selectedCounty = val;
+                _selectedSubCounty = null;
+                _selectedWard = null;
+                _wards = [];
+
+                var countyObj = _locationsData.firstWhere((c) => c['county_name'] == val);
+                var constituencies = countyObj['constituencies'] as List<dynamic>;
+                _subCounties = constituencies.map((c) => c['constituency_name'].toString()).toList();
+              });
+            }),
+            Divider(color: Colors.grey.shade200, height: 1),
+            _buildDropdown("Sub-County", _selectedSubCounty, _subCounties, (val) {
+              setState(() {
+                _selectedSubCounty = val;
+                _selectedWard = null;
+
+                var countyObj = _locationsData.firstWhere((c) => c['county_name'] == _selectedCounty);
+                var constituencies = countyObj['constituencies'] as List<dynamic>;
+                var constituencyObj = constituencies.firstWhere((c) => c['constituency_name'] == val);
+                _wards = List<String>.from(constituencyObj['wards']);
+              });
+            }),
+            Divider(color: Colors.grey.shade200, height: 1),
+            _buildDropdown("Ward", _selectedWard, _wards, (val) => setState(() => _selectedWard = val)),
+            Divider(color: Colors.grey.shade200, height: 1),
+            TextFormField(
+              controller: _villageController,
+              style: GoogleFonts.poppins(fontSize: 14),
+              decoration: InputDecoration(
+                labelText: isBusiness ? "Warehouse / Business Landmark" : "Estate / Home Landmark",
+                labelStyle: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 13),
+                prefixIcon: Icon(LucideIcons.mapPin, color: Colors.teal[700], size: 18),
+                border: InputBorder.none,
+              ),
+            )
           ]),
         ),
 
         const SizedBox(height: 40),
-        
+
         SizedBox(
           width: double.infinity,
           height: 55,
           child: ElevatedButton(
             onPressed: _isLoading ? null : _saveProfile,
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.teal[800],
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-              elevation: 4,
-              shadowColor: Colors.teal.withOpacity(0.3)
+                backgroundColor: Colors.teal[800],
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                elevation: 4,
+                shadowColor: Colors.teal.withOpacity(0.3)
             ),
-            child: _isLoading 
-              ? const CircularProgressIndicator(color: Colors.white) 
-              : Text(widget.isNewUser ? "Complete Setup" : "Save Changes", style: GoogleFonts.poppins(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+            child: _isLoading
+                ? const CircularProgressIndicator(color: Colors.white)
+                : Text(widget.isNewUser ? "Complete Setup" : "Save Changes", style: GoogleFonts.poppins(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ),
       ],
@@ -480,25 +552,25 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
         AnimatedContainer(
           duration: const Duration(milliseconds: 300),
           decoration: BoxDecoration(
-            shape: BoxShape.circle, 
-            border: Border.all(color: Colors.white, width: 4), 
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 4),
             boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 15, offset: const Offset(0, 5))],
           ),
           child: CircleAvatar(
             radius: 55,
             backgroundColor: Colors.white,
             backgroundImage: _profileImage != null ? FileImage(_profileImage!) : null,
-            child: _profileImage == null 
+            child: _profileImage == null
                 ? AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 300),
-                    child: Icon(fallbackIcon, key: ValueKey(fallbackIcon), size: 45, color: Colors.teal.shade200)
-                  ) 
+                duration: const Duration(milliseconds: 300),
+                child: Icon(fallbackIcon, key: ValueKey(fallbackIcon), size: 45, color: Colors.teal.shade200)
+            )
                 : null,
           ),
         ),
         if (_isEditing)
           Positioned(
-            bottom: 0, 
+            bottom: 0,
             right: 0,
             child: GestureDetector(
               onTap: () async {
@@ -506,9 +578,9 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
                 if (img != null) setState(() => _profileImage = File(img.path));
               },
               child: Container(
-                padding: const EdgeInsets.all(10), 
-                decoration: BoxDecoration(color: Colors.teal.shade700, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)), 
-                child: const Icon(LucideIcons.camera, color: Colors.white, size: 16)
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: Colors.teal.shade700, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)),
+                  child: const Icon(LucideIcons.camera, color: Colors.white, size: 16)
               ),
             ),
           )
@@ -539,26 +611,28 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   }
 
   Widget _buildSectionTitle(String title) => Align(alignment: Alignment.centerLeft, child: Text(title, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)));
-  
-  Widget _buildModernField(TextEditingController c, String label, IconData icon, {int maxLines = 1, String? hint}) {
+
+  // 🔥 UPDATED: Added keyboardType parameter to support numeric keyboards
+  Widget _buildModernField(TextEditingController c, String label, IconData icon, {int maxLines = 1, String? hint, TextInputType? keyboardType}) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white, 
-        borderRadius: BorderRadius.circular(15), 
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
         border: Border.all(color: Colors.grey.shade200),
         boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: TextField(
-        controller: c, maxLines: maxLines, 
-        style: GoogleFonts.poppins(fontSize: 14),
-        decoration: InputDecoration(
-          labelText: label, hintText: hint,
-          hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 13),
-          labelStyle: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 13),
-          prefixIcon: Icon(icon, color: Colors.teal[700], size: 20), 
-          border: InputBorder.none, 
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)
-        )
+          controller: c, maxLines: maxLines,
+          keyboardType: keyboardType, // Applied here!
+          style: GoogleFonts.poppins(fontSize: 14),
+          decoration: InputDecoration(
+              labelText: label, hintText: hint,
+              hintStyle: GoogleFonts.poppins(color: Colors.grey[400], fontSize: 13),
+              labelStyle: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 13),
+              prefixIcon: Icon(icon, color: Colors.teal[700], size: 20),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)
+          )
       ),
     );
   }
@@ -567,17 +641,17 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
       child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: val, isExpanded: true, 
-          hint: Text(label, style: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 14)), 
-          icon: const Icon(LucideIcons.chevronDown, size: 18, color: Colors.grey),
-          items: items.map((e) => DropdownMenuItem(value: e, child: Text(e, style: GoogleFonts.poppins(fontSize: 14), overflow: TextOverflow.ellipsis))).toList(), 
-          onChanged: items.isEmpty ? null : changed
-        )
+          child: DropdownButton<String>(
+              value: val, isExpanded: true,
+              hint: Text(label, style: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 14)),
+              icon: const Icon(LucideIcons.chevronDown, size: 18, color: Colors.grey),
+              items: items.map((e) => DropdownMenuItem(value: e, child: Text(e, style: GoogleFonts.poppins(fontSize: 14), overflow: TextOverflow.ellipsis))).toList(),
+              onChanged: items.isEmpty ? null : changed
+          )
       ),
     );
   }
-  
+
   Widget _buildLocationRow(String label, String? value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8.0),

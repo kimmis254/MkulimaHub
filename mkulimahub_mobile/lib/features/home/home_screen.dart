@@ -13,6 +13,7 @@ import 'package:mkulimahub_mobile/features/home/contracts_screen.dart';
 import 'package:mkulimahub_mobile/features/home/ai_chat_screen.dart';
 import 'package:mkulimahub_mobile/features/home/my_deliveries_screen.dart';
 import 'package:mkulimahub_mobile/features/home/delivery_squads_screen.dart';
+import 'package:mkulimahub_mobile/features/home/farmer_wallet_screen.dart';
 
 final GlobalKey<FarmerDashboardViewState> dashboardKey = GlobalKey<FarmerDashboardViewState>();
 
@@ -655,14 +656,36 @@ class FarmerDashboardViewState extends State<FarmerDashboardView> {
                       ),
                       Row(
                         children: [
+                          // 🔥 NEW: The Wallet Button!
                           BouncyButton(
-                            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyDeliveriesScreen())),
-                            child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.orange.withOpacity(0.2), shape: BoxShape.circle), child: const Icon(LucideIcons.packageSearch, color: Colors.orangeAccent, size: 22)),
+                            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FarmerWalletScreen())),
+                            child: Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
+                                child: const Icon(LucideIcons.wallet, color: Colors.white, size: 22)
+                            ),
                           ),
                           const SizedBox(width: 10),
+
+                          // 🔥 UPDATED: Delivery icon changed to a Truck!
+                          BouncyButton(
+                            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyDeliveriesScreen())),
+                            child: Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(color: Colors.orange.withOpacity(0.2), shape: BoxShape.circle),
+                                child: const Icon(LucideIcons.truck, color: Colors.orangeAccent, size: 22)
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+
+                          // AI Chat Button
                           BouncyButton(
                             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AiChatScreen())),
-                            child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle), child: const Icon(LucideIcons.bot, color: Colors.white, size: 22)),
+                            child: Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
+                                child: const Icon(LucideIcons.bot, color: Colors.white, size: 22)
+                            ),
                           ),
                         ],
                       ),

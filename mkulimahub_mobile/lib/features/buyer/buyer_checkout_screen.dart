@@ -19,11 +19,11 @@ class BuyerCheckoutScreen extends StatefulWidget {
 class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
   final ApiClient _apiClient = ApiClient();
   final _formKey = GlobalKey<FormState>();
-  
+
   bool _isLoading = false;
-  
+
   // Logistics & Calculations
-  String _deliveryMethod = "doorstep"; // 'doorstep' or 'pickup'
+  String _deliveryMethod = "doorstep";
   double _discountAmount = 0.0;
   final TextEditingController _voucherController = TextEditingController();
 
@@ -32,8 +32,7 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
   final _phoneController = TextEditingController();
   final _addressController = TextEditingController();
 
-  // 🔥 Smart Location Data State
-  List<dynamic> _locationsData = []; 
+  List<dynamic> _locationsData = [];
   List<String> _counties = [];
   List<String> _subCounties = [];
   List<String> _wards = [];
@@ -43,14 +42,16 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
   String? _selectedWard;
 
   // Payment Options
-  String _paymentMode = "pay_now"; // 'pay_now' or 'pay_on_delivery'
-  String _payNowMethod = "mpesa"; // 'mpesa' or 'card'
-  String _podMethod = "mobile_money"; // 'mobile_money', 'bank_transfer', 'cash'
+  String _paymentMode = "pay_now";
+  String _payNowMethod = "mpesa";
+  String _podMethod = "mobile_money";
 
+  // 🔥 THE NEW FINANCIAL MATH ENGINE
   double get _subtotal => widget.cartItems.fold(0, (sum, item) => sum + (item['weightKg'] * item['pricePerKg']));
-  double get _serviceFee => _subtotal * 0.02; // 2% Service Fee
-  double get _deliveryFee => _deliveryMethod == "doorstep" ? 1500.0 : 0.0; // Flat 1500 KES for delivery
-  double get _total => (_subtotal + _serviceFee + _deliveryFee) - _discountAmount;
+  double get _serviceFee => _subtotal * 0.02;
+  double get _deliveryFee => _deliveryMethod == "doorstep" ? 1500.0 : 0.0;
+  double get _taxAmount => (_serviceFee + _deliveryFee) * 0.16; // KRA 16% VAT on Services
+  double get _total => (_subtotal + _serviceFee + _deliveryFee + _taxAmount) - _discountAmount;
 
   @override
   void initState() {
@@ -76,7 +77,7 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
   void _applyVoucher() {
     FocusScope.of(context).unfocus();
     if (_voucherController.text.toUpperCase() == "MKULIMA10") {
-      setState(() => _discountAmount = _subtotal * 0.10); 
+      setState(() => _discountAmount = _subtotal * 0.10);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("10% Discount Applied!"), backgroundColor: Colors.green));
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Invalid Voucher Code"), backgroundColor: Colors.red));
@@ -91,18 +92,17 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
 
     setState(() => _isLoading = true);
 
-    // 🔥 THE FIX: Capture the exact custom address they typed in the checkout form!
     String customAddress = "${_selectedCounty ?? ''}, ${_selectedSubCounty ?? ''}, ${_selectedWard ?? ''} - ${_addressController.text.trim()}";
 
     bool success = true;
     for (var item in widget.cartItems) {
       if (item['type'] == 'individual') {
-        // 🔥 THE HACK: Inject the custom address into the delivery string separated by a pipe '|'
         String methodString = _deliveryMethod == "doorstep" ? "Delivery|$customAddress" : "Pickup|Buyer will pickup from your location.";
-        final error = await _apiClient.createMarketOrder(item['id'], item['format'], item['qty'], methodString);
+        String safeFormat = item['format'] == 'weight' ? 'KG' : item['format'];
+
+        final error = await _apiClient.createMarketOrder(item['id'], safeFormat, item['qty'], methodString);
         if (error != null) success = false;
       } else if (item['type'] == 'pool') {
-        // Hub Pools already have dedicated columns, so we pass it normally
         String finalCounty = _deliveryMethod == "doorstep" ? (_selectedCounty ?? "Kenya") : "Pickup Location";
         String finalWard = _deliveryMethod == "doorstep" ? customAddress : "Buyer will arrange pickup from the Hub.";
         final error = await _apiClient.purchaseHubPool(item['id'], finalCounty, finalWard);
@@ -114,39 +114,41 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
 
     if (mounted) {
       if (success) {
-        CartManager.items.clear(); 
-        
+        CartManager.items.clear();
+
         showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-            title: const Icon(LucideIcons.checkCircle, color: Colors.teal, size: 60),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text("Order Successful!", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
-                const SizedBox(height: 10),
-                Text(
-                  "Your total of KES ${_total.toStringAsFixed(0)} has been processed via $_paymentMode. Logistics have been notified.",
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey.shade600),
-                ),
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              title: const Icon(LucideIcons.checkCircle, color: Colors.teal, size: 60),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text("Invoices Generated!", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
+                  const SizedBox(height: 10),
+                  Text(
+                    _paymentMode == "pay_now"
+                        ? "Your orders have been routed. Please proceed to the Orders Dashboard to initiate your secure M-Pesa payments for each dispatch."
+                        : "Your orders have been routed. You will pay upon delivery.",
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey.shade600),
+                  ),
+                ],
+              ),
+              actions: [
+                SizedBox(
+                  width: double.infinity, height: 50,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(context); Navigator.pop(context); Navigator.pop(context);
+                    },
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.teal.shade700, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                    child: Text("Go to My Orders", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                )
               ],
-            ),
-            actions: [
-              SizedBox(
-                width: double.infinity, height: 50,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context); Navigator.pop(context); Navigator.pop(context); 
-                  },
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.teal.shade700, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
-                  child: Text("Back to Dashboard", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
-                ),
-              )
-            ],
-          )
+            )
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("An error occurred during checkout."), backgroundColor: Colors.red));
@@ -165,12 +167,6 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
           leading: IconButton(icon: Icon(LucideIcons.arrowLeft, color: Colors.teal.shade900), onPressed: () => Navigator.pop(context)),
           title: Text("Secure Checkout", style: GoogleFonts.poppins(color: Colors.teal.shade900, fontWeight: FontWeight.bold, fontSize: 18)),
           centerTitle: true,
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context), 
-              child: Text("Modify Cart", style: GoogleFonts.poppins(color: Colors.teal.shade700, fontWeight: FontWeight.bold, fontSize: 12)),
-            )
-          ],
         ),
         body: Column(
           children: [
@@ -180,7 +176,6 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 🔥 1. ORDER SUMMARY
                     _buildSectionHeader("Order Summary", LucideIcons.receipt),
                     Container(
                       padding: const EdgeInsets.all(16),
@@ -202,7 +197,6 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                     ),
                     const SizedBox(height: 30),
 
-                    // 🔥 2. VOUCHER & DISCOUNTS
                     _buildSectionHeader("Apply Voucher", LucideIcons.tag),
                     Row(
                       children: [
@@ -228,7 +222,6 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                     ),
                     const SizedBox(height: 30),
 
-                    // 🔥 3. DELIVERY METHOD
                     _buildSectionHeader("Delivery Method", LucideIcons.truck),
                     Row(
                       children: [
@@ -239,7 +232,6 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                     ),
                     const SizedBox(height: 30),
 
-                    // 🔥 4. SMART ADDRESS FORM (Only shows if Doorstep)
                     AnimatedSize(
                       duration: const Duration(milliseconds: 300),
                       child: _deliveryMethod == "doorstep" ? Form(
@@ -255,40 +247,40 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                                 children: [
                                   _buildAddressField(_nameController, "Full Name"),
                                   _buildAddressField(_phoneController, "Phone Number", isPhone: true),
-                                  
+
                                   _buildDropdownField("County / Region", _selectedCounty, _counties, (val) {
                                     setState(() {
                                       _selectedCounty = val;
                                       _selectedSubCounty = null;
                                       _selectedWard = null;
                                       _wards = [];
-                                      
+
                                       var countyObj = _locationsData.firstWhere((c) => c['county_name'] == val);
                                       var constituencies = countyObj['constituencies'] as List<dynamic>;
                                       _subCounties = constituencies.map((c) => c['constituency_name'].toString()).toList();
                                     });
                                   }),
-                                  
+
                                   Row(
                                     children: [
                                       Expanded(
-                                        child: _buildDropdownField("City / Sub-County", _selectedSubCounty, _subCounties, (val) {
-                                          setState(() {
-                                            _selectedSubCounty = val;
-                                            _selectedWard = null;
-                                            
-                                            var countyObj = _locationsData.firstWhere((c) => c['county_name'] == _selectedCounty);
-                                            var constituencies = countyObj['constituencies'] as List<dynamic>;
-                                            var constituencyObj = constituencies.firstWhere((c) => c['constituency_name'] == val);
-                                            _wards = List<String>.from(constituencyObj['wards']);
-                                          });
-                                        })
+                                          child: _buildDropdownField("City / Sub-County", _selectedSubCounty, _subCounties, (val) {
+                                            setState(() {
+                                              _selectedSubCounty = val;
+                                              _selectedWard = null;
+
+                                              var countyObj = _locationsData.firstWhere((c) => c['county_name'] == _selectedCounty);
+                                              var constituencies = countyObj['constituencies'] as List<dynamic>;
+                                              var constituencyObj = constituencies.firstWhere((c) => c['constituency_name'] == val);
+                                              _wards = List<String>.from(constituencyObj['wards']);
+                                            });
+                                          })
                                       ),
                                       const SizedBox(width: 15),
                                       Expanded(
-                                        child: _buildDropdownField("Ward", _selectedWard, _wards, (val) {
-                                          setState(() => _selectedWard = val);
-                                        })
+                                          child: _buildDropdownField("Ward", _selectedWard, _wards, (val) {
+                                            setState(() => _selectedWard = val);
+                                          })
                                       ),
                                     ],
                                   ),
@@ -303,14 +295,13 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                       ) : const SizedBox.shrink(),
                     ),
 
-                    // 🔥 5. PAYMENT METHODS
                     _buildSectionHeader("Payment Method", LucideIcons.creditCard),
                     Container(
                       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.grey.shade200)),
                       child: Column(
                         children: [
                           RadioListTile(
-                            title: Text("Pay Now (Secure Escrow)", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
+                            title: Text("Pay Now (Secure Online Payment)", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
                             value: "pay_now", groupValue: _paymentMode,
                             activeColor: Colors.teal.shade700,
                             onChanged: (val) => setState(() => _paymentMode = val.toString()),
@@ -328,7 +319,7 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                                 onChanged: (val) => setState(() => _payNowMethod = val!),
                               ),
                             ),
-                            
+
                           const Divider(height: 0),
                           RadioListTile(
                             title: Text("Pay on Delivery", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14)),
@@ -359,23 +350,26 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
               ),
             ),
 
-            // 🔥 6. STICKY FOOTER (CALCULATIONS & CONFIRM)
+            // 🔥 UPDATED RECEIPT FOOTER
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
               decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, -5))],
-                borderRadius: const BorderRadius.only(topLeft: Radius.circular(30), topRight: Radius.circular(30))
+                  color: Colors.white,
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, -5))],
+                  borderRadius: const BorderRadius.only(topLeft: Radius.circular(30), topRight: Radius.circular(30))
               ),
               child: SafeArea(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _buildReceiptRow("Subtotal", _subtotal),
+                    _buildReceiptRow("Subtotal (Tax Exempt)", _subtotal),
                     const SizedBox(height: 8),
                     _buildReceiptRow("Service Fee (2%)", _serviceFee),
                     const SizedBox(height: 8),
                     _buildReceiptRow("Delivery Fee", _deliveryFee),
+                    const SizedBox(height: 8),
+                    // 🔥 THE NEW TAX LINE
+                    _buildReceiptRow("Tax (16% VAT on Services)", _taxAmount),
                     if (_discountAmount > 0) ...[
                       const SizedBox(height: 8),
                       _buildReceiptRow("Voucher Discount", -_discountAmount, isDiscount: true),
@@ -386,8 +380,8 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                       children: [
                         Text("Total to Pay", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
                         Text(
-                          "KES ${_total.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}", 
-                          style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.teal.shade900)
+                            "KES ${_total.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}",
+                            style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.teal.shade900)
                         ),
                       ],
                     ),
@@ -397,9 +391,9 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                       child: ElevatedButton(
                         onPressed: _isLoading ? null : _confirmCheckout,
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.teal.shade700, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0),
-                        child: _isLoading 
-                          ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-                          : Text("Confirm & Checkout", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                        child: _isLoading
+                            ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                            : Text("Confirm & Route Orders", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
                       ),
                     ),
                   ],
@@ -500,8 +494,8 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
       children: [
         Text(label, style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13)),
         Text(
-          "${isDiscount ? '' : 'KES '}${amount.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}", 
-          style: GoogleFonts.poppins(color: isDiscount ? Colors.green.shade700 : Colors.black87, fontWeight: FontWeight.w600, fontSize: 13)
+            "${isDiscount ? '' : 'KES '}${amount.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}",
+            style: GoogleFonts.poppins(color: isDiscount ? Colors.green.shade700 : Colors.black87, fontWeight: FontWeight.w600, fontSize: 13)
         ),
       ],
     );

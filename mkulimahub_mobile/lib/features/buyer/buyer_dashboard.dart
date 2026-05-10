@@ -28,16 +28,15 @@ class _BuyerDashboardState extends State<BuyerDashboard> {
   late final List<Widget> _screens;
 
   @override
-  void initState() {
-    super.initState();
-    _screens = [
-      BuyerMarketplaceView(key: buyerMarketplaceKey),
-      BuyerOrdersScreen(key: buyerOrdersKey), 
-      const BuyerOrdersScreen(),                      
-      const BuyerInsightsScreen(),                    
-      const BuyerWalletScreen(),                      
-    ];
-  }
+    void initState() {
+      super.initState();
+      _screens = [
+        BuyerMarketplaceView(key: buyerMarketplaceKey), // Index 0: Market
+        BuyerOrdersScreen(key: buyerOrdersKey),         // Index 1: Orders
+        const BuyerInsightsScreen(),                    // Index 2: Insights (Fixed!)
+        const BuyerWalletScreen(),                      // Index 3: Wallet (Fixed!)
+      ];
+    }
 
   @override
   Widget build(BuildContext context) {
