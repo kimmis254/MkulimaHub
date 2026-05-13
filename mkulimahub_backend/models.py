@@ -63,6 +63,8 @@ class User(Base):
     hub = relationship("Hub", back_populates="members", foreign_keys=[hub_id])
     pledges = relationship("Pledge", back_populates="farmer")
     harvests = relationship("Harvest", back_populates="farmer")
+    available_balance = Column(Float, default=0.0) # Cash they can withdraw to M-Pesa
+    escrow_balance = Column(Float, default=0.0)
 
 class BulkRequest(Base):
     __tablename__ = "bulk_requests"
@@ -76,7 +78,8 @@ class BulkRequest(Base):
     county = Column(String)
     ward = Column(String, nullable=True) 
     urgency = Column(String, default="High") 
-    status = Column(String, default="Open") 
+    status = Column(String, default="Open")
+    payment_method = Column(String, default="pay_now") 
     
     # 🔥 NEW: Delivery Squad Management
     coordinator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -87,6 +90,8 @@ class BulkRequest(Base):
     pledges = relationship("Pledge", back_populates="bulk_request")
     coordinator = relationship("User", foreign_keys=[coordinator_id])
     status = Column(String, default="open", index=True)
+    payment_status = Column(String, default="pending")
+    checkout_request_id = Column(String, nullable=True)
 
 class Pledge(Base):
     __tablename__ = "pledges"
@@ -104,6 +109,7 @@ class Pledge(Base):
     
     bulk_request = relationship("BulkRequest", back_populates="pledges")
     farmer = relationship("User", back_populates="pledges")
+    checkout_request_id = Column(String, nullable=True)
 
 class HubMessage(Base):
     __tablename__ = "hub_messages"
@@ -260,8 +266,14 @@ class MarketOrder(Base):
     order_type = Column(String) # e.g., "weight", "Bucket", "Sack"
     quantity_ordered = Column(Float) 
     
-    kg_deducted = Column(Float) 
-    total_price = Column(Float)
+    kg_deducted = Column(Float)
+    subtotal = Column(Float, default=0.0)      
+    service_fee = Column(Float, default=0.0)   
+    delivery_fee = Column(Float, default=0.0)  
+    tax_amount = Column(Float, default=0.0)   
+    discount = Column(Float, default=0.0)      
+    total_price = Column(Float, default=0.0)
+    payment_method = Column(String, default="pay_now")
     
     status = Column(String, default="pending") 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -272,3 +284,5 @@ class MarketOrder(Base):
     delivery_method = Column(String, default="Delivery") 
     dispute_notes = Column(String, nullable=True)
     dispute_image = Column(String, nullable=True)
+
+    checkout_request_id = Column(String, index=True, nullable=True)

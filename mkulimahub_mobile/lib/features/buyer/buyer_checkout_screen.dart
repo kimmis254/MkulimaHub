@@ -100,7 +100,8 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
         String methodString = _deliveryMethod == "doorstep" ? "Delivery|$customAddress" : "Pickup|Buyer will pickup from your location.";
         String safeFormat = item['format'] == 'weight' ? 'KG' : item['format'];
 
-        final error = await _apiClient.createMarketOrder(item['id'], safeFormat, item['qty'], methodString);
+        // 🔥 Pass _paymentMode to the backend!
+        final error = await _apiClient.createMarketOrder(item['id'], safeFormat, item['qty'], methodString, _paymentMode);
         if (error != null) success = false;
       } else if (item['type'] == 'pool') {
         String finalCounty = _deliveryMethod == "doorstep" ? (_selectedCounty ?? "Kenya") : "Pickup Location";

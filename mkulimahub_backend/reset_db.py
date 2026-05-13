@@ -21,6 +21,7 @@ tables_to_drop = [
     "hub_messages",
     "hub_candidates"
 
+
 ]
 
 for table in tables_to_drop:

@@ -1,34 +1,35 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:flutter_dotenv/flutter_dotenv.dart'; 
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mkulimahub_mobile/features/home/harvest_model.dart';
 import 'package:flutter/foundation.dart';
 
 class ApiClient {
-  // 🔥 Dynamic base URL! No more hardcoded IPs. 
+  // 🔥 Dynamic base URL! No more hardcoded IPs.
   // It checks the .env file. If it fails, it defaults to the Android Emulator IP.
-  String get baseUrl => dotenv.env['API_BASE_URL'] ?? 'http://192.168.100.4:8000'; 
-
+  String get baseUrl =>
+      dotenv.env['API_BASE_URL'] ?? 'http://192.168.100.4:8000';
 
   Future<String?> _getToken() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('auth_token'); // Must match the line above perfectly!
+    return prefs.getString(
+      'auth_token',
+    ); // Must match the line above perfectly!
   }
-
 
   Future<String?> login(String phone, String password) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/login'), 
+        Uri.parse('$baseUrl/auth/login'),
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: {'username': phone, 'password': password},
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        await _saveToken(data['access_token']); 
-        return null; 
+        await _saveToken(data['access_token']);
+        return null;
       } else {
         // 🔥 Catch the EXACT error FastAPI is sending!
         final errorData = jsonDecode(response.body);
@@ -42,7 +43,8 @@ class ApiClient {
   Future<String?> register(Map<String, dynamic> userData) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/api/auth/register'), // Make sure this matches your python route
+        Uri.parse('$baseUrl/api/auth/register'),
+        // Make sure this matches your python route
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(userData),
       );
@@ -55,11 +57,11 @@ class ApiClient {
         return null; // Null means Success!
       } else {
         final decoded = jsonDecode(response.body);
-        
+
         // 🔥 Safely extract the error, even if FastAPI sends a 422 List!
         if (decoded['detail'] != null) {
           if (decoded['detail'] is List) {
-            return "Please fill in all required fields correctly."; 
+            return "Please fill in all required fields correctly.";
           }
           return decoded['detail'].toString();
         }
@@ -71,21 +73,25 @@ class ApiClient {
   }
 
   // 🔥 NEW: Google Login/Signup Endpoint
-  Future<String?> googleLogin({required String idToken, String? overrideRole}) async {
+  Future<String?> googleLogin({
+    required String idToken,
+    String? overrideRole,
+  }) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/api/auth/google'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'id_token': idToken,
-          if (overrideRole != null) 'role': overrideRole, // Pass role to backend
+          if (overrideRole != null) 'role': overrideRole,
+          // Pass role to backend
         }),
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['status'] == 'needs_phone') return 'needs_phone';
-        
+
         final token = data['access_token'];
         if (token != null) {
           await _saveToken(token);
@@ -98,11 +104,11 @@ class ApiClient {
       return 'Connection error. Please check your internet.';
     }
   }
-  
+
   Future<String?> googleRegister({
     required String idToken,
     required String phoneNumber,
-    String? role, 
+    String? role,
   }) async {
     try {
       final response = await http.post(
@@ -118,8 +124,8 @@ class ApiClient {
       if (response.statusCode == 200) {
         final respData = jsonDecode(response.body);
         final token = respData['access_token'];
-        if (token != null) await _saveToken(token); 
-        return respData['status']; 
+        if (token != null) await _saveToken(token);
+        return respData['status'];
       } else {
         final errorData = jsonDecode(response.body);
         return errorData['detail'] ?? 'Registration failed.';
@@ -135,7 +141,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>?> getProfile() async {
-    final token = await getToken(); 
+    final token = await getToken();
     if (token == null) return null;
 
     try {
@@ -168,7 +174,7 @@ class ApiClient {
       );
 
       if (response.statusCode == 200) {
-        return null; 
+        return null;
       } else {
         return "Update failed: ${response.body}";
       }
@@ -184,7 +190,7 @@ class ApiClient {
   Future<List<Harvest>> getHarvests() async {
     try {
       final response = await http.get(Uri.parse('$baseUrl/harvests'));
-      
+
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         return data.map((json) => Harvest.fromJson(json)).toList();
@@ -209,7 +215,7 @@ class ApiClient {
       );
 
       if (response.statusCode == 200) {
-        return jsonDecode(response.body); 
+        return jsonDecode(response.body);
       }
       return [];
     } catch (e) {
@@ -243,9 +249,13 @@ class ApiClient {
   // AI & MARKET LOGIC
   // ==========================================
 
-  Future<Map<String, dynamic>> getPrediction(String commodity, String region, String priceType) async {
+  Future<Map<String, dynamic>> getPrediction(
+    String commodity,
+    String region,
+    String priceType,
+  ) async {
     final url = Uri.parse('$baseUrl/api/predict-price');
-    
+
     final response = await http.post(
       url,
       headers: {"Content-Type": "application/json"},
@@ -253,12 +263,12 @@ class ApiClient {
         "commodity": commodity.toLowerCase(),
         "days": 30,
         "region": region.toLowerCase(),
-        "price_type": priceType.toLowerCase() 
+        "price_type": priceType.toLowerCase(),
       }),
     );
 
     if (response.statusCode == 200) {
-      return jsonDecode(response.body); 
+      return jsonDecode(response.body);
     } else {
       final errorData = jsonDecode(response.body);
       throw Exception(errorData['detail'] ?? 'Failed to analyze market.');
@@ -269,12 +279,12 @@ class ApiClient {
     final response = await http.get(Uri.parse('$baseUrl/api/market-metadata'));
 
     if (response.statusCode == 200) {
-      return json.decode(response.body); 
+      return json.decode(response.body);
     } else {
       throw Exception('Failed to load metadata');
     }
   }
-  
+
   // ==========================================
   // HUB & CO-OP LOGIC
   // ==========================================
@@ -286,7 +296,7 @@ class ApiClient {
 
     try {
       String url = '$baseUrl/api/clusters';
-      
+
       if (crop != null && crop != 'All') {
         url += '?crop=$crop';
       }
@@ -296,7 +306,7 @@ class ApiClient {
         Uri.parse(url),
         headers: {
           "Content-Type": "application/json",
-          "Authorization": "Bearer $token" 
+          "Authorization": "Bearer $token",
         },
       );
 
@@ -316,7 +326,7 @@ class ApiClient {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/api/hubs/nearby'),
-        headers: {'Authorization': 'Bearer ${await _getToken()}'}, 
+        headers: {'Authorization': 'Bearer ${await _getToken()}'},
       );
 
       if (response.statusCode == 200) {
@@ -387,7 +397,9 @@ class ApiClient {
   Future<String?> respondToHubRequest(int requestId, String action) async {
     try {
       final response = await http.put(
-        Uri.parse('$baseUrl/api/coordinator/requests/$requestId?action=$action'),
+        Uri.parse(
+          '$baseUrl/api/coordinator/requests/$requestId?action=$action',
+        ),
         headers: {'Authorization': 'Bearer ${await _getToken()}'},
       );
       if (response.statusCode == 200) {
@@ -416,32 +428,27 @@ class ApiClient {
 
   Future<String?> runForCoordinator(String pitch) async {
     try {
+      final prefs = await SharedPreferences.getInstance();
       final response = await http.post(
         Uri.parse('$baseUrl/api/hubs/election/run'),
-        headers: {
-          'Authorization': 'Bearer ${await _getToken()}',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({'pitch': pitch}),
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ${prefs.getString('auth_token')}'},
+        body: json.encode({'pitch': pitch}),
       );
-      if (response.statusCode == 200) return null; // Success
-      return jsonDecode(response.body)['detail'] ?? 'Failed to submit candidacy.';
-    } catch (e) {
-      return 'Network error.';
-    }
+      if (response.statusCode == 200) return null;
+      return json.decode(response.body)['detail'] ?? "Failed to submit candidacy.";
+    } catch (e) { return "Network error."; }
   }
 
   Future<String?> castVote(int candidateId) async {
     try {
+      final prefs = await SharedPreferences.getInstance();
       final response = await http.post(
         Uri.parse('$baseUrl/api/hubs/election/vote/$candidateId'),
-        headers: {'Authorization': 'Bearer ${await _getToken()}'},
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ${prefs.getString('auth_token')}'},
       );
-      if (response.statusCode == 200) return null; // Success
-      return jsonDecode(response.body)['detail'] ?? 'Failed to cast vote.';
-    } catch (e) {
-      return 'Network error.';
-    }
+      if (response.statusCode == 200) return null;
+      return json.decode(response.body)['detail'] ?? "Failed to cast vote.";
+    } catch (e) { return "Network error."; }
   }
 
   Future<List<dynamic>?> getHubDeliveries() async {
@@ -457,10 +464,16 @@ class ApiClient {
     }
   }
 
-  Future<String?> processDelivery(int squadId, String action, double? actualWeight, String? notes) async {
+  Future<String?> processDelivery(
+    int squadId,
+    String action,
+    double? actualWeight,
+    String? notes,
+  ) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/api/hubs/deliveries/$squadId/process'), // 🔥 Updated endpoint
+        Uri.parse('$baseUrl/api/hubs/deliveries/$squadId/process'),
+        // 🔥 Updated endpoint
         headers: {
           'Authorization': 'Bearer ${await _getToken()}',
           'Content-Type': 'application/json',
@@ -468,11 +481,12 @@ class ApiClient {
         body: jsonEncode({
           "action": action,
           "actual_weight_kg": actualWeight,
-          "notes": notes
+          "notes": notes,
         }),
       );
       if (response.statusCode == 200) return null; // Success
-      return jsonDecode(response.body)['detail'] ?? 'Failed to process delivery.';
+      return jsonDecode(response.body)['detail'] ??
+          'Failed to process delivery.';
     } catch (e) {
       return 'Network error.';
     }
@@ -525,7 +539,7 @@ class ApiClient {
       );
 
       if (response.statusCode == 200) {
-        return null; 
+        return null;
       } else {
         return "Failed to send: ${response.body}";
       }
@@ -534,14 +548,13 @@ class ApiClient {
     }
   }
 
-
   // ==========================================
   // PLEDGES AND CONTRACTS LOGIC
   // ==========================================
 
   Future<List<dynamic>> getContracts() async {
     final token = await getToken();
-    if (token == null) return []; 
+    if (token == null) return [];
 
     try {
       final response = await http.get(
@@ -573,13 +586,11 @@ class ApiClient {
           "Content-Type": "application/json",
           "Authorization": "Bearer $token",
         },
-        body: jsonEncode({
-          "pledged_weight_kg": weightKg
-        }),
+        body: jsonEncode({"pledged_weight_kg": weightKg}),
       );
 
       if (response.statusCode == 200) {
-        return null; 
+        return null;
       } else {
         return "Failed to pledge: ${response.body}";
       }
@@ -597,7 +608,7 @@ class ApiClient {
         Uri.parse('$baseUrl/api/pledges/$pledgeId'),
         headers: {
           "Content-Type": "application/json",
-          "Authorization": "Bearer $token"
+          "Authorization": "Bearer $token",
         },
         body: jsonEncode({"pledged_weight_kg": newWeight}),
       );
@@ -605,12 +616,14 @@ class ApiClient {
       if (response.statusCode == 200) {
         return null; // Success!
       } else {
-        return jsonDecode(response.body)['detail'] ?? "Failed to update pledge.";
+        return jsonDecode(response.body)['detail'] ??
+            "Failed to update pledge.";
       }
     } catch (e) {
       return "Connection error: $e";
     }
   }
+
   Future<String?> updatePledgeStatus(int pledgeId, String status) async {
     final token = await getToken();
     if (token == null) return "Please login first.";
@@ -644,7 +657,8 @@ class ApiClient {
       if (response.statusCode == 200) {
         return null; // Success!
       } else {
-        return jsonDecode(response.body)['detail'] ?? "Failed to delete pledge.";
+        return jsonDecode(response.body)['detail'] ??
+            "Failed to delete pledge.";
       }
     } catch (e) {
       return "Connection error: $e";
@@ -654,10 +668,10 @@ class ApiClient {
   Future<List<dynamic>> getMyPledges() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       // 🔥 THE FIX: Using your exact secret key!
       final token = prefs.getString('auth_token') ?? '';
-      
+
       print("🔐 DEBUG TOKEN CHECK: Does token exist? ${token.isNotEmpty}");
 
       final response = await http.get(
@@ -665,13 +679,14 @@ class ApiClient {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'Authorization': 'Bearer $token', // 🔥 The valid ID badge is attached!
+          'Authorization': 'Bearer $token',
+          // 🔥 The valid ID badge is attached!
         },
       );
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        print("🔥 RAW SQUAD DATA: $data"); 
+        print("🔥 RAW SQUAD DATA: $data");
         return data;
       } else {
         print("❌ API ERROR: ${response.statusCode} - ${response.body}");
@@ -686,7 +701,7 @@ class ApiClient {
   // ==========================================
   // 🔥 ENTERPRISE BUYER OPERATIONS
   // ==========================================
-  
+
   Future<Map<String, dynamic>?> getBuyerDashboard() async {
     try {
       final response = await http.get(
@@ -711,25 +726,30 @@ class ApiClient {
         body: jsonEncode(contractData),
       );
       if (response.statusCode == 200) return null; // Success!
-      return jsonDecode(response.body)['detail'] ?? 'Failed to create contract.';
+      return jsonDecode(response.body)['detail'] ??
+          'Failed to create contract.';
     } catch (e) {
       return 'Network error.';
     }
   }
-  
-  Future<String?> registerBuyer(String companyName, String phone, String password) async {
+
+  Future<String?> registerBuyer(
+    String companyName,
+    String phone,
+    String password,
+  ) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/register'), 
+        Uri.parse('$baseUrl/auth/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'full_name': companyName, 
+          'full_name': companyName,
           'phone_number': phone,
           'password': password,
-          'role': 'buyer' 
+          'role': 'buyer',
         }),
       );
-      
+
       if (response.statusCode == 200 || response.statusCode == 201) {
         return null; // Success!
       }
@@ -755,7 +775,7 @@ class ApiClient {
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return null; 
+        return null;
       } else {
         final body = jsonDecode(response.body);
         return body['detail'] ?? "Failed to post bulk request.";
@@ -801,7 +821,7 @@ class ApiClient {
       );
 
       if (response.statusCode == 200) {
-        return null; 
+        return null;
       } else {
         final body = jsonDecode(response.body);
         return body['detail'] ?? "Failed to verify delivery.";
@@ -810,7 +830,6 @@ class ApiClient {
       return "Connection error: $e";
     }
   }
-
 
   // ==========================================
   // UTILITY & AUTH OPERATIONS
@@ -834,7 +853,7 @@ class ApiClient {
       return "Connection error. Make sure your Python server is running!";
     }
   }
-  
+
   Future<String> askAdvancedAI({
     required String message,
     required String role,
@@ -855,7 +874,7 @@ class ApiClient {
           "role": role,
           "user_name": userName,
           "location": location,
-          "business_details": businessDetails
+          "business_details": businessDetails,
         }),
       );
 
@@ -882,7 +901,7 @@ class ApiClient {
 
       if (response.statusCode == 200) {
         await logout(); // Clear the local token
-        return null; 
+        return null;
       } else {
         return "Failed to delete account data.";
       }
@@ -891,23 +910,23 @@ class ApiClient {
     }
   }
 
-  Future<String?> phoneLogin({required String phone, required String uid}) async {
+  Future<String?> phoneLogin({
+    required String phone,
+    required String uid,
+  }) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/auth/phone-login'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'phone_number': phone,
-          'uid': uid,
-        }),
+        body: jsonEncode({'phone_number': phone, 'uid': uid}),
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final token = data['access_token'];
-        
+
         if (token != null) {
-          await _saveToken(token); 
+          await _saveToken(token);
           return null; // Success!
         } else {
           return 'Failed to retrieve access token.';
@@ -924,7 +943,7 @@ class ApiClient {
   Future<String?> verifyCredentials(String phone, String password) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/login'), 
+        Uri.parse('$baseUrl/auth/login'),
         headers: {"Content-Type": "application/x-www-form-urlencoded"},
         body: {"username": phone, "password": password},
       );
@@ -939,7 +958,11 @@ class ApiClient {
     }
   }
 
-  Future<String?> resetPassword({required String phone, required String uid, required String newPassword}) async {
+  Future<String?> resetPassword({
+    required String phone,
+    required String uid,
+    required String newPassword,
+  }) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/auth/reset-password'),
@@ -955,7 +978,8 @@ class ApiClient {
         return null; // Success!
       } else {
         final errorData = jsonDecode(response.body);
-        return errorData['detail'] ?? 'Failed to reset password. Please try again.';
+        return errorData['detail'] ??
+            'Failed to reset password. Please try again.';
       }
     } catch (e) {
       return 'Network error. Please check your connection.';
@@ -964,7 +988,7 @@ class ApiClient {
 
   Future<void> _saveToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('auth_token', token); 
+    await prefs.setString('auth_token', token);
   }
 
   Future<String?> getToken() async {
@@ -981,41 +1005,35 @@ class ApiClient {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('user_role');
   }
+
   // 🔥 Run for temporary Squad Coordinator
   Future<String?> runForSquadCoordinator(int squadId, String pitch) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('auth_token') ?? '';
-
       final response = await http.post(
         Uri.parse('$baseUrl/api/squads/$squadId/run'),
-        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ${prefs.getString('auth_token')}'},
         body: json.encode({'pitch': pitch}),
       );
-
-      return response.statusCode == 200 ? null : json.decode(response.body)['detail'] ?? "Failed to submit candidacy.";
-    } catch (e) {
-      return "Network error. Please try again.";
-    }
+      if (response.statusCode == 200) return null;
+      return json.decode(response.body)['detail'] ?? "Failed to submit candidacy.";
+    } catch (e) { return "Network error."; }
   }
 
   // 🔥 Vote for a temporary Squad Coordinator
   Future<String?> castSquadVote(int squadId, int candidateId) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('auth_token') ?? '';
-
       final response = await http.post(
         Uri.parse('$baseUrl/api/squads/$squadId/vote'),
-        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ${prefs.getString('auth_token')}'},
         body: json.encode({'candidate_id': candidateId}),
       );
-
-      return response.statusCode == 200 ? null : json.decode(response.body)['detail'] ?? "Failed to cast vote.";
-    } catch (e) {
-      return "Network error. Please try again.";
-    }
+      if (response.statusCode == 200) return null;
+      return json.decode(response.body)['detail'] ?? "Failed to cast vote.";
+    } catch (e) { return "Network error."; }
   }
+
   Future<String?> triggerAdminClustering([String crop = "Maize"]) async {
     try {
       final response = await http.post(
@@ -1033,7 +1051,11 @@ class ApiClient {
       return "Connection error: $e";
     }
   }
-  Future<String?> updateSquadDeliveryStatus(int bulkRequestId, String status) async {
+
+  Future<String?> updateSquadDeliveryStatus(
+    int bulkRequestId,
+    String status,
+  ) async {
     final token = await getToken();
     if (token == null) return "Authentication required";
 
@@ -1042,7 +1064,7 @@ class ApiClient {
         Uri.parse('$baseUrl/api/deliveries/squad/$bulkRequestId/status'),
         headers: {
           "Content-Type": "application/json",
-          "Authorization": "Bearer $token"
+          "Authorization": "Bearer $token",
         },
         body: jsonEncode({"status": status}),
       );
@@ -1050,12 +1072,14 @@ class ApiClient {
       if (response.statusCode == 200) {
         return null; // Success!
       } else {
-        return jsonDecode(response.body)['detail'] ?? "Failed to update status.";
+        return jsonDecode(response.body)['detail'] ??
+            "Failed to update status.";
       }
     } catch (e) {
       return "Connection error: $e";
     }
   }
+
   Future<List<dynamic>> getSquadMessages(int bulkRequestId) async {
     final token = await getToken();
     if (token == null) return [];
@@ -1098,7 +1122,11 @@ class ApiClient {
       return "Connection error: $e";
     }
   }
-  Future<String?> createHubPool(String hubName, Map<String, dynamic> data) async {
+
+  Future<String?> createHubPool(
+    String hubName,
+    Map<String, dynamic> data,
+  ) async {
     final token = await getToken();
     if (token == null) return "Please login first.";
 
@@ -1113,7 +1141,7 @@ class ApiClient {
       );
 
       if (response.statusCode == 200) {
-        return null; 
+        return null;
       } else {
         return jsonDecode(response.body)['detail'] ?? "Failed to create pool.";
       }
@@ -1121,7 +1149,12 @@ class ApiClient {
       return "Connection error: $e";
     }
   }
-  Future<String?> submitUnattendedDropoff(int squadId, String scalePhotoBase64, String cropPhotoBase64) async {
+
+  Future<String?> submitUnattendedDropoff(
+    int squadId,
+    String scalePhotoBase64,
+    String cropPhotoBase64,
+  ) async {
     final token = await getToken();
     if (token == null) return "Please login first.";
 
@@ -1141,12 +1174,14 @@ class ApiClient {
       if (response.statusCode == 200) {
         return null; // Success!
       } else {
-        return jsonDecode(response.body)['detail'] ?? "Failed to submit drop-off.";
+        return jsonDecode(response.body)['detail'] ??
+            "Failed to submit drop-off.";
       }
     } catch (e) {
       return "Connection error: $e";
     }
   }
+
   Future<String?> updateSquadStatus(int squadId, String status) async {
     final token = await getToken();
     if (token == null) return "Please login first.";
@@ -1169,21 +1204,33 @@ class ApiClient {
   }
 
   Future<String?> delegateCoordinator(int squadId, int newCoordinatorId) async {
-    return _put('/api/squads/$squadId/delegate?new_coordinator_id=$newCoordinatorId', {});
+    return _put(
+      '/api/squads/$squadId/delegate?new_coordinator_id=$newCoordinatorId',
+      {},
+    );
   }
 
-  Future<String?> receiveLineItem(int pledgeId, double actualWeight, String notes) async {
+  Future<String?> receiveLineItem(
+    int pledgeId,
+    double actualWeight,
+    String notes,
+  ) async {
     return _put('/api/pledges/$pledgeId/receive-line-item', {
       "actual_weight_kg": actualWeight,
-      "notes": notes
+      "notes": notes,
     });
   }
 
-  Future<String?> updateMarketListing(int listingId, double availableKg, double? pricePerKg, List<Map<String, dynamic>> unitPricing) async {
+  Future<String?> updateMarketListing(
+    int listingId,
+    double availableKg,
+    double? pricePerKg,
+    List<Map<String, dynamic>> unitPricing,
+  ) async {
     return _put('/api/market/listings/$listingId', {
       "available_kg": availableKg,
       "price_per_kg": pricePerKg,
-      "unit_pricing": unitPricing
+      "unit_pricing": unitPricing,
     });
   }
 
@@ -1201,6 +1248,7 @@ class ApiClient {
       return "Connection error.";
     }
   }
+
   // BUYER SIDE /////////////
 
   Future<List<dynamic>> getMarketListings() async {
@@ -1223,7 +1271,7 @@ class ApiClient {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/api/buyer/marketplace'),
-        headers: {"Authorization": "Bearer $token"}
+        headers: {"Authorization": "Bearer $token"},
       );
       if (response.statusCode == 200) return jsonDecode(response.body);
     } catch (e) {
@@ -1233,35 +1281,49 @@ class ApiClient {
   }
 
   // 🔥 CREATE A DIRECT MARKET ORDER
-  Future<String?> createMarketOrder(int listingId, String orderType, double quantity, String deliveryMethod) async {
+  Future<String?> createMarketOrder(
+    int listingId,
+    String orderType,
+    double quantity,
+    String deliveryMethod,
+    String paymentMethod,
+  ) async {
     try {
       final token = await getToken();
       final response = await http.post(
         Uri.parse('$baseUrl/api/market/listings/$listingId/order'),
-        headers: {"Content-Type": "application/json", "Authorization": "Bearer $token"},
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
         body: jsonEncode({
-          "order_type": orderType, 
+          "order_type": orderType,
           "quantity": quantity,
-          "delivery_method": deliveryMethod // 🔥 Sent to Python!
+          "delivery_method": deliveryMethod,
+          "payment_method": paymentMethod, // 🔥 Sent to Python!
         }),
       );
-      if (response.statusCode == 200) return null; 
+      if (response.statusCode == 200) return null;
       return jsonDecode(response.body)['detail'] ?? "Failed to place order.";
     } catch (e) {
       return "Connection error.";
     }
   }
 
-  Future<String?> purchaseHubPool(int poolId, String county, String ward) async {
+  Future<String?> purchaseHubPool(
+    int poolId,
+    String county,
+    String ward,
+  ) async {
     try {
       final token = await getToken();
       final response = await http.post(
         Uri.parse('$baseUrl/api/market/pools/$poolId/purchase'),
-        headers: {"Content-Type": "application/json", "Authorization": "Bearer $token"},
-        body: jsonEncode({
-          "county": county,
-          "ward": ward
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode({"county": county, "ward": ward}),
       );
       if (response.statusCode == 200) return null;
       return jsonDecode(response.body)['detail'] ?? "Failed to purchase pool.";
@@ -1270,29 +1332,35 @@ class ApiClient {
     }
   }
 
-  Future<String?> updateQAStatus(int pledgeId, String status, String notes) async {
+  Future<String?> updateQAStatus(
+    int pledgeId,
+    String status,
+    String notes,
+  ) async {
     return _put('/api/buyer/pledges/$pledgeId/qa', {
       "status": status,
-      "notes": notes
+      "notes": notes,
     });
   }
+
   Future<String?> updateDirectOrderQA(int orderId, String status) async {
     return _put('/api/buyer/orders/$orderId/qa', {
       "status": status,
-      "notes": "Direct Order Inspected and Approved"
+      "notes": "Direct Order Inspected and Approved",
     });
   }
 
   Future<String?> _put(String endpoint, Map<String, dynamic> body) async {
     try {
       // 🔥 THE FIX: Use your universal getToken() method so the key is always correct!
-      final token = await getToken(); 
+      final token = await getToken();
 
       final response = await http.put(
-        Uri.parse('$baseUrl$endpoint'), 
+        Uri.parse('$baseUrl$endpoint'),
         headers: {
           'Content-Type': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token', // The badge is attached!
+          if (token != null) 'Authorization': 'Bearer $token',
+          // The badge is attached!
         },
         body: jsonEncode(body),
       );
@@ -1307,96 +1375,139 @@ class ApiClient {
       return 'Connection error. Please check your internet.';
     }
   }
+
   Future<String?> updateDirectOrderStatus(int orderId, String status) async {
-    return _put('/api/farmer/orders/$orderId/status', {
-      "status": status,
-    });
+    return _put('/api/farmer/orders/$orderId/status', {"status": status});
   }
 
   // 🔥 Buyer: Uploads dispute photo and notes
-  Future<String?> disputeDirectOrder(int orderId, String notes, String? imageBase64) async {
+  Future<String?> disputeDirectOrder(
+    int orderId,
+    String notes,
+    String? imageBase64,
+  ) async {
     return _put('/api/buyer/orders/$orderId/qa', {
       "status": "disputed",
       "notes": notes,
-      "dispute_image": imageBase64
+      "dispute_image": imageBase64,
     });
   }
 
   Future<Map<String, dynamic>?> getBuyerInsights() async {
-      try {
-        final token = await getToken();
-        final response = await http.get(
-          Uri.parse('$baseUrl/api/buyer/insights'),
-          headers: {'Authorization': 'Bearer $token'},
-        );
-        if (response.statusCode == 200) {
-          return jsonDecode(response.body);
-        }
-        return null;
-      } catch (e) {
-        debugPrint("Get Insights Error: $e");
-        return null;
-      }
-    }
-
-    Future<Map<String, dynamic>?> getFarmerWallet() async {
-        try {
-          final token = await getToken();
-          final response = await http.get(
-            Uri.parse('$baseUrl/api/farmer/wallet'),
-            headers: {'Authorization': 'Bearer $token'},
-          );
-          if (response.statusCode == 200) return jsonDecode(response.body);
-          return null;
-        } catch (e) {
-          print("Wallet Fetch Error: $e");
-          return null;
-        }
-      }
-
-      // Secret DEV-Mode STK Push Simulator
-      Future<String?> simulateDevPayment(int orderId) async {
-        try {
-          final token = await getToken();
-          final response = await http.post(
-            Uri.parse('$baseUrl/api/dev/pay-now/$orderId'),
-            headers: {'Authorization': 'Bearer $token'},
-          );
-          if (response.statusCode == 200) return null; // Success!
-          return jsonDecode(response.body)['detail'] ?? "Payment failed";
-        } catch (e) {
-          return "Network error";
-        }
-      }
-
-  Future<String?> triggerMpesaPayment(int orderId) async {
     try {
       final token = await getToken();
-      final response = await http.post(
-        Uri.parse('$baseUrl/api/buyer/orders/$orderId/pay/mpesa'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/buyer/insights'),
+        headers: {'Authorization': 'Bearer $token'},
       );
-
-      final data = jsonDecode(response.body);
-
       if (response.statusCode == 200) {
-        return null; // Success! The prompt is on its way to their phone.
+        return jsonDecode(response.body);
       }
-      return data['detail'] ?? "Payment failed to initiate";
+      return null;
     } catch (e) {
-      print("M-Pesa Trigger Error: $e");
-      return "Network error. Please check your connection.";
+      debugPrint("Get Insights Error: $e");
+      return null;
     }
   }
 
-  
+  Future<Map<String, dynamic>?> getFarmerWallet() async {
+    try {
+      final token = await getToken();
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/farmer/wallet'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return null;
+    } catch (e) {
+      print("Wallet Fetch Error: $e");
+      return null;
+    }
+  }
 
+  // Secret DEV-Mode STK Push Simulator
+  Future<String?> simulateDevPayment(int orderId) async {
+    try {
+      final token = await getToken();
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/dev/pay-now/$orderId'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) return null; // Success!
+      return jsonDecode(response.body)['detail'] ?? "Payment failed";
+    } catch (e) {
+      return "Network error";
+    }
+  }
 
+  // Update your triggerMpesaPayment to accept the customEndpoint
+  Future<String?> triggerMpesaPayment(int id, {bool isBulk = false, String? customEndpoint}) async {
+    try {
+      // Fetch token locally
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token') ?? '';
 
+      // Build Headers explicitly
+      final headers = {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      };
 
+      // Use baseUrl (no underscore) based on your previous login snippet
+      final endpoint = customEndpoint ?? (isBulk ? '/api/market/pools/$id/pay/mpesa' : '/api/buyer/orders/$id/pay/mpesa');
+
+      final response = await http.post(
+          Uri.parse('$baseUrl$endpoint'),
+          headers: headers
+      );
+
+      if (response.statusCode == 200) {
+        return null; // Success!
+      } else {
+        final data = json.decode(response.body);
+        return data['detail'] ?? "Payment failed.";
+      }
+    } catch (e) {
+      return "Network error: Could not reach payment server.";
+    }
+  }
+
+  Future<String?> triggerContractDeposit(int contractId) async {
+    return await triggerMpesaPayment(contractId, customEndpoint: '/api/contracts/$contractId/pay-deposit');
+  }
+
+  Future<String?> triggerPledgePodPayment(int pledgeId) async {
+    return await triggerMpesaPayment(pledgeId, customEndpoint: '/api/pledges/$pledgeId/pay-pod');
+  }
+
+  Future<String?> triggerContractBalance(int contractId) async {
+    return await triggerMpesaPayment(contractId, customEndpoint: '/api/contracts/$contractId/pay-balance');
+  }
+
+  // 2. Process a Farmer's Refund (Issue 7a)
+  Future<String?> refundPledge(int pledgeId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/qa/pledges/$pledgeId/refund'),
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ${prefs.getString('auth_token')}'},
+      );
+      if (response.statusCode == 200) return null;
+      return json.decode(response.body)['detail'] ?? "Refund failed.";
+    } catch (e) { return "Network error."; }
+  }
+
+  Future<String?> releaseContractEscrow(int contractId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/contracts/$contractId/release-escrow'),
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ${prefs.getString('auth_token')}'},
+      );
+      if (response.statusCode == 200) return null;
+      return json.decode(response.body)['detail'] ?? "Failed to release escrow.";
+    } catch (e) { return "Network error."; }
+  }
 
 
 }

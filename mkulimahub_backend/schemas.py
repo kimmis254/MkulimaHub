@@ -12,6 +12,7 @@ class UserCreate(BaseModel):
     # 🔥 FIXED: Made optional. Corporate Buyers won't pass GPS coordinates on signup!
     latitude: Optional[float] = None 
     longitude: Optional[float] = None
+    
 
 class UserLogin(BaseModel):
     phone_number: str
@@ -60,6 +61,7 @@ class UserProfileUpdate(BaseModel):
 
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    phone_number: Optional[str] = None
 
 class UserRead(BaseModel):
     id: int
@@ -159,3 +161,4 @@ class PledgeWithRequest(PledgeRead):
 
     class Config:
         from_attributes = True
+

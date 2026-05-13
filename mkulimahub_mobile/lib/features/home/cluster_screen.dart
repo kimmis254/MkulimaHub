@@ -943,8 +943,7 @@ class _ClusterScreenState extends State<ClusterScreen> {
                             onPressed: isSubmitting ? null : () async {
                               if (pitchController.text.trim().isEmpty) return;
                               setSheetState(() => isSubmitting = true);
-                              final error = await _apiClient.runForCoordinator(pitchController.text.trim());
-                              if (mounted) {
+                              final error = await _apiClient.runForCoordinator(pitchController.text.trim());                              if (mounted) {
                                 Navigator.pop(context);
                                 if (error == null) {
                                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("You are on the ballot!"), backgroundColor: Colors.green));
