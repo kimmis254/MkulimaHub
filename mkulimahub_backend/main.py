@@ -606,11 +606,15 @@ def get_my_pledges(db: Session = Depends(get_db), current_user: models.User = De
             "status": p.status,
             "bulk_request": {
                 "id": req.id, "buyer_name": req.buyer_name, "crop_name": req.crop_name,
-                "buyer_phone": buyer_phone, # 🔥 Successfully maps the variable
+                "buyer_phone": buyer_phone, 
                 "target_weight_kg": req.target_weight_kg, "price_per_kg": req.price_per_kg,
                 "county": req.county, "ward": req.ward, "urgency": req.urgency, 
                 "squad_status": req.squad_status, "coordinator_id": req.coordinator_id, 
-                "squad_roster": squad_roster, "candidates": candidates_list, "has_voted": has_voted         
+                "squad_roster": squad_roster, "candidates": candidates_list, "has_voted": has_voted,
+                
+                # 🔥 THE FIX: Send the live payment data to Flutter so it unlocks!
+                "payment_status": getattr(req, 'payment_status', 'pending'),
+                "payment_method": getattr(req, 'payment_method', 'pay_now')
             }
         })
         
@@ -1638,6 +1642,9 @@ def update_squad_delivery_status(bulk_request_id: int, payload: SquadStatusUpdat
     if req.coordinator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the elected Squad Coordinator can update the transit status!")
 
+    # 🔥 THE FIX: Tell the Master Contract that the squad is moving!
+    req.squad_status = payload.status
+
     squad_pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == bulk_request_id).all()
     for pledge in squad_pledges:
         pledge.status = payload.status
@@ -1659,39 +1666,84 @@ def update_qa_status(pledge_id: int, payload: QAUpdate, db: Session = Depends(ge
     if contract.buyer_name != current_user.full_name:
         raise HTTPException(status_code=403, detail="Unauthorized.")
 
-    pledge.status = payload.status
-    if payload.notes: pledge.notes = payload.notes
+    # 🔥 THE SMART REJECTION ENGINE
+    if payload.status in ["disputed", "rejected", "returning"]:
+        farmer = db.query(models.User).filter(models.User.id == pledge.farmer_id).first()
+        buyer = db.query(models.User).filter(models.User.id == contract.buyer_id).first()
         
-    # 🔥 AUTO-COMPLETE CONTRACT LOGIC: If all farmers are paid, close the contract!
+        is_pickup = False
+        if contract.buyer_name.startswith("Hub Pool:"): is_pickup = True
+        elif contract.ward and "pickup" in contract.ward.lower(): is_pickup = True
+
+        actual_kg = pledge.actual_weight_kg if pledge.actual_weight_kg else pledge.pledged_weight_kg
+        total_value = actual_kg * contract.price_per_kg
+        refund_amount = total_value * 1.0 if getattr(contract, 'payment_status', '') == 'fully_paid_escrow' else total_value * 0.10
+
+        if farmer and (farmer.escrow_balance or 0.0) >= refund_amount:
+            farmer.escrow_balance -= refund_amount
+            
+            if is_pickup:
+                # Face-to-Face: Instant refund to Available
+                if buyer: buyer.available_balance = (buyer.available_balance or 0.0) + refund_amount
+                pledge.status = "rejected"
+            else:
+                # Doorstep: Move to Buyer Escrow for safety
+                if buyer: buyer.escrow_balance = (buyer.escrow_balance or 0.0) + refund_amount
+                pledge.status = "returning"
+        else:
+            pledge.status = "rejected" if is_pickup else "returning"
+            
+        if payload.notes: pledge.dispute_notes = payload.notes
+        
+    else:
+        # Standard Approval
+        pledge.status = payload.status
+        if payload.notes: pledge.notes = payload.notes
+
+    # Auto-Complete Contract Logic
     if payload.status == "paid":
         all_pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == contract.id).all()
-        # Check if EVERY pledge is either paid or rejected (no one left waiting)
-        all_done = all(p.status in ['paid', 'rejected'] for p in all_pledges)
-        if all_done:
+        if all(p.status in ['paid', 'rejected'] for p in all_pledges):
             contract.status = "completed"
             
     db.commit()
-    return {"message": "Funds Released and Escrow closed!" if payload.status == "paid" else "Status updated."}
+    return {"message": "QA Processed!"}
 
 @app.put("/api/buyer/orders/{order_id}/qa")
 def update_direct_order_qa(order_id: int, payload: QAUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     order = db.query(models.MarketOrder).filter(models.MarketOrder.id == order_id).first()
     if not order: raise HTTPException(status_code=404, detail="Order not found.")
     
-    # 🔥 INSTANT ESCROW RELEASE
-    if payload.status == "completed" and getattr(order, 'payment_method', 'pay_now') == 'pay_now':
+    # 🔥 THE SMART REJECTION ENGINE (DIRECT ORDERS)
+    if payload.status in ["disputed", "rejected", "returning"]:
+        listing = db.query(models.MarketListing).filter(models.MarketListing.id == order.listing_id).first()
+        farmer = db.query(models.User).filter(models.User.id == listing.farmer_id).first() if listing else None
+        buyer = db.query(models.User).filter(models.User.id == order.buyer_id).first()
+        
+        is_pickup = getattr(order, 'delivery_method', '').lower().find("pickup") != -1
+        refund_amount = order.total_price if getattr(order, 'payment_method', 'pay_now') == 'pay_now' else 0.0
+        
+        if refund_amount > 0 and farmer and (farmer.escrow_balance or 0.0) >= refund_amount:
+            farmer.escrow_balance -= refund_amount
+            if is_pickup:
+                if buyer: buyer.available_balance = (buyer.available_balance or 0.0) + refund_amount
+                order.status = "rejected"
+            else:
+                if buyer: buyer.escrow_balance = (buyer.escrow_balance or 0.0) + refund_amount
+                order.status = "returning"
+        else:
+            order.status = "rejected" if is_pickup else "returning"
+            
+        if payload.notes: order.dispute_notes = payload.notes
+
+    # INSTANT ESCROW RELEASE
+    elif payload.status == "completed" and getattr(order, 'payment_method', 'pay_now') == 'pay_now':
         listing = db.query(models.MarketListing).filter(models.MarketListing.id == order.listing_id).first()
         farmer = db.query(models.User).filter(models.User.id == listing.farmer_id).first()
-        
-        # Move funds from Farmer Escrow to Farmer Wallet
         if farmer and (farmer.escrow_balance or 0.0) >= order.total_price:
             farmer.escrow_balance -= order.total_price
             farmer.available_balance = (farmer.available_balance or 0.0) + order.total_price
-
-    order.status = payload.status
-    if payload.notes: getattr(order, 'dispute_notes', None)
-    if hasattr(order, 'dispute_notes'): order.dispute_notes = payload.notes
-    if hasattr(order, 'dispute_image'): order.dispute_image = payload.dispute_image
+        order.status = payload.status
 
     db.commit()
     return {"message": "QA Processed!"}
@@ -1715,8 +1767,7 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
         for p in pledges:
             if p.status != 'rejected': # Skip No-Shows!
                 expected_weight += p.pledged_weight_kg
-                # Use actual weight if weighed, otherwise assume pledged for now
-                final_kg = p.actual_weight_kg if p.actual_weight_kg else p.pledged_weight_kg
+                final_kg = p.actual_weight_kg if p.actual_weight_kg is not None else p.pledged_weight_kg
                 actual_weight += final_kg
                 
                 farmer = db.query(models.User).filter(models.User.id == p.farmer_id).first()
@@ -1724,7 +1775,9 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
                     roster.append({
                         "pledge_id": p.id,
                         "farmer_name": farmer.full_name,
-                        "status": p.status
+                        "status": p.status,
+                        "pledged_kg": p.pledged_weight_kg, # 🔥 ADDED: Fixes empty farmer list!
+                        "actual_kg": p.actual_weight_kg    # 🔥 ADDED: Fixes empty farmer list!
                     })
 
         progress_pct = expected_weight / contract.target_weight_kg if contract.target_weight_kg > 0 else 0
@@ -1733,15 +1786,19 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
         if c_status != "completed":
             c_status = "fulfilled" if expected_weight >= contract.target_weight_kg else "active"
 
+        # 🔥 SELF-HEALING: Force Corporate Contracts to be Pay On Delivery
+        is_hub_pool = contract.buyer_name and contract.buyer_name.startswith("Hub Pool:")
+        if not is_hub_pool and getattr(contract, 'payment_method', 'pay_now') != "pay_on_delivery":
+            contract.payment_method = "pay_on_delivery"
+            db.commit()
+
         coord = db.query(models.User).filter(models.User.id == contract.coordinator_id).first()
         coord_phone = coord.phone_number if coord else "Awaiting Election"
         pickup_loc = f"{coord.village}, {coord.ward}" if coord else "Hub Location Pending"
 
-        # 🔥 THE FIX: Send the Original and Adjusted Prices to the Buyer
         original_price = contract.target_weight_kg * contract.price_per_kg
         adjusted_price = actual_weight * contract.price_per_kg
 
-        # Add contract metrics
         total_capital_committed += adjusted_price if c_status in ['fulfilled', 'completed'] else original_price
         total_tonnage_requested += contract.target_weight_kg
 
@@ -1753,6 +1810,7 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
             "price_per_kg": contract.price_per_kg, 
             "progress_percentage": min(progress_pct, 1.0),
             "payment_status": getattr(contract, 'payment_status', 'pending'),
+            "payment_method": getattr(contract, 'payment_method', 'pay_on_delivery'), # 🔥 ADDED! Syncs UI
             "status": c_status, 
             "roster": roster,
             "coordinator_phone": coord_phone, 
@@ -1882,7 +1940,8 @@ def create_bulk_request(
         county=request.county, 
         urgency=request.urgency,
         status="Open",
-        squad_status="gathering" 
+        squad_status="gathering",
+        payment_method="pay_on_delivery" # 🔥 FORCED: All normal contracts are POD!
     )
     
     try:
@@ -1892,7 +1951,6 @@ def create_bulk_request(
         return new_request
     except Exception as e:
         db.rollback()
-        print(f"❌ DB Error creating bulk request: {e}")
         raise HTTPException(status_code=500, detail="Failed to broadcast contract to the network.")
 
 @app.get("/bulk-requests/")
@@ -2627,40 +2685,23 @@ def delete_market_listing(
 
 @app.put("/api/farmer/orders/{order_id}/status")
 def update_direct_order_status(order_id: int, payload: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    order = db.query(models.MarketOrder).join(models.MarketListing).filter(
-        models.MarketOrder.id == order_id
-    ).first()
-    
+    order = db.query(models.MarketOrder).filter(models.MarketOrder.id == order_id).first()
     if not order: raise HTTPException(status_code=404, detail="Order not found")
-        
-    is_farmer = order.listing.farmer_id == current_user.id if order.listing else False
-    is_buyer = order.buyer_id == current_user.id
-    if not (is_farmer or is_buyer):
-        raise HTTPException(status_code=403, detail="You are not authorized to update this order.")
     
     new_status = payload.get("status")
 
-    # ==========================================
-    # 🔥 THE REFUND ENGINE (For Accepted Returns)
-    # ==========================================
     if new_status == "refunded" and getattr(order, 'payment_method', 'pay_now') == "pay_now" and order.status != "refunded":
-        farmer = db.query(models.User).filter(models.User.id == order.listing.farmer_id).first()
         buyer = db.query(models.User).filter(models.User.id == order.buyer_id).first()
-        
-        current_escrow = farmer.escrow_balance or 0.0
-        if farmer and current_escrow >= order.total_price:
-            # 1. Deduct from Farmer Escrow
-            farmer.escrow_balance -= order.total_price
-            # 2. Refund Buyer Wallet
-            if buyer:
-                buyer.available_balance = (buyer.available_balance or 0.0) + order.total_price
+        # 🔥 Release from Buyer's Escrow to Available!
+        if buyer and (buyer.escrow_balance or 0.0) >= order.total_price:
+            buyer.escrow_balance -= order.total_price
+            buyer.available_balance = (buyer.available_balance or 0.0) + order.total_price
     
     if payload.get("dispute_notes"):
         order.dispute_notes = payload.get("dispute_notes")
         
     order.status = new_status
     db.commit()
-    
     return {"message": f"Order status successfully updated to {order.status}"}
 
 @app.post("/api/admin/fix-orphans")
@@ -2943,6 +2984,11 @@ async def mpesa_stk_webhook(request: Request):
         if pool:
             if result_code == 0:
                 if pool.payment_status == 'pending':
+                    # 🔥 HEALING LOGIC IN WEBHOOK
+                    is_hub_pool = pool.buyer_name and pool.buyer_name.startswith("Hub Pool:")
+                    if not is_hub_pool and getattr(pool, 'payment_method', 'pay_now') != "pay_on_delivery":
+                        pool.payment_method = "pay_on_delivery"
+
                     payment_method = getattr(pool, 'payment_method', 'pay_now')
                     
                     if payment_method == 'pay_now':
@@ -3036,9 +3082,15 @@ def pay_contract_deposit(contract_id: int, db: Session = Depends(get_db), curren
     contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == contract_id).first()
     if not contract: raise HTTPException(status_code=404, detail="Contract not found")
         
+    # 🔥 HEALING: Force standard contracts to POD just in case!
+    is_hub_pool = contract.buyer_name and contract.buyer_name.startswith("Hub Pool:")
+    if not is_hub_pool and getattr(contract, 'payment_method', 'pay_now') != "pay_on_delivery":
+        contract.payment_method = "pay_on_delivery"
+        db.commit()
+
     total_price = contract.target_weight_kg * contract.price_per_kg
     
-    # 🔥 THE FIX: Charge 100% if Pay Now, 10% if POD
+    # 🔥 Charge 100% if Pay Now, 10% if POD
     payment_method = getattr(contract, 'payment_method', 'pay_now')
     deposit_amount = total_price if payment_method == 'pay_now' else (total_price * 0.10)
     
@@ -3080,26 +3132,19 @@ def pay_pledge_pod(pledge_id: int, db: Session = Depends(get_db), current_user: 
 # 🔥 THE ESCROW REFUND ENGINE (For Rejected Farmers)
 @app.put("/api/qa/pledges/{pledge_id}/refund")
 def refund_rejected_pledge(pledge_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Called when a Farmer accepts a return, refunding the escrow deposit back to the Buyer."""
+    """Called when a Farmer accepts a return. Moves funds from Buyer Escrow -> Buyer Available."""
     pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
     contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == pledge.bulk_request_id).first()
-    farmer = db.query(models.User).filter(models.User.id == pledge.farmer_id).first()
     buyer = db.query(models.User).filter(models.User.id == contract.buyer_id).first()
     
-    # Calculate the total value of this specific drop-off
     actual_kg = pledge.actual_weight_kg if pledge.actual_weight_kg else pledge.pledged_weight_kg
     total_value = actual_kg * contract.price_per_kg
+    deposit_held = total_value * 1.0 if getattr(contract, 'payment_status', '') == 'fully_paid_escrow' else total_value * 0.10
     
-    # 🔥 THE FIX: Check if we are refunding a 10% deposit or a 100% upfront payment
-    if getattr(contract, 'payment_status', '') == 'fully_paid_escrow':
-        deposit_held = total_value * 1.0 # 100% Refund
-    else:
-        deposit_held = total_value * 0.10 # 10% Refund
-    
-    if farmer and (farmer.escrow_balance or 0.0) >= deposit_held:
-        farmer.escrow_balance -= deposit_held
-        if buyer:
-            buyer.available_balance = (buyer.available_balance or 0.0) + deposit_held
+    # 🔥 Release from Buyer's Escrow to Available!
+    if buyer and (buyer.escrow_balance or 0.0) >= deposit_held:
+        buyer.escrow_balance -= deposit_held
+        buyer.available_balance = (buyer.available_balance or 0.0) + deposit_held
             
     pledge.status = "refunded"
     db.commit()
@@ -3179,3 +3224,14 @@ def release_contract_escrow(contract_id: int, db: Session = Depends(get_db), cur
     contract.status = "completed"
     db.commit()
     return {"message": "Escrow released successfully!"}
+
+@app.get("/api/buyer/wallet")
+def get_buyer_wallet(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Returns the live escrow and available balances for the Buyer."""
+    available = current_user.available_balance or 0.0
+    escrow = current_user.escrow_balance or 0.0
+    return {
+        "available_balance": available,
+        "escrow_balance": escrow,
+        "total_balance": available + escrow
+    }

@@ -1508,6 +1508,35 @@ class ApiClient {
       return json.decode(response.body)['detail'] ?? "Failed to release escrow.";
     } catch (e) { return "Network error."; }
   }
+  Future<String?> updateIndividualPledgeStatus(int pledgeId, String status) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/pledges/$pledgeId/status'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${prefs.getString('auth_token')}'
+        },
+        body: json.encode({'status': status}),
+      );
+      if (response.statusCode == 200) return null;
+      return json.decode(response.body)['detail'] ?? "Failed to update status.";
+    } catch (e) {
+      return "Network error.";
+    }
+  }
+
+  Future<Map<String, dynamic>?> getBuyerWallet() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/buyer/wallet'),
+        headers: {'Authorization': 'Bearer ${prefs.getString('auth_token')}'},
+      );
+      if (response.statusCode == 200) return json.decode(response.body);
+    } catch (e) { return null; }
+    return null;
+  }
 
 
 }
