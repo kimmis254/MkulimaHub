@@ -11,6 +11,7 @@ class ApiClient {
   String get baseUrl =>
       dotenv.env['API_BASE_URL'] ?? 'http://192.168.100.4:8000';
 
+
   Future<String?> _getToken() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(
@@ -78,29 +79,68 @@ class ApiClient {
     String? overrideRole,
   }) async {
     try {
+      print("=================================");
+      print("STARTING GOOGLE LOGIN");
+      print("BASE URL: $baseUrl");
+      print("REQUEST URL: $baseUrl/api/auth/google");
+
+      final requestBody = {
+        'id_token': idToken,
+        if (overrideRole != null) 'role': overrideRole,
+      };
+
+      print("REQUEST BODY: ${jsonEncode(requestBody)}");
+
       final response = await http.post(
         Uri.parse('$baseUrl/api/auth/google'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'id_token': idToken,
-          if (overrideRole != null) 'role': overrideRole,
-          // Pass role to backend
-        }),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(requestBody),
       );
+
+      print("STATUS CODE: ${response.statusCode}");
+      print("RESPONSE BODY: ${response.body}");
+      print("=================================");
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        if (data['status'] == 'needs_phone') return 'needs_phone';
+
+        print("DECODED RESPONSE: $data");
+
+        if (data['status'] == 'needs_phone') {
+          print("USER NEEDS PHONE");
+          return 'needs_phone';
+        }
 
         final token = data['access_token'];
+
         if (token != null) {
+          print("TOKEN RECEIVED");
+
           await _saveToken(token);
-          if (data['needs_profile'] == true) return 'needs_profile';
+
+          print("TOKEN SAVED");
+
+          if (data['needs_profile'] == true) {
+            print("USER NEEDS PROFILE");
+            return 'needs_profile';
+          }
+
+          print("LOGIN SUCCESS");
           return 'success';
         }
       }
-      return jsonDecode(response.body)['detail'] ?? 'Google login failed';
+
+      final error =
+          jsonDecode(response.body)['detail'] ?? 'Google login failed';
+
+      print("LOGIN FAILED: $error");
+
+      return error;
+
     } catch (e) {
+      print("GOOGLE LOGIN ERROR: $e");
       return 'Connection error. Please check your internet.';
     }
   }
@@ -1536,6 +1576,19 @@ class ApiClient {
       if (response.statusCode == 200) return json.decode(response.body);
     } catch (e) { return null; }
     return null;
+  }
+
+  Future<String?> withdrawFunds(double amount) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/wallet/withdraw'),
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ${prefs.getString('auth_token')}'},
+        body: json.encode({'amount': amount}),
+      );
+      if (response.statusCode == 200) return null;
+      return json.decode(response.body)['detail'] ?? "Withdrawal failed.";
+    } catch (e) { return "Network error."; }
   }
 
 

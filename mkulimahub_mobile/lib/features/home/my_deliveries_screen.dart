@@ -90,6 +90,24 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
                       const SizedBox(height: 4),
                       Row(children: [Icon(LucideIcons.user, size: 14, color: Colors.grey.shade500), const SizedBox(width: 6), Text("Buyer: ${order['buyer']}", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13))]),
 
+                      // 🔥 THE FIX: SHOW DIRECT SALE BUYER DETAILS
+                      if (isDirectSale) ...[
+                        const SizedBox(height: 15),
+                        Container(
+                          padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.blue.shade100)),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(children: [Icon(order['delivery_method'].toString().contains('Pickup') ? LucideIcons.store : LucideIcons.mapPin, size: 14, color: Colors.blue.shade800), const SizedBox(width: 8), Text(order['delivery_method']?.toString().contains('Pickup') == true ? "Pickup by Buyer" : "Delivery Destination", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue.shade900))]),
+                              const SizedBox(height: 4),
+                              Text(order['buyer_address'] ?? 'Address Pending', style: GoogleFonts.poppins(fontSize: 11, color: Colors.blue.shade800)),
+                              const SizedBox(height: 8),
+                              Row(children: [Icon(LucideIcons.phone, size: 14, color: Colors.blue.shade800), const SizedBox(width: 8), Expanded(child: Text(order['buyer_phone'] ?? 'No Phone', style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade900)))]),
+                            ],
+                          ),
+                        ),
+                      ],
+
                       if (order['notes'] != null && order['notes'].toString().isNotEmpty) ...[
                         const SizedBox(height: 15),
                         Container(
@@ -123,7 +141,7 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
                                 if (isDirectSale) {
                                   error = await _apiClient.updateDirectOrderStatus(order['order_id'], 'refunded');
                                 } else {
-                                  error = await _apiClient.refundPledge(order['bulk_request_id']); // Refund Escrow
+                                  error = await _apiClient.refundPledge(order['bulk_request_id']);
                                 }
                                 if (error == null) _fetchMyDeliveries();
                               },
@@ -134,14 +152,49 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
                             Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12)), child: Text("Order Paid ✅", style: GoogleFonts.poppins(color: Colors.green.shade800, fontWeight: FontWeight.bold, fontSize: 12)))
                           else if (status == 'refunded' || status == 'rejected')
                               Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(12)), child: Text("Cancelled", style: GoogleFonts.poppins(color: Colors.grey.shade800, fontWeight: FontWeight.bold, fontSize: 12)))
-                            else if (!isDirectSale)
-                                ElevatedButton(
-                                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: order['bulk_request_id']))),
-                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.teal.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), elevation: 0),
-                                  child: Text("View Squad", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+
+                            // 🔥 THE FIX: DISPATCH BUTTONS FOR DIRECT SALES
+                            else if (isDirectSale && (status == 'pending' || status == 'processing'))
+                                ElevatedButton.icon(
+                                  onPressed: () async {
+                                    setState(() => _isLoading = true);
+                                    final error = await _apiClient.updateDirectOrderStatus(order['order_id'], 'in_transit');
+                                    if (error == null) _fetchMyDeliveries();
+                                    else {
+                                      setState(() => _isLoading = false);
+                                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                                    }
+                                  },
+                                  icon: const Icon(LucideIcons.truck, size: 14, color: Colors.white),
+                                  label: Text("Dispatch", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white)),
+                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), elevation: 0),
                                 )
-                              else
-                                Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(12)), child: Text(status.toUpperCase(), style: GoogleFonts.poppins(color: Colors.blue.shade800, fontWeight: FontWeight.bold, fontSize: 11)))
+                              else if (isDirectSale && status == 'in_transit')
+                                  ElevatedButton.icon(
+                                    onPressed: () async {
+                                      setState(() => _isLoading = true);
+                                      final error = await _apiClient.updateDirectOrderStatus(order['order_id'], 'delivered');
+                                      if (error == null) _fetchMyDeliveries();
+                                      else {
+                                        setState(() => _isLoading = false);
+                                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                                      }
+                                    },
+                                    icon: const Icon(LucideIcons.mapPin, size: 14, color: Colors.white),
+                                    label: Text("Arrived", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white)),
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), elevation: 0),
+                                  )
+                                else if (isDirectSale && status == 'delivered')
+                                    Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)), child: Text("Awaiting QA", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 11)))
+
+                                  else if (!isDirectSale)
+                                      ElevatedButton(
+                                        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DeliverySquadsScreen(targetSquadId: order['bulk_request_id']))),
+                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.teal.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), elevation: 0),
+                                        child: Text("View Squad", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                                      )
+                                    else
+                                      Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(12)), child: Text(status.toUpperCase(), style: GoogleFonts.poppins(color: Colors.blue.shade800, fontWeight: FontWeight.bold, fontSize: 11)))
                         ],
                       )
                     ],

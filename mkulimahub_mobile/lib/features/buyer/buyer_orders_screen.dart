@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:mkulimahub_mobile/core/api_client.dart';
+import 'package:mkulimahub_mobile/features/home/order_tracking_map.dart'; // 🔥 IMPORT THE MAP!
 
 class BuyerOrdersScreen extends StatefulWidget {
   const BuyerOrdersScreen({super.key});
@@ -41,7 +42,6 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
         final List<dynamic> directOrders = data['direct_orders'] ?? [];
 
         setState(() {
-          // Route gathering vs paid contracts
           _gatheringOrders = [
             ...contracts.where((c) => c['status'] == 'Open' ||
                 (c['status'] == 'fulfilled' && c['payment_status'] != 'deposit_paid' && c['payment_status'] != 'fully_paid_escrow' && c['payment_status'] != 'fully_paid')),
@@ -49,8 +49,17 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
           ];
 
           _transitOrders = [
-            ...contracts.where((c) =>
-            (c['payment_status'] == 'deposit_paid' || c['payment_status'] == 'fully_paid_escrow') && c['status'] != 'completed'),
+            ...contracts.where((c) {
+              if (c['status'] == 'completed') return false;
+              if (c['payment_status'] != 'deposit_paid' && c['payment_status'] != 'fully_paid_escrow') return false;
+
+              List roster = c['roster'] ?? [];
+              if (roster.isNotEmpty) {
+                bool allDead = roster.every((p) => p['status'] == 'rejected' || p['status'] == 'refunded');
+                if (allDead) return false;
+              }
+              return true;
+            }),
             ...directOrders.where((o) =>
             o['status'] == 'in_transit' || o['status'] == 'delivered' || o['status'] == 'disputed' || o['status'] == 'returning' ||
                 (o['status'] == 'pending' && o['payment_method'] == 'pay_on_delivery') ||
@@ -59,7 +68,16 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
           ];
 
           _historyOrders = [
-            ...contracts.where((c) => c['status'] == 'completed'),
+            ...contracts.where((c) {
+              if (c['status'] == 'completed') return true;
+
+              List roster = c['roster'] ?? [];
+              if (roster.isNotEmpty) {
+                bool allDead = roster.every((p) => p['status'] == 'rejected' || p['status'] == 'refunded');
+                if (allDead) return true;
+              }
+              return false;
+            }),
             ...directOrders.where((o) => o['status'] == 'completed' || o['status'] == 'rejected' || o['status'] == 'refunded').map((o) => { ...o as Map<String, dynamic>, 'is_direct': true })
           ];
 
@@ -228,7 +246,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text("Total Price", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)),
-                      Text("KES ${order['total_price']}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14))
+                      Text("KES ${(order['total_price'] as num? ?? 0).toStringAsFixed(0)}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14))
                     ]
                 ),
 
@@ -332,7 +350,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
               children: [
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text("Total Price", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)),
-                  Text("KES ${order['total_price']}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14))
+                  Text("KES ${(order['total_price'] as num? ?? 0).toStringAsFixed(0)}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14))
                 ]),
 
                 if (isDisputed)
@@ -341,43 +359,48 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                 else if (isReturning)
                   Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(12)), child: Text("Send goods back to Farmer", style: GoogleFonts.poppins(color: Colors.red.shade800, fontSize: 11, fontWeight: FontWeight.bold)))
 
-                // 1. BUYER PAYS VIA M-PESA (POD for Delivery OR Pickup)
-                else if (!isPayNow && ((deliveryMethod == "Pickup" && order['status'] == 'pending') || (deliveryMethod == "Delivery" && (order['status'] == 'delivered' || order['status'] == 'in_transit'))))
+                // 🔥 THE MAP FIX FOR DIRECT ORDERS
+                else if (order['status'] == 'in_transit')
                     ElevatedButton.icon(
-                      onPressed: () async {
-                        final error = await _apiClient.triggerMpesaPayment(order['order_id']);
-                        if (error == null) {
-                          showDialog(
-                              context: context, barrierDismissible: false,
-                              builder: (ctx) => AlertDialog(
-                                content: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const CircularProgressIndicator(color: Colors.green), const SizedBox(height: 20),
-                                    Text("Check Your Phone!", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green.shade800)),
-                                    SizedBox(width: double.infinity, child: ElevatedButton(onPressed: () { Navigator.pop(ctx); fetchLiveOrders(); }, style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700), child: const Text("I entered my PIN", style: TextStyle(color: Colors.white))))
-                                  ],
-                                ),
-                              )
-                          );
-                        }
-                      },
-                      icon: const Icon(LucideIcons.smartphone, size: 14, color: Colors.white),
-                      label: Text("Inspect & Pay", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderTrackingMap(entityName: "Direct Order #${order['order_id'] ?? ''}", status: "In Transit"))),
+                      icon: const Icon(LucideIcons.map, size: 14, color: Colors.blue),
+                      label: Text("Track Delivery", style: GoogleFonts.poppins(color: Colors.blue.shade800, fontSize: 12, fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade50, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                     )
 
-                  // 2. BUYER RELEASES ESCROW (Pay Now for Delivery OR Pickup)
-                  else if (isPayNow && ((deliveryMethod == "Pickup" && order['status'] == 'processing') || (deliveryMethod == "Delivery" && (order['status'] == 'delivered' || order['status'] == 'in_transit'))))
-                      ElevatedButton(
-                        onPressed: () => _showDirectOrderQA(order),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
-                        child: Text("Inspect & Accept Goods", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  // INSPECT STAGES (Only available when order is DELIVERED or PENDING PICKUP)
+                  else if (!isPayNow && ((deliveryMethod == "Pickup" && order['status'] == 'pending') || (deliveryMethod == "Delivery" && order['status'] == 'delivered')))
+                      ElevatedButton.icon(
+                        onPressed: () async {
+                          final error = await _apiClient.triggerMpesaPayment(order['order_id']);
+                          if (error == null) {
+                            showDialog(
+                                context: context, barrierDismissible: false,
+                                builder: (ctx) => AlertDialog(
+                                  content: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const CircularProgressIndicator(color: Colors.green), const SizedBox(height: 20),
+                                      Text("Check Your Phone!", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green.shade800)),
+                                      SizedBox(width: double.infinity, child: ElevatedButton(onPressed: () { Navigator.pop(ctx); fetchLiveOrders(); }, style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700), child: const Text("I entered my PIN", style: TextStyle(color: Colors.white))))
+                                    ],
+                                  ),
+                                )
+                            );
+                          }
+                        },
+                        icon: const Icon(LucideIcons.smartphone, size: 14, color: Colors.white),
+                        label: Text("Inspect & Pay", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
                       )
-
-                    // 3. WAITING FOR FARMER DISPATCH (Doorstep Delivery only)
-                    else if (deliveryMethod == "Delivery" && (order['status'] == 'pending' || order['status'] == 'processing'))
-                        Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)), child: Text("Waiting for Farmer Dispatch", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontSize: 11, fontWeight: FontWeight.bold)))
+                    else if (isPayNow && ((deliveryMethod == "Pickup" && order['status'] == 'processing') || (deliveryMethod == "Delivery" && order['status'] == 'delivered')))
+                        ElevatedButton(
+                          onPressed: () => _showDirectOrderQA(order),
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
+                          child: Text("Inspect & Accept Goods", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                        )
+                      else if (deliveryMethod == "Delivery" && (order['status'] == 'pending' || order['status'] == 'processing'))
+                          Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)), child: Text("Waiting for Farmer Dispatch", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontSize: 11, fontWeight: FontWeight.bold)))
               ],
             )
           ],
@@ -524,7 +547,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(10)), child: Row(children: [Icon(LucideIcons.radioReceiver, size: 14, color: Colors.orange.shade700), const SizedBox(width: 6), Text("Contract Broadcasting", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontSize: 11, fontWeight: FontWeight.bold))])),
-                Text("KES ${order['price_per_kg']}/kg", style: GoogleFonts.poppins(color: Colors.teal.shade700, fontWeight: FontWeight.bold, fontSize: 14)),
+                Text("KES ${(order['price_per_kg'] as num? ?? 0).toStringAsFixed(0)}/kg", style: GoogleFonts.poppins(color: Colors.teal.shade700, fontWeight: FontWeight.bold, fontSize: 14)),
               ],
             ),
             const SizedBox(height: 15),
@@ -637,15 +660,29 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
               children: [
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text("Total Value", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)),
-                  Text("KES ${order['adjusted_price'] ?? order['original_price']}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14)),
+                  Text("KES ${((order['adjusted_price'] ?? order['original_price']) as num? ?? 0).toStringAsFixed(0)}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14)),
                 ]),
 
-                // Pickup vs Delivery buttons
-                ElevatedButton(
-                  onPressed: () => _showContractQASheet(order),
-                  style: ElevatedButton.styleFrom(backgroundColor: needsInspection ? Colors.orange.shade600 : Colors.black, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
-                  child: Text(needsInspection ? (isPickup ? "Arrived at Hub (Inspect)" : "Inspect Goods") : (anyInTransit ? "In Transit (View Log)" : "Waiting for Dispatch"), style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                ),
+                // 🔥 THE MAP FIX FOR BULK CONTRACTS
+                Row(
+                  children: [
+                    if (anyInTransit && !needsInspection)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 10),
+                        child: ElevatedButton.icon(
+                          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderTrackingMap(entityName: "Contract #BR-${order['contract_id']}", status: "In Transit"))),
+                          icon: const Icon(LucideIcons.map, size: 14, color: Colors.blue),
+                          label: Text("Map", style: GoogleFonts.poppins(color: Colors.blue.shade800, fontWeight: FontWeight.bold, fontSize: 12)),
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade50, elevation: 0, padding: const EdgeInsets.symmetric(horizontal: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        ),
+                      ),
+                    ElevatedButton(
+                      onPressed: () => _showContractQASheet(order),
+                      style: ElevatedButton.styleFrom(backgroundColor: needsInspection ? Colors.orange.shade600 : Colors.black, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
+                      child: Text(needsInspection ? (isPickup ? "Arrived at Hub (Inspect)" : "Inspect Goods") : (anyInTransit ? "View Log" : "Waiting for Dispatch"), style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                )
               ],
             )
           ],
@@ -681,7 +718,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
               children: [
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text("Total Capital Released", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)),
-                  Text("KES ${order['adjusted_price'] ?? (order['target_weight_kg'] * order['price_per_kg'])}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14))
+                  Text("KES ${((order['adjusted_price'] ?? (order['target_weight_kg'] * order['price_per_kg'])) as num? ?? 0).toStringAsFixed(0)}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14))
                 ]),
                 ElevatedButton(
                   onPressed: () => _showContractQASheet(order),
@@ -725,7 +762,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                               final memberStatus = member['status'] ?? '';
                               final isDelivered = memberStatus == 'delivered' || memberStatus == 'pending_audit' || memberStatus == 'received';
                               final isPassed = memberStatus == 'paid' || memberStatus == 'completed';
-                              final isFailed = memberStatus == 'rejected' || memberStatus == 'disputed' || memberStatus == 'returning';
+                              final isFailed = memberStatus == 'rejected' || memberStatus == 'disputed' || memberStatus == 'returning' || memberStatus == 'refunded';
 
                               return Container(
                                 margin: const EdgeInsets.only(bottom: 15), padding: const EdgeInsets.all(16),
@@ -741,8 +778,8 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                                           child: Column(
                                             crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
-                                              Text("${member['actual_kg'] ?? member['pledged_kg'] ?? 0} KG from ${member['farmer_name']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, decoration: isFailed ? TextDecoration.lineThrough : null)),
-                                              Text(isFailed ? "Status: Disputed/Rejected" : "Status: $memberStatus", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
+                                              Text("${((member['actual_kg'] ?? member['pledged_kg'] ?? 0) as num).toStringAsFixed(1)} KG from ${member['farmer_name']}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, decoration: isFailed ? TextDecoration.lineThrough : null)),
+                                              Text(isFailed ? "Status: Cancelled / Rejected" : "Status: $memberStatus", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600)),
                                             ],
                                           ),
                                         ),
@@ -776,7 +813,6 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                         ),
                       ),
 
-                      // THE MASTER BUTTON FIX (Pay Now vs POD)
                       if (hasPayableGoods)
                         Padding(
                           padding: const EdgeInsets.only(top: 15),

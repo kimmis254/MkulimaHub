@@ -198,7 +198,7 @@ class GoogleAuthRequest(BaseModel):
 def google_login(request: Request, payload: GoogleAuthRequest, db: Session = Depends(get_db)):
     try:
         # Verify the token cryptographically with Google's servers
-        idinfo = id_token.verify_oauth2_token(payload.id_token, google_requests.Request(), GOOGLE_CLIENT_ID,clock_skew_in_seconds=10)
+        idinfo = id_token.verify_oauth2_token(payload.id_token, google_requests.Request(), GOOGLE_CLIENT_ID,clock_skew_in_seconds=30)
         verified_email = idinfo['email']
         
     except ValueError as e:
@@ -3235,3 +3235,24 @@ def get_buyer_wallet(db: Session = Depends(get_db), current_user: models.User = 
         "escrow_balance": escrow,
         "total_balance": available + escrow
     }
+
+class WithdrawPayload(BaseModel):
+    amount: float
+
+@app.post("/api/wallet/withdraw")
+def withdraw_funds(payload: WithdrawPayload, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Deducts funds from available balance and simulates sending to M-Pesa."""
+    if payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid amount.")
+        
+    if (current_user.available_balance or 0.0) < payload.amount:
+        raise HTTPException(status_code=400, detail="Insufficient available balance.")
+        
+    # Deduct the balance
+    current_user.available_balance -= payload.amount
+    
+    # NOTE: Here is where you would call Daraja B2C API to actually send the money
+    # mpesa.trigger_b2c_payout(phone=current_user.phone_number, amount=payload.amount)
+    
+    db.commit()
+    return {"message": f"Successfully withdrew KES {payload.amount}. Funds are on the way to your M-Pesa!"}

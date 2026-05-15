@@ -42,6 +42,101 @@ class _BuyerWalletScreenState extends State<BuyerWalletScreen> {
     }
   }
 
+  // 🔥 THE NEW WITHDRAWAL MODAL
+  void _showWithdrawModal() {
+    final TextEditingController amountController = TextEditingController();
+    bool isSubmitting = false;
+
+    showModalBottomSheet(
+        context: context, isScrollControlled: true, backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
+        builder: (context) {
+          return StatefulBuilder(
+              builder: (context, setSheetState) {
+                return Padding(
+                  padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 24, right: 24, top: 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
+                      const SizedBox(height: 20),
+                      Text("Withdraw to M-Pesa", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 5),
+                      Text("Available to withdraw: KES ${_availableBalance.toStringAsFixed(0)}", style: GoogleFonts.poppins(fontSize: 13, color: Colors.teal.shade700, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 20),
+
+                      TextField(
+                        controller: amountController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: InputDecoration(
+                            labelText: "Amount (KES)",
+                            prefixIcon: const Icon(LucideIcons.banknote),
+                            filled: true, fillColor: Colors.grey.shade50,
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      SizedBox(
+                        width: double.infinity, height: 50,
+                        child: ElevatedButton(
+                          onPressed: isSubmitting ? null : () async {
+                            final amount = double.tryParse(amountController.text);
+                            if (amount == null || amount <= 0) {
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please enter a valid amount")));
+                              return;
+                            }
+                            if (amount > _availableBalance) {
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Insufficient available balance!"), backgroundColor: Colors.red));
+                              return;
+                            }
+
+                            setSheetState(() => isSubmitting = true);
+                            final error = await _apiClient.withdrawFunds(amount);
+
+                            if (mounted) {
+                              Navigator.pop(context);
+                              if (error == null) {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("KES ${amount.toStringAsFixed(0)} withdrawn successfully!"), backgroundColor: Colors.green));
+                                _fetchWallet();
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                              }
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.teal.shade700, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                          child: isSubmitting
+                              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                              : Text("Confirm Withdrawal", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+                  ),
+                );
+              }
+          );
+        }
+    );
+  }
+
+  Widget _buildActionBtn(IconData icon, String label, Color color, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle, border: Border.all(color: color.withOpacity(0.2))),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(height: 8),
+          Text(label, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black87)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -132,6 +227,26 @@ class _BuyerWalletScreenState extends State<BuyerWalletScreen> {
                 ),
               ),
             ),
+
+            // 🔥 ACTION BUTTONS ADDED HERE
+            if (!_isLoading)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 25, bottom: 10),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildActionBtn(LucideIcons.arrowDownToLine, "Withdraw", Colors.teal.shade700, _showWithdrawModal),
+                      _buildActionBtn(LucideIcons.arrowUpFromLine, "Top Up", Colors.blue.shade700, () {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Top up is handled via checkout pages.")));
+                      }),
+                      _buildActionBtn(LucideIcons.history, "History", Colors.purple.shade700, () {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Transaction history coming soon.")));
+                      }),
+                    ],
+                  ),
+                ),
+              ),
 
             SliverPadding(
                 padding: const EdgeInsets.all(20),
