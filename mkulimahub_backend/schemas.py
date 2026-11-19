@@ -107,6 +107,7 @@ class BulkRequestBase(BaseModel):
     county: str
     ward: Optional[str] = None
     urgency: Optional[str] = "High"
+    deadline_hours: Optional[int] = 24
 
 class BulkRequestCreate(BulkRequestBase):
     pass
@@ -122,6 +123,7 @@ class BulkRequestRead(BulkRequestBase):
     squad_status: str
     
     created_at: datetime
+    deadline_time: Optional[datetime] = None
     pledges: List[PledgeRead] = [] 
 
     class Config:

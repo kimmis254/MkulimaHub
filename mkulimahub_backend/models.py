@@ -92,6 +92,7 @@ class BulkRequest(Base):
     status = Column(String, default="open", index=True)
     payment_status = Column(String, default="pending")
     checkout_request_id = Column(String, nullable=True)
+    deadline_time = Column(DateTime, nullable=True)
 
 class Pledge(Base):
     __tablename__ = "pledges"

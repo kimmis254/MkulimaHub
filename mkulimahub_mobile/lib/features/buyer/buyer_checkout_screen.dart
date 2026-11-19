@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:mkulimahub_mobile/core/api_client.dart';
+import 'package:mkulimahub_mobile/core/api/api_client.dart';
 import 'package:mkulimahub_mobile/features/buyer/buyer_cart_screen.dart';
+import 'package:mkulimahub_mobile/features/buyer/buyer_dashboard.dart';
+
 
 class BuyerCheckoutScreen extends StatefulWidget {
   final List<Map<String, dynamic>> cartItems;
@@ -49,7 +51,33 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
   // 🔥 THE NEW FINANCIAL MATH ENGINE
   double get _subtotal => widget.cartItems.fold(0, (sum, item) => sum + (item['weightKg'] * item['pricePerKg']));
   double get _serviceFee => _subtotal * 0.02;
-  double get _deliveryFee => _deliveryMethod == "doorstep" ? 1500.0 : 0.0;
+
+  // 🔥 DYNAMIC ZONAL DELIVERY PRICING
+  double get _deliveryFee {
+    if (_deliveryMethod != "doorstep" || _selectedCounty == null) return 0.0;
+
+    double totalDelivery = 0.0;
+    List<String> farCounties = ['Mandera', 'Wajir', 'Garissa', 'Turkana', 'Marsabit', 'Samburu', 'Isiolo', 'Lamu', 'Tana River'];
+
+    for (var item in widget.cartItems) {
+      String farmerCounty = item['location']?.toString().trim() ?? '';
+      String buyerCounty = _selectedCounty!.trim();
+
+      double fee = 1500.0; // Default
+
+      if (farmerCounty.toLowerCase() == buyerCounty.toLowerCase()) {
+        fee = 500.0; // Tier 1: Same County
+      } else if (farCounties.any((c) => c.toLowerCase() == buyerCounty.toLowerCase()) ||
+          farCounties.any((c) => c.toLowerCase() == farmerCounty.toLowerCase())) {
+        fee = 3500.0; // Tier 3: Extreme distances
+      } else {
+        fee = 1500.0; // Tier 2: Standard cross-county
+      }
+      totalDelivery += fee; // Adds fee per farmer dispatched
+    }
+    return totalDelivery;
+  }
+
   double get _taxAmount => (_serviceFee + _deliveryFee) * 0.16; // KRA 16% VAT on Services
   double get _total => (_subtotal + _serviceFee + _deliveryFee + _taxAmount) - _discountAmount;
 
@@ -95,18 +123,20 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
     String customAddress = "${_selectedCounty ?? ''}, ${_selectedSubCounty ?? ''}, ${_selectedWard ?? ''} - ${_addressController.text.trim()}";
 
     bool success = true;
+    bool hasPool = false; // 🔥 Added to track if order contains a Hub Pool
+
     for (var item in widget.cartItems) {
       if (item['type'] == 'individual') {
         String methodString = _deliveryMethod == "doorstep" ? "Delivery|$customAddress" : "Pickup|Buyer will pickup from your location.";
         String safeFormat = item['format'] == 'weight' ? 'KG' : item['format'];
 
-        // 🔥 Pass _paymentMode to the backend!
         final error = await _apiClient.createMarketOrder(item['id'], safeFormat, item['qty'], methodString, _paymentMode);
         if (error != null) success = false;
       } else if (item['type'] == 'pool') {
+        hasPool = true; // 🔥 Flags that the cart contains a Hub Pool
         String finalCounty = _deliveryMethod == "doorstep" ? (_selectedCounty ?? "Kenya") : "Pickup Location";
         String finalWard = _deliveryMethod == "doorstep" ? customAddress : "Buyer will arrange pickup from the Hub.";
-        final error = await _apiClient.purchaseHubPool(item['id'], finalCounty, finalWard);
+        final error = await _apiClient.purchaseHubPool(item['id'], finalCounty, finalWard, _paymentMode);
         if (error != null) success = false;
       }
     }
@@ -116,6 +146,17 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
     if (mounted) {
       if (success) {
         CartManager.items.clear();
+
+        // 🔥 THE REROUTING MATH ENGINE
+        // 0 = Gathering Tab, 1 = Deliveries Tab
+        int targetSubTab = 0;
+        if (!hasPool && _paymentMode == "pay_on_delivery") {
+          // Solo Orders + Pay On Delivery skip Escrow and go straight to Deliveries!
+          targetSubTab = 1;
+        } else {
+          // Hub Pools (need 10% or 100%) AND Solo Pay Now (needs 100%) stay in Gathering!
+          targetSubTab = 0;
+        }
 
         showDialog(
             context: context,
@@ -129,9 +170,9 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                   Text("Invoices Generated!", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
                   const SizedBox(height: 10),
                   Text(
-                    _paymentMode == "pay_now"
-                        ? "Your orders have been routed. Please proceed to the Orders Dashboard to initiate your secure M-Pesa payments for each dispatch."
-                        : "Your orders have been routed. You will pay upon delivery.",
+                    targetSubTab == 0
+                        ? "Your orders have been routed. Please proceed to the Gathering tab to initiate your secure Escrow deposit."
+                        : "Your orders have been routed. They are waiting for Farmer Dispatch in your Deliveries tab.",
                     textAlign: TextAlign.center,
                     style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey.shade600),
                   ),
@@ -142,7 +183,18 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                   width: double.infinity, height: 50,
                   child: ElevatedButton(
                     onPressed: () {
-                      Navigator.pop(context); Navigator.pop(context); Navigator.pop(context);
+                      // 1. Pop the Dialog, Checkout, and Cart all the way back to the Dashboard
+                      Navigator.popUntil(context, (route) => route.isFirst);
+
+                      // 2. Tell the Orders Screen to fetch the newly created data
+                      buyerOrdersKey.currentState?.fetchLiveOrders();
+
+                      // 3. Switch the inner tab of the Orders Screen (Gathering vs Deliveries)
+                      buyerOrdersKey.currentState?.switchTab(targetSubTab);
+
+                      // 4. Force the Main Bottom Navigation Bar to switch to "Orders" (Index 1)
+                      dynamic parentDashboard = buyerOrdersKey.currentContext?.findAncestorStateOfType<State<BuyerDashboard>>();
+                      parentDashboard?.switchToTab(1);
                     },
                     style: ElevatedButton.styleFrom(backgroundColor: Colors.teal.shade700, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
                     child: Text("Go to My Orders", style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -226,7 +278,7 @@ class _BuyerCheckoutScreenState extends State<BuyerCheckoutScreen> {
                     _buildSectionHeader("Delivery Method", LucideIcons.truck),
                     Row(
                       children: [
-                        _buildMethodOption("doorstep", "Doorstep Delivery", "KES 1,500", Icons.local_shipping, _deliveryMethod, (val) => setState(() => _deliveryMethod = val)),
+                        _buildMethodOption("doorstep", "Doorstep Delivery", "Calculated", Icons.local_shipping, _deliveryMethod, (val) => setState(() => _deliveryMethod = val)),
                         const SizedBox(width: 15),
                         _buildMethodOption("pickup", "Pickup from Hub", "Free", LucideIcons.store, _deliveryMethod, (val) => setState(() => _deliveryMethod = val)),
                       ],

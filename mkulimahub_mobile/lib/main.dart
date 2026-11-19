@@ -4,7 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart'; 
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:mkulimahub_mobile/core/api_client.dart';
+import 'package:mkulimahub_mobile/core/api/api_client.dart';
 import 'package:mkulimahub_mobile/features/auth/welcome_screen.dart';
 import 'package:mkulimahub_mobile/features/home/home_screen.dart';
 import 'package:mkulimahub_mobile/features/buyer/buyer_dashboard.dart';

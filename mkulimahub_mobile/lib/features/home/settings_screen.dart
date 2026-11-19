@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
-import 'package:mkulimahub_mobile/core/api_client.dart';
+import 'package:mkulimahub_mobile/core/api/api_client.dart';
 import 'package:mkulimahub_mobile/features/auth/auth_service.dart';
 import 'package:mkulimahub_mobile/features/auth/welcome_screen.dart';
 

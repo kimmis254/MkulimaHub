@@ -8,7 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:geolocator/geolocator.dart'; 
 
-import 'package:mkulimahub_mobile/core/api_client.dart';
+import 'package:mkulimahub_mobile/core/api/api_client.dart';
 import 'package:mkulimahub_mobile/features/home/home_screen.dart';
 import 'package:mkulimahub_mobile/features/home/settings_screen.dart'; 
 

@@ -2,7 +2,7 @@ import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:mkulimahub_mobile/core/api_client.dart';
+import 'package:mkulimahub_mobile/core/api/api_client.dart';
 
 class AiChatScreen extends StatefulWidget {
   const AiChatScreen({super.key});

@@ -9,8 +9,7 @@ class ApiClient {
   // 🔥 Dynamic base URL! No more hardcoded IPs.
   // It checks the .env file. If it fails, it defaults to the Android Emulator IP.
   String get baseUrl =>
-      dotenv.env['API_BASE_URL'] ?? 'http://192.168.100.4:8000';
-
+      dotenv.env['API_BASE_URL'] ?? 'https://owl-catapult-sulk.ngrok-free.dev';
 
   Future<String?> _getToken() async {
     final prefs = await SharedPreferences.getInstance();
@@ -138,7 +137,6 @@ class ApiClient {
       print("LOGIN FAILED: $error");
 
       return error;
-
     } catch (e) {
       print("GOOGLE LOGIN ERROR: $e");
       return 'Connection error. Please check your internet.';
@@ -290,10 +288,10 @@ class ApiClient {
   // ==========================================
 
   Future<Map<String, dynamic>> getPrediction(
-    String commodity,
-    String region,
-    String priceType,
-  ) async {
+      String commodity,
+      String region,
+      String priceType,
+      ) async {
     final url = Uri.parse('$baseUrl/api/predict-price');
 
     final response = await http.post(
@@ -505,11 +503,11 @@ class ApiClient {
   }
 
   Future<String?> processDelivery(
-    int squadId,
-    String action,
-    double? actualWeight,
-    String? notes,
-  ) async {
+      int squadId,
+      String action,
+      double? actualWeight,
+      String? notes,
+      ) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/api/hubs/deliveries/$squadId/process'),
@@ -774,10 +772,10 @@ class ApiClient {
   }
 
   Future<String?> registerBuyer(
-    String companyName,
-    String phone,
-    String password,
-  ) async {
+      String companyName,
+      String phone,
+      String password,
+      ) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/auth/register'),
@@ -1093,9 +1091,9 @@ class ApiClient {
   }
 
   Future<String?> updateSquadDeliveryStatus(
-    int bulkRequestId,
-    String status,
-  ) async {
+      int bulkRequestId,
+      String status,
+      ) async {
     final token = await getToken();
     if (token == null) return "Authentication required";
 
@@ -1164,9 +1162,9 @@ class ApiClient {
   }
 
   Future<String?> createHubPool(
-    String hubName,
-    Map<String, dynamic> data,
-  ) async {
+      String hubName,
+      Map<String, dynamic> data,
+      ) async {
     final token = await getToken();
     if (token == null) return "Please login first.";
 
@@ -1191,10 +1189,10 @@ class ApiClient {
   }
 
   Future<String?> submitUnattendedDropoff(
-    int squadId,
-    String scalePhotoBase64,
-    String cropPhotoBase64,
-  ) async {
+      int squadId,
+      String scalePhotoBase64,
+      String cropPhotoBase64,
+      ) async {
     final token = await getToken();
     if (token == null) return "Please login first.";
 
@@ -1251,10 +1249,10 @@ class ApiClient {
   }
 
   Future<String?> receiveLineItem(
-    int pledgeId,
-    double actualWeight,
-    String notes,
-  ) async {
+      int pledgeId,
+      double actualWeight,
+      String notes,
+      ) async {
     return _put('/api/pledges/$pledgeId/receive-line-item', {
       "actual_weight_kg": actualWeight,
       "notes": notes,
@@ -1262,11 +1260,11 @@ class ApiClient {
   }
 
   Future<String?> updateMarketListing(
-    int listingId,
-    double availableKg,
-    double? pricePerKg,
-    List<Map<String, dynamic>> unitPricing,
-  ) async {
+      int listingId,
+      double availableKg,
+      double? pricePerKg,
+      List<Map<String, dynamic>> unitPricing,
+      ) async {
     return _put('/api/market/listings/$listingId', {
       "available_kg": availableKg,
       "price_per_kg": pricePerKg,
@@ -1322,12 +1320,12 @@ class ApiClient {
 
   // 🔥 CREATE A DIRECT MARKET ORDER
   Future<String?> createMarketOrder(
-    int listingId,
-    String orderType,
-    double quantity,
-    String deliveryMethod,
-    String paymentMethod,
-  ) async {
+      int listingId,
+      String orderType,
+      double quantity,
+      String deliveryMethod,
+      String paymentMethod,
+      ) async {
     try {
       final token = await getToken();
       final response = await http.post(
@@ -1350,33 +1348,33 @@ class ApiClient {
     }
   }
 
-  Future<String?> purchaseHubPool(
-    int poolId,
-    String county,
-    String ward,
-  ) async {
+  Future<String?> purchaseHubPool(int poolId, String county, String ward, String paymentMethod) async {
     try {
-      final token = await getToken();
+      final prefs = await SharedPreferences.getInstance();
       final response = await http.post(
         Uri.parse('$baseUrl/api/market/pools/$poolId/purchase'),
         headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer $token",
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${prefs.getString('auth_token')}'
         },
-        body: jsonEncode({"county": county, "ward": ward}),
+        body: json.encode({
+          'county': county,
+          'ward': ward,
+          'payment_method': paymentMethod // Sends Pay Now or Pay On Delivery
+        }),
       );
       if (response.statusCode == 200) return null;
-      return jsonDecode(response.body)['detail'] ?? "Failed to purchase pool.";
+      return json.decode(response.body)['detail'] ?? "Purchase failed.";
     } catch (e) {
-      return "Connection error.";
+      return "Network error.";
     }
   }
 
   Future<String?> updateQAStatus(
-    int pledgeId,
-    String status,
-    String notes,
-  ) async {
+      int pledgeId,
+      String status,
+      String notes,
+      ) async {
     return _put('/api/buyer/pledges/$pledgeId/qa', {
       "status": status,
       "notes": notes,
@@ -1420,12 +1418,37 @@ class ApiClient {
     return _put('/api/farmer/orders/$orderId/status', {"status": status});
   }
 
+  // 🔥 NEW: For Farmer's unified deliveries tracking
+  Future<String?> updateDeliveryStatus(int deliveryId, String type, String newStatus) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/delivery/update/$deliveryId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${prefs.getString('auth_token')}'
+        },
+        body: json.encode({
+          'type': type,
+          'status': newStatus
+        }),
+      );
+
+      if (response.statusCode == 200) return null; // null means success!
+
+      return json.decode(response.body)['detail'] ?? "Failed to update logistics.";
+    } catch (e) {
+      return "Network error: $e";
+    }
+  }
+
   // 🔥 Buyer: Uploads dispute photo and notes
   Future<String?> disputeDirectOrder(
-    int orderId,
-    String notes,
-    String? imageBase64,
-  ) async {
+      int orderId,
+      String notes,
+      String? imageBase64,
+      ) async {
     return _put('/api/buyer/orders/$orderId/qa', {
       "status": "disputed",
       "notes": notes,
@@ -1465,6 +1488,21 @@ class ApiClient {
     }
   }
 
+  // 🔥 NEW: For Farmer's home screen stats (Total Yield, Active Deliveries, etc.)
+  Future<Map<String, dynamic>?> getFarmerDashboard() async {
+    try {
+      final token = await getToken();
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/farmer/dashboard'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   // Secret DEV-Mode STK Push Simulator
   Future<String?> simulateDevPayment(int orderId) async {
     try {
@@ -1483,17 +1521,14 @@ class ApiClient {
   // Update your triggerMpesaPayment to accept the customEndpoint
   Future<String?> triggerMpesaPayment(int id, {bool isBulk = false, String? customEndpoint}) async {
     try {
-      // Fetch token locally
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('auth_token') ?? '';
 
-      // Build Headers explicitly
       final headers = {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
       };
 
-      // Use baseUrl (no underscore) based on your previous login snippet
       final endpoint = customEndpoint ?? (isBulk ? '/api/market/pools/$id/pay/mpesa' : '/api/buyer/orders/$id/pay/mpesa');
 
       final response = await http.post(
@@ -1501,10 +1536,12 @@ class ApiClient {
           headers: headers
       );
 
+      final data = json.decode(response.body);
+
       if (response.statusCode == 200) {
-        return null; // Success!
+        // 🔥 THE FIX: Return the checkout_id hidden inside a success message!
+        return "SUCCESS:${data['checkout_id']}";
       } else {
-        final data = json.decode(response.body);
         return data['detail'] ?? "Payment failed.";
       }
     } catch (e) {
@@ -1512,6 +1549,7 @@ class ApiClient {
     }
   }
 
+  // Update the 3 helper methods to return what triggerMpesaPayment returns
   Future<String?> triggerContractDeposit(int contractId) async {
     return await triggerMpesaPayment(contractId, customEndpoint: '/api/contracts/$contractId/pay-deposit');
   }
@@ -1523,6 +1561,7 @@ class ApiClient {
   Future<String?> triggerContractBalance(int contractId) async {
     return await triggerMpesaPayment(contractId, customEndpoint: '/api/contracts/$contractId/pay-balance');
   }
+
 
   // 2. Process a Farmer's Refund (Issue 7a)
   Future<String?> refundPledge(int pledgeId) async {
@@ -1589,6 +1628,22 @@ class ApiClient {
       if (response.statusCode == 200) return null;
       return json.decode(response.body)['detail'] ?? "Withdrawal failed.";
     } catch (e) { return "Network error."; }
+  }
+
+  Future<String> checkPaymentStatus(String checkoutId) async {
+    try {
+      final token = await getToken();
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/payments/status/$checkoutId'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body)['status'] ?? 'pending';
+      }
+      return 'pending';
+    } catch (e) {
+      return 'pending';
+    }
   }
 
 

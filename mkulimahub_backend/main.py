@@ -37,16 +37,19 @@ models.Base.metadata.create_all(bind=engine)
 
 bulk_columns_to_add = [
     "payment_method VARCHAR DEFAULT 'pay_now'",
-    "payment_status VARCHAR DEFAULT 'pending'", # Tracks the 10% deposit
-    "checkout_request_id VARCHAR"
+    "payment_status VARCHAR DEFAULT 'pending'", 
+    "checkout_request_id VARCHAR",
+    "deadline_time TIMESTAMP" 
 ]
 pledge_columns_to_add = [
-    "checkout_request_id VARCHAR" # Tracks the 90% POD for individual farmers
+    "checkout_request_id VARCHAR" 
 ]
 
 for col_def in bulk_columns_to_add:
     try:
         with engine.begin() as conn:
+            # We extract just the column name for the check
+            col_name = col_def.split()[0]
             conn.execute(text(f"ALTER TABLE bulk_requests ADD COLUMN {col_def};"))
     except Exception: pass
 
@@ -56,9 +59,6 @@ for col_def in pledge_columns_to_add:
             conn.execute(text(f"ALTER TABLE pledges ADD COLUMN {col_def};"))
     except Exception: pass
 
-# ==========================================
-# 1. APP & SCHEDULER INITIALIZATION
-# ==========================================
 class CoordinatorPitch(BaseModel):
     pitch: str
 
@@ -71,69 +71,90 @@ class SquadPitch(BaseModel):
 class SquadVoteRequest(BaseModel):
     candidate_id: int
 
-# We define the background clustering job here so it can be called by the scheduler
 def scheduled_clustering_job():
     print("🤖 [SCHEDULER] Running Automatic DBSCAN Clustering...")
     db: Session = SessionLocal() 
     try:
-        # 🔥 THE FIX: Tell the scheduler to cluster "All" crops, not just Maize!
         run_clustering_algorithm(db, target_crop="All") 
-        print("✅ [SCHEDULER] Clustering Complete!")
+        print("[SCHEDULER] Clustering Complete!")
     except Exception as e:
-        print(f"❌ [SCHEDULER ERROR]: {e}")
+        print(f"[SCHEDULER ERROR]: {e}")
     finally:
         db.close()
 
 def scheduled_ml_predictions():
-    print("🧠 [SCHEDULER] Waking up to train Prophet Models...")
     db: Session = SessionLocal()
     try:
-        # 1. Figure out which crops we actually track
         crops = db.query(models.MarketPrice.commodity).distinct().all()
         crop_list = [c[0] for c in crops if c[0]]
         
-        # We will do National level first, and you can expand this to counties later!
         for crop in crop_list:
             for market_type in ["Wholesale", "Retail"]:
                 cache_key = f"{crop.lower()}_national_{market_type.lower()}"
-                print(f"📈 Training model for {cache_key}...")
                 
-                # Fetch historical data
                 records = db.query(models.MarketPrice.date, models.MarketPrice.price_kes).filter(
                     models.MarketPrice.commodity.ilike(f"%{crop}%"),
                     models.MarketPrice.market_type.ilike(f"%{market_type}%")
                 ).all()
                 
-                if len(records) < 3:
-                    continue # Skip crops with no data
+                # Ensure we have enough data to form a real trend
+                if len(records) < 14:
+                    continue 
                 
                 df = pd.DataFrame([{"ds": r.date, "y": r.price_kes} for r in records])
                 df['ds'] = pd.to_datetime(df['ds'])
+                
+                # Remove KAMIS typos
+                q_low = df["y"].quantile(0.01)
+                q_hi  = df["y"].quantile(0.99)
+                df = df[(df["y"] <= q_hi) & (df["y"] >= q_low)]
+                
                 df = df.groupby('ds', as_index=False)['y'].mean().sort_values(by='ds')
                 
-                # Train Prophet!
-                m = Prophet(daily_seasonality=False, yearly_seasonality=True)
+                if len(df) < 14:
+                    continue
+                    
+                print(f"Training model for {cache_key}...")
+                
+                df['floor'] = max(0.0, df['y'].min() * 0.2) 
+                df['cap'] = df['y'].max() * 2.0 
+            
+                # Initialize Prophet with logistic growth
+                m = Prophet(
+                    growth='logistic', 
+                    daily_seasonality=False, 
+                    weekly_seasonality=True,
+                    yearly_seasonality=True,
+                    changepoint_prior_scale=0.05 # Makes trend lines smoother
+                )
                 m.fit(df)
                 
+                # Setup the future dataframe with the same bounds
                 future = m.make_future_dataframe(periods=30)
+                future['floor'] = df['floor'].iloc[0]
+                future['cap'] = df['cap'].iloc[0]
+                
                 forecast = m.predict(future)
                 
-                # Format exactly how Flutter wants it
                 historical_prices = df['y'].round(2).tolist()
                 future_forecast = forecast[forecast['ds'] > df['ds'].max()]
+                
+                # Double check no negative values slip into JSON
+                future_prices = [max(0.0, round(x, 2)) for x in future_forecast['yhat']]
+                current_p = float(historical_prices[-1])
+                predicted_p = future_prices[-1] if future_prices else current_p
                 
                 payload = {
                     "historical_dates": df['ds'].dt.strftime('%Y-%m-%d').tolist(),
                     "historical_prices": historical_prices,
                     "future_dates": future_forecast['ds'].dt.strftime('%Y-%m-%d').tolist(),
-                    "future_prices": future_forecast['yhat'].round(2).tolist(),
-                    "current_price": float(historical_prices[-1]),
-                    "predicted_price": float(future_forecast['yhat'].iloc[-1]) if not future_forecast.empty else float(historical_prices[-1]),
-                    "trend": "rising" if (future_forecast['yhat'].iloc[-1] if not future_forecast.empty else 0) > float(historical_prices[-1]) else "falling",
+                    "future_prices": future_prices,
+                    "current_price": current_p,
+                    "predicted_price": predicted_p,
+                    "trend": "rising" if predicted_p > current_p else "falling" if predicted_p < current_p else "stable",
                     "fallback_type": "national"
                 }
                 
-                # Save to Cache Database
                 existing = db.query(models.CachedPrediction).filter_by(cache_key=cache_key).first()
                 if existing:
                     existing.payload = payload
@@ -144,35 +165,28 @@ def scheduled_ml_predictions():
                     
                 db.commit()
                 
-        print("✅ [SCHEDULER] All ML Models Trained and Cached!")
+        print("All ML Models Trained and Cached!")
     except Exception as e:
-        print(f"❌ [SCHEDULER ERROR]: {e}")
+        print(f"[SCHEDULER ERROR]: {e}")
+        db.rollback()
     finally:
         db.close()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 Starting MkulimaHub API and Background Scheduler...")
     scheduler = BackgroundScheduler()
     scheduler.add_job(scheduled_clustering_job, 'interval', hours=1)
-    
     scheduler.add_job(scheduled_ml_predictions, 'cron', hour=2, minute=0)
-    
     scheduler.start()
-    
     yield
-    print("🛑 Shutting down Scheduler...")
     scheduler.shutdown()
 
 app = FastAPI(title="MkulimaHub API", lifespan=lifespan)
 
-# ==========================================
-# 2. RATE LIMITING SETUP
-# ==========================================
+
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
 
 def get_db():
     db = SessionLocal()
@@ -181,48 +195,35 @@ def get_db():
     finally:
         db.close()
 
-# ==========================================
-# 3. AUTHENTICATION & SECURITY ENDPOINTS
-# ==========================================
+
 GOOGLE_CLIENT_ID = "654543955611-g18qameesn4daglsc8pup7rkj6c1n541.apps.googleusercontent.com"
 
-# 🔥 We only need ONE schema now. The token holds the email, name, and UID!
 class GoogleAuthRequest(BaseModel):
     id_token: str
     phone_number: Optional[str] = None
-    role: Optional[str] = "farmer" # Defaults to farmer, but accepts buyer!
+    role: Optional[str] = "farmer"
 
-# 🔥 2. Added /api/ to the URL to match the Flutter app
 @app.post("/api/auth/google")
 @limiter.limit("5/minute")
 def google_login(request: Request, payload: GoogleAuthRequest, db: Session = Depends(get_db)):
     try:
-        # Verify the token cryptographically with Google's servers
         idinfo = id_token.verify_oauth2_token(payload.id_token, google_requests.Request(), GOOGLE_CLIENT_ID,clock_skew_in_seconds=30)
         verified_email = idinfo['email']
-        
     except ValueError as e:
-        print(f"🚨 GOOGLE TOKEN REJECTED: {str(e)}") 
         raise HTTPException(status_code=401, detail=f"Token Error: {str(e)}")
 
     user = db.query(models.User).filter(models.User.email == verified_email).first()
-    
     if user:
         if not user.phone_number:
             return {"status": "needs_phone"}
-            
         access_token = security.create_access_token(data={"sub": str(user.id), "role": user.role})
-        
-        # Check if they still need to finish setting up their location/profile
         needs_profile = False
         if not user.county or not user.village:
             needs_profile = True
-            
         return {"access_token": access_token, "token_type": "bearer", "status": "success", "needs_profile": needs_profile}
     else:
         return {"status": "needs_phone"}
 
-# 🔥 3. Added /api/ to the URL
 @app.post("/api/auth/google-register")
 @limiter.limit("5/minute")
 def google_register(request: Request, payload: GoogleAuthRequest, db: Session = Depends(get_db)):
@@ -237,7 +238,6 @@ def google_register(request: Request, payload: GoogleAuthRequest, db: Session = 
     except ValueError as e:
         raise HTTPException(status_code=401, detail=f"Token Error: {str(e)}")
 
-    # Check for duplicate phone numbers
     existing_phone = db.query(models.User).filter(models.User.phone_number == payload.phone_number).first()
     if existing_phone and existing_phone.email != verified_email:
         raise HTTPException(status_code=400, detail="Phone number already registered to another account.")
@@ -247,7 +247,6 @@ def google_register(request: Request, payload: GoogleAuthRequest, db: Session = 
     if user:
         user.phone_number = payload.phone_number
     else:
-        # 🔥 4. Dynamically assign the role passed from Flutter!
         user = models.User(
             full_name=verified_name,
             email=verified_email,
@@ -284,6 +283,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
         
     return user
+
 @app.get("/")
 def read_root():
     return {"message": "MkulimaHub API is active!", "status": "secure"}
@@ -310,16 +310,13 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         return new_user
     except Exception as e:
         db.rollback() 
-        print(f"❌ Database error during registration: {e}")
+        print(f"Database error during registration: {e}")
         raise HTTPException(status_code=500, detail="Failed to create account. Please try again.")
 
 @app.post("/auth/login", response_model=schemas.Token)
 @limiter.limit("5/minute")
 def login_user(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    
     raw_phone = form_data.username.strip()
-    
-    # 🔥 Create BOTH versions of the phone number!
     phone_zero = raw_phone
     phone_plus = raw_phone
     
@@ -328,7 +325,6 @@ def login_user(request: Request, form_data: OAuth2PasswordRequestForm = Depends(
     elif raw_phone.startswith("0"):
         phone_plus = "+254" + raw_phone[1:]
 
-    # 🔥 Search the database for EITHER format. We will never miss a match again!
     user = db.query(models.User).filter(
         (models.User.phone_number == phone_zero) | (models.User.phone_number == phone_plus)
     ).first()
@@ -355,12 +351,8 @@ def phone_login(request: Request, payload: PhoneAuthRequest, db: Session = Depen
         search_phone = "0" + search_phone[4:]
 
     user = db.query(models.User).filter(models.User.phone_number == search_phone).first()
-    
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Account not found. Please register first."
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found. Please register first.")
     
     access_token = security.create_access_token(data={"sub": str(user.id), "role": user.role})
     return {"access_token": access_token, "token_type": "bearer", "status": "success"}
@@ -378,7 +370,6 @@ def reset_password(request: Request, payload: PasswordResetRequest, db: Session 
         search_phone = "0" + search_phone[4:]
 
     user = db.query(models.User).filter(models.User.phone_number == search_phone).first()
-    
     if not user:
         raise HTTPException(status_code=404, detail="Account not found.")
     
@@ -387,9 +378,7 @@ def reset_password(request: Request, payload: PasswordResetRequest, db: Session 
     return {"message": "Password updated successfully", "status": "success"}
 
 
-# ==========================================
-# 4. USER PROFILES & DATA
-# ==========================================
+
 
 @app.put("/users/profile", response_model=schemas.UserRead)
 def update_profile(profile_data: schemas.UserProfileUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -403,7 +392,7 @@ def update_profile(profile_data: schemas.UserProfileUpdate, db: Session = Depend
         county = update_data.get("county") or current_user.county
 
         if ward and county:
-            print(f"🌍 Asking OpenStreetMap for exact Ward: {ward}, {county}...")
+            print(f"Asking OpenStreetMap for exact Ward: {ward}, {county}...")
             headers = {"User-Agent": "MkulimaHubApp/1.0 (Student Project)"}
             try:
                 url_ward = f"https://nominatim.openstreetmap.org/search?q={ward}, {county}, Kenya&format=json&limit=1"
@@ -419,12 +408,11 @@ def update_profile(profile_data: schemas.UserProfileUpdate, db: Session = Depend
                         update_data["latitude"] = float(county_data[0]["lat"])
                         update_data["longitude"] = float(county_data[0]["lon"])
             except Exception as e:
-                print(f"❌ Geocoding API Error: {e}")
+                print(f"Geocoding API Error: {e}")
 
     for key, value in update_data.items():
         setattr(current_user, key, value) 
 
-    # 🔥 THE FIX: Wrap the save in a try/except block
     try:
         db.add(current_user)
         db.commit()
@@ -432,12 +420,11 @@ def update_profile(profile_data: schemas.UserProfileUpdate, db: Session = Depend
         return current_user
     except Exception as e:
         db.rollback()
-        print(f"❌ DB Error updating profile: {e}")
+        print(f"DB Error updating profile: {e}")
         raise HTTPException(status_code=500, detail="Could not update profile. Please try again.")
 
 @app.get("/users/me", response_model=schemas.UserRead)
 def get_my_profile(current_user: models.User = Depends(get_current_user)):
-    # FastAPI will automatically grab the role, hub_id, etc., based on your schema!
     return current_user
 
 @app.delete("/users/me")
@@ -447,9 +434,15 @@ def delete_my_account(db: Session = Depends(get_db), current_user: models.User =
     return {"message": "Account deleted successfully"}
 
 
-# ==========================================
-# 5. HARVESTS, PLEDGES, & MARKETPLACE
-# ==========================================
+
+class BulkRequestCreate(BaseModel):
+    crop_name: str
+    target_weight_kg: float
+    price_per_kg: float
+    county: str
+    ward: Optional[str] = None
+    urgency: Optional[str] = "High"
+    deadline_hours: Optional[int] = 24
 
 @app.post("/harvests", status_code=status.HTTP_201_CREATED)
 def create_harvest(harvest: schemas.HarvestCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -470,7 +463,6 @@ def create_harvest(harvest: schemas.HarvestCreate, db: Session = Depends(get_db)
         return {"message": "Harvest posted successfully", "id": new_harvest.id}
     except Exception as e:
         db.rollback()
-        print(f"❌ DB Error creating harvest: {e}")
         raise HTTPException(status_code=500, detail="Failed to post harvest to the marketplace.")
 
 class HarvestRead(schemas.HarvestCreate):
@@ -485,13 +477,28 @@ def get_harvests(skip: int = 0, limit: int = 100, db: Session = Depends(get_db))
     harvests = db.query(models.Harvest).filter(models.Harvest.farmer_id.isnot(None)).offset(skip).limit(limit).all()
     return harvests
 
-@app.post("/api/contracts", response_model=schemas.BulkRequestRead)
-def create_bulk_contract(contract: schemas.BulkRequestCreate, db: Session = Depends(get_db)):
-    new_contract = models.BulkRequest(**contract.dict())
+@app.post("/api/buyer/contracts")
+def create_bulk_contract(payload: BulkRequestCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Allows a buyer to post a new Bulk Contract to the Marketplace."""
+    deadline = datetime.utcnow() + timedelta(hours=payload.deadline_hours)
+
+    new_contract = models.BulkRequest(
+        buyer_name=current_user.full_name, 
+        crop_name=payload.crop_name,
+        target_weight_kg=payload.target_weight_kg,
+        price_per_kg=payload.price_per_kg,
+        county=payload.county,
+        ward=payload.ward,
+        urgency=payload.urgency,
+        status="Open",
+        deadline_time=deadline # 🔥 SAVES DEADLINE
+    )
+    
     db.add(new_contract)
     db.commit()
     db.refresh(new_contract)
-    return new_contract
+    
+    return {"message": "Contract broadcasted to the network!", "contract_id": new_contract.id}
 
 @app.get("/api/contracts")
 def get_open_contracts(county: str = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -512,12 +519,12 @@ def get_open_contracts(county: str = None, db: Session = Depends(get_db), curren
             "id": req.id, "crop_name": req.crop_name, "target_weight_kg": req.target_weight_kg,
             "total_pledged": total_pledged, "price_per_kg": req.price_per_kg,
             "buyer_name": req.buyer_name, "county": req.county,
-            "ward": req.ward, # 🔥 Contact & Address
-            "urgency": req.urgency, # 🔥 Real Urgency
+            "ward": req.ward, 
+            "urgency": req.urgency, 
+            "deadline_time": req.deadline_time.isoformat() + "Z" if getattr(req, 'deadline_time', None) else None, # 🔥 FEEDS FLUTTER TIMER
             "has_pledged": has_pledged 
         })
     return results
-
 
 @app.get("/api/my-pledges")
 def get_my_pledges(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -542,7 +549,6 @@ def get_my_pledges(db: Session = Depends(get_db), current_user: models.User = De
             db_needs_commit = True 
             continue 
 
-        # SELF-HEALING LOGIC
         if req.squad_status not in ["active", "voting", "fulfilled"]:
             total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == req.id).scalar() or 0.0
             
@@ -562,7 +568,6 @@ def get_my_pledges(db: Session = Depends(get_db), current_user: models.User = De
         for sp in squad_pledges:
             farmer = db.query(models.User).filter(models.User.id == sp.farmer_id).first()
             if farmer:
-                # 🔥 THE FIX: Use actual weight for payout if it exists, otherwise use pledged
                 final_kg = sp.actual_weight_kg if sp.actual_weight_kg is not None else sp.pledged_weight_kg
                 
                 squad_roster.append({
@@ -570,8 +575,8 @@ def get_my_pledges(db: Session = Depends(get_db), current_user: models.User = De
                     "farmer_id": farmer.id,
                     "name": farmer.full_name,
                     "pledge_kg": sp.pledged_weight_kg,
-                    "actual_kg": sp.actual_weight_kg,          # 🔥 NEW: Send Actual KG
-                    "payout_kes": final_kg * req.price_per_kg, # 🔥 NEW: Adjusted Payout
+                    "actual_kg": sp.actual_weight_kg,          
+                    "payout_kes": final_kg * req.price_per_kg, 
                     "status": sp.status,             
                     "notes": sp.notes                
                 })
@@ -592,7 +597,6 @@ def get_my_pledges(db: Session = Depends(get_db), current_user: models.User = De
             models.SquadVote.farmer_id == current_user.id
         ).first() is not None
 
-        # 🔥 THE FIX: Safely define the buyer_phone right before appending it!
         buyer_phone = "No phone available"
         if req.buyer_id:
             buyer = db.query(models.User).filter(models.User.id == req.buyer_id).first()
@@ -611,8 +615,7 @@ def get_my_pledges(db: Session = Depends(get_db), current_user: models.User = De
                 "county": req.county, "ward": req.ward, "urgency": req.urgency, 
                 "squad_status": req.squad_status, "coordinator_id": req.coordinator_id, 
                 "squad_roster": squad_roster, "candidates": candidates_list, "has_voted": has_voted,
-                
-                # 🔥 THE FIX: Send the live payment data to Flutter so it unlocks!
+                "deadline_time": req.deadline_time.isoformat() if getattr(req, 'deadline_time', None) else None, # 🔥 TIMER
                 "payment_status": getattr(req, 'payment_status', 'pending'),
                 "payment_method": getattr(req, 'payment_method', 'pay_now')
             }
@@ -628,23 +631,18 @@ class PledgeUpdate(BaseModel):
 
 @app.put("/api/pledges/{pledge_id}", response_model=schemas.PledgeRead)
 def update_pledge(pledge_id: int, payload: PledgeUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    # 1. Find the exact pledge
     pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id, models.Pledge.farmer_id == current_user.id).first()
     if not pledge:
         raise HTTPException(status_code=404, detail="Pledge not found.")
 
     try:
-        # 2. Update the weight
         pledge.pledged_weight_kg = payload.pledged_weight_kg
         db.flush()
 
-        # 3. Recalculate the entire contract's math
         bulk_req = db.query(models.BulkRequest).filter(models.BulkRequest.id == pledge.bulk_request_id).first()
         total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == bulk_req.id).scalar() or 0.0
 
-        # If it dropped below 100%, reopen the contract!
         if total_pledged < bulk_req.target_weight_kg:
-            # 🔥 THE FIX: Never reopen a contract if the Buyer already paid the deposit!
             if getattr(bulk_req, 'payment_status', 'pending') != 'deposit_paid':
                 bulk_req.status = "Open"
         else:
@@ -660,49 +658,35 @@ def update_pledge(pledge_id: int, payload: PledgeUpdate, db: Session = Depends(g
 @app.put("/api/qa/pledges/{pledge_id}/status")
 def update_pledge_qa_status(pledge_id: int, payload: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """Handles the Buyer accepting or rejecting individual farmer drop-offs."""
-    
-    # 1. Find the pledge and the farmer
     pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
     if not pledge:
         raise HTTPException(status_code=404, detail="Pledge not found.")
         
     farmer = db.query(models.User).filter(models.User.id == pledge.farmer_id).first()
-    
-    # 2. Find the parent HubPool (BulkRequest) to get the pricing and payment method
     pool = db.query(models.BulkRequest).filter(models.BulkRequest.id == pledge.bulk_request_id).first()
     if not pool:
         raise HTTPException(status_code=404, detail="Parent contract not found.")
         
     new_status = payload.get("status")
     
-    # ==========================================
-    # 🔥 THE MICRO-RELEASE LOGIC
-    # ==========================================
     if new_status == "paid" or new_status == "completed":
-        # Calculate exactly how much this specific farmer is owed
         actual_kg = pledge.actual_kg if pledge.actual_kg else pledge.pledged_weight_kg
         payout_amount = actual_kg * pool.price_per_kg
-        
         payment_method = getattr(pool, 'payment_method', 'pay_now')
         
         if payment_method == 'pay_now':
-            # Release from Escrow to Wallet
             if farmer and (farmer.escrow_balance or 0.0) >= payout_amount:
                 farmer.escrow_balance -= payout_amount
                 farmer.available_balance = (farmer.available_balance or 0.0) + payout_amount
         else:
-            # It's a POD! The buyer just paid cash or M-Pesa directly at the truck. 
-            # Money goes straight to the farmer's wallet.
             if farmer:
                 farmer.available_balance = (farmer.available_balance or 0.0) + payout_amount
                 
     elif new_status == "disputed" or new_status == "rejected":
-        # Save the rejection reason so the farmer can see it on their screen
         pledge.dispute_notes = payload.get("notes", "Rejected during QA inspection.")
         
     pledge.status = new_status
     db.commit()
-    
     return {"message": f"Pledge QA updated to {new_status}"}
 
 @app.delete("/api/pledges/{pledge_id}")
@@ -718,25 +702,20 @@ def delete_pledge(pledge_id: int, db: Session = Depends(get_db), current_user: m
 
         bulk_req = db.query(models.BulkRequest).filter(models.BulkRequest.id == req_id).first()
         
-        # 🔥 THE FIX: Clean up their specific election data!
-        # 1. Remove them from the ballot if they were running
         db.query(models.SquadCandidate).filter(
             models.SquadCandidate.bulk_request_id == req_id, 
             models.SquadCandidate.farmer_id == current_user.id
         ).delete()
         
-        # 2. Remove any votes they cast
         db.query(models.SquadVote).filter(
             models.SquadVote.bulk_request_id == req_id, 
             models.SquadVote.farmer_id == current_user.id
         ).delete()
 
-        # 3. IF THEY WERE THE COORDINATOR, DEPOSE THEM!
         if bulk_req.coordinator_id == current_user.id:
             bulk_req.coordinator_id = None
-            bulk_req.squad_status = "voting" # Force the remaining farmers to elect a new leader!
+            bulk_req.squad_status = "voting"
 
-        # Recalculate math
         total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == req_id).scalar() or 0.0
 
         if total_pledged < bulk_req.target_weight_kg:
@@ -745,7 +724,6 @@ def delete_pledge(pledge_id: int, db: Session = Depends(get_db), current_user: m
         else:
             bulk_req.status = "fulfilled"
             
-        # If everyone left the squad, completely reset the election!
         if total_pledged == 0:
             bulk_req.squad_status = "gathering"
             bulk_req.coordinator_id = None
@@ -757,16 +735,12 @@ def delete_pledge(pledge_id: int, db: Session = Depends(get_db), current_user: m
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail="Failed to delete pledge.")
+
 # ==========================================
 # 6. HUBS, CLUSTERS, & CO-OP CHAT
 # ==========================================
 
 def run_clustering_algorithm(db: Session, target_crop: str = "All"):
-    """
-    Groups independent farmers by Crop, then uses DBSCAN to cluster them 
-    if they are within a 5km radius of each other.
-    """
-    # 1. Fetch unclustered (independent) farmers with GPS coordinates
     query = db.query(models.User).filter(
         models.User.role == "farmer",
         models.User.hub_id == None,
@@ -774,7 +748,6 @@ def run_clustering_algorithm(db: Session, target_crop: str = "All"):
         models.User.longitude.isnot(None)
     )
 
-    # Filter by crop if a specific one was requested
     if target_crop != "All":
         query = query.filter(models.User.main_crops.ilike(f"%{target_crop}%"))
 
@@ -782,11 +755,9 @@ def run_clustering_algorithm(db: Session, target_crop: str = "All"):
     if not independent_farmers:
         return 0
 
-    # 2. Extract data into a list
     data = []
     for f in independent_farmers:
         if f.main_crops:
-            # Assume their primary crop is the first one listed in the string
             primary_crop = f.main_crops.split(',')[0].strip().title()
             data.append({
                 "id": f.id,
@@ -802,38 +773,27 @@ def run_clustering_algorithm(db: Session, target_crop: str = "All"):
     df = pd.DataFrame(data)
     total_hubs_created = 0
     
-    # Radius of earth in km
     EARTH_RADIUS_KM = 6371.0 
-    # Max distance between farmers to be in the same hub (5 kilometers)
     MAX_DISTANCE_KM = 5.0 
     epsilon = MAX_DISTANCE_KM / EARTH_RADIUS_KM
 
-    # 3. Run Spatial AI (DBSCAN) independently for EACH crop!
     unique_crops = df['crop'].unique()
     
     for current_crop in unique_crops:
         crop_df = df[df['crop'] == current_crop].copy()
         
-        # Need at least 2 farmers near each other to form a viable Co-op Hub
         if len(crop_df) < 2:
             continue
 
-        # Convert lat/lon to radians for the Haversine formula (Earth curvature)
         coords = np.radians(crop_df[['lat', 'lon']].values)
-        
-        # Run DBSCAN AI
         dbscan = DBSCAN(eps=epsilon, min_samples=2, algorithm='ball_tree', metric='haversine').fit(coords)
         crop_df['cluster'] = dbscan.labels_
         
-        # 4. Save the new valid clusters to the Database
         for cluster_id in crop_df['cluster'].unique():
             if cluster_id == -1: 
-                # -1 means "Noise" (Farmer is too isolated, leave them independent)
                 continue
                 
             cluster_farmers = crop_df[crop_df['cluster'] == cluster_id]
-            
-            # Generate the new Hub using the Ward of the first farmer
             ward_name = cluster_farmers.iloc[0]['ward']
             hub_name = f"{ward_name} {current_crop} Co-op"
             
@@ -844,9 +804,8 @@ def run_clustering_algorithm(db: Session, target_crop: str = "All"):
                 center_longitude=float(cluster_farmers['lon'].mean())
             )
             db.add(new_hub)
-            db.flush() # Get the new_hub.id immediately
+            db.flush() 
             
-            # Move the independent farmers into their new Hub
             for farmer_id in cluster_farmers['id']:
                 db.query(models.User).filter(models.User.id == farmer_id).update({"hub_id": new_hub.id})
             
@@ -857,10 +816,8 @@ def run_clustering_algorithm(db: Session, target_crop: str = "All"):
 
 @app.post("/api/admin/trigger-clustering")
 def admin_trigger_clustering(crop: str = "All", db: Session = Depends(get_db)):
-    """Admin endpoint to manually trigger the freeze logic."""
     created = run_clustering_algorithm(db, target_crop=crop)
     return {"message": f"Successfully created {created} new permanent Hubs based on proximity and crop!"}
-
 
 @app.get("/api/clusters")
 def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -870,21 +827,18 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db), current
     
     hubs = query.all()
     
-    # 🔥 THE FIX (N+1 Solution): Grab all Hub IDs, then fetch ALL farmers in exactly ONE database query!
     hub_ids = [h.id for h in hubs]
     all_hub_members = db.query(models.User).filter(
         models.User.hub_id.in_(hub_ids),
         models.User.role == "farmer"
     ).all()
     
-    # Group the farmers by hub_id using a fast Python dictionary
     members_by_hub = {}
     for member in all_hub_members:
         if member.hub_id not in members_by_hub:
             members_by_hub[member.hub_id] = []
         members_by_hub[member.hub_id].append(member)
 
-    # Fetch "Noise" - strictly FARMERS who have GPS but no Hub
     indep_query = db.query(models.User).filter(
         models.User.latitude.isnot(None),
         models.User.longitude.isnot(None),
@@ -901,9 +855,7 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db), current
     total_analyzed = len(independent_farmers)
     
     for h in hubs:
-        # 🔥 Pull from our dictionary instead of hitting the database!
         hub_members = members_by_hub.get(h.id, [])
-        
         if len(hub_members) == 0:
             continue
 
@@ -933,7 +885,6 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db), current
         } for f in independent_farmers
     ]
     
-    # 🔥 1. Get the raw squads from the database
     all_squads = db.query(models.BulkRequest).filter(
         models.BulkRequest.squad_status.in_(["gathering", "voting", "active"]),
         models.BulkRequest.status != "completed" 
@@ -944,15 +895,12 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db), current
         if req.squad_status in ["gathering", "voting"] and req.status == "Open":
             squads_db.append(req)
         elif req.squad_status == "active":
-            # Only keep it on the screen if the current user is actually in this squad!
             if any(p.farmer_id == current_user.id for p in req.pledges):
                 squads_db.append(req)
     
-    # 🔥 2. THE FIX: Explicitly format the data so FastAPI includes the pledges!
     active_squads_data = []
     
     for req in squads_db:
-        # Check if the current user has voted in this specific squad
         has_voted = False
         if current_user:
             vote_check = db.query(models.SquadVote).filter(
@@ -962,7 +910,6 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db), current
             if vote_check:
                 has_voted = True
 
-        # Fetch the candidates for this specific squad
         candidates_db = db.query(models.SquadCandidate).filter(models.SquadCandidate.bulk_request_id == req.id).all()
         candidates_list = []
         for c in candidates_db:
@@ -983,9 +930,10 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db), current
             "county": req.county,
             "squad_status": req.squad_status,
             "coordinator_id": req.coordinator_id,
+            "deadline_time": req.deadline_time.isoformat() if getattr(req, 'deadline_time', None) else None, # 🔥 TIMER
             "pledges": [{"farmer_id": p.farmer_id} for p in req.pledges],
-            "candidates": candidates_list, # 🔥 Attach the ballot!
-            "has_voted": has_voted         # 🔥 Tell Flutter if they voted!
+            "candidates": candidates_list,
+            "has_voted": has_voted 
         })
     
     return {
@@ -993,7 +941,7 @@ def get_frozen_clusters(crop: str = None, db: Session = Depends(get_db), current
         "total_hubs_found": len(final_hubs),
         "hubs": final_hubs,
         "independent_farmers": indep_list,
-        "active_squads": active_squads_data # 🔥 Send the complete data down to Flutter
+        "active_squads": active_squads_data 
     }
 
 @app.put("/users/leave-hub")
@@ -1009,8 +957,6 @@ def get_hub_messages(hub_name: str, db: Session = Depends(get_db)):
     
     for m in messages:
         msg_text = m.message
-        
-        # 🔥 DYNAMIC POOL INJECTION
         if msg_text.startswith("POOL_REQ|"):
             parts = msg_text.split('|')
             if len(parts) >= 2:
@@ -1018,13 +964,12 @@ def get_hub_messages(hub_name: str, db: Session = Depends(get_db)):
                 contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == contract_id).first()
                 if contract:
                     total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == contract_id).scalar() or 0.0
-                    # Append the live progress and status directly into the string!
                     msg_text = f"{m.message}|{total_pledged}|{contract.status}"
 
         result.append({
             "id": m.id,
             "hub_name": m.hub_name,
-            "message": msg_text, # Pass the upgraded string to Flutter
+            "message": msg_text,
             "created_at": m.created_at,
             "sender_name": m.sender.full_name if m.sender else "Unknown Farmer"
         })
@@ -1050,9 +995,6 @@ def post_hub_message(hub_name: str, msg: schemas.HubMessageCreate, db: Session =
         "sender_name": current_user.full_name
     }
 
-# ==========================================
-# 7. AI, PREDICTIONS, & CHATBOT
-# ==========================================
 
 class PredictionRequest(BaseModel):
     commodity: str
@@ -1060,7 +1002,6 @@ class PredictionRequest(BaseModel):
     region: str
     price_type: str
 
-# Use your exact KENYA_COUNTIES list here...
 KENYA_COUNTIES = [
     "Mombasa", "Kwale", "Kilifi", "Tana River", "Lamu", "Taita Taveta", 
     "Garissa", "Wajir", "Mandera", "Marsabit", "Isiolo", "Meru", 
@@ -1081,7 +1022,6 @@ def predict_prices(request: PredictionRequest, db: Session = Depends(get_db)):
     fallback_key = f"{req_crop}_national_retail" if req_type == "wholesale" else f"{req_crop}_national_wholesale"
 
     cached_data = db.query(models.CachedPrediction).filter_by(cache_key=target_key).first()
-    
     if not cached_data:
         cached_data = db.query(models.CachedPrediction).filter_by(cache_key=fallback_key).first()
         
@@ -1091,10 +1031,8 @@ def predict_prices(request: PredictionRequest, db: Session = Depends(get_db)):
     return cached_data.payload
 
 def get_market_spot_price(crop: str, county: str) -> str:
-    """Fetches the LIVE current wholesale spot price for a specific crop."""
-    db = SessionLocal() # Open a quick database session for the AI
+    db = SessionLocal() 
     try:
-        # Ask Postgres for the latest price for this crop and county
         latest_record = db.query(models.MarketPrice).filter(
             models.MarketPrice.commodity.ilike(f"%{crop}%"),
             models.MarketPrice.county.ilike(f"%{county}%")
@@ -1104,13 +1042,11 @@ def get_market_spot_price(crop: str, county: str) -> str:
             return f"Live Spot Price: {crop.capitalize()} is currently trading at KES {latest_record.price_kes} per kg in {county.capitalize()}."
         return f"I couldn't find any recent market data for {crop} in {county}."
     finally:
-        db.close() # Always close the session so we don't crash the server!
+        db.close() 
 
 def predict_price_trend(crop: str) -> str:
-    """Predicts the future price trend for a specific crop."""
     db = SessionLocal()
     try:
-        # Grab the cached AI prediction we built earlier!
         cached = db.query(models.CachedPrediction).filter(
             models.CachedPrediction.cache_key.ilike(f"%{crop.lower()}_national%")
         ).first()
@@ -1124,12 +1060,9 @@ def predict_price_trend(crop: str) -> str:
         db.close()
 
 def get_weather_forecast(location: str) -> str:
-    """Fetches the LIVE weather forecast for a location."""
-    # (Optional: Connect this to a real Weather API later!)
     return f"Live Weather Data for {location}: Sunny, 28°C."
 
 def diagnose_crop_disease(symptoms: str) -> str:
-    """Analyzes crop symptoms to predict diseases."""
     return "Based on your description, there is a high probability of Fungal Blight. Ensure you check the undersides of the leaves."
  
 @app.get("/api/market-metadata")
@@ -1163,7 +1096,6 @@ def get_nearby_hubs(db: Session = Depends(get_db), current_user: models.User = D
     if not hubs:
         return []
 
-    # Calculate Haversine distance to all hubs and sort them
     kms_per_radian = 6371.0088
     hub_distances = []
     
@@ -1174,7 +1106,6 @@ def get_nearby_hubs(db: Session = Depends(get_db), current_user: models.User = D
         hub_lat_rad = np.radians(hub.center_latitude)
         hub_lon_rad = np.radians(hub.center_longitude)
         
-        # Haversine formula
         dlat = hub_lat_rad - user_lat_rad
         dlon = hub_lon_rad - user_lon_rad
         a = np.sin(dlat/2)**2 + np.cos(user_lat_rad) * np.cos(hub_lat_rad) * np.sin(dlon/2)**2
@@ -1188,17 +1119,14 @@ def get_nearby_hubs(db: Session = Depends(get_db), current_user: models.User = D
             "distance_km": round(distance_km, 1)
         })
 
-    # Return the 3 closest hubs
     hub_distances.sort(key=lambda x: x["distance_km"])
     return hub_distances[:3]
 
 @app.post("/api/hubs/{hub_id}/join")
 def request_to_join_hub(hub_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows an independent farmer to request to join a hub."""
     if current_user.hub_id is not None:
         raise HTTPException(status_code=400, detail="You are already in a hub.")
         
-    # Check if request already exists
     existing_req = db.query(models.HubRequest).filter(
         models.HubRequest.hub_id == hub_id,
         models.HubRequest.farmer_id == current_user.id
@@ -1215,14 +1143,10 @@ def request_to_join_hub(hub_id: int, db: Session = Depends(get_db), current_user
 
 @app.get("/api/coordinator/requests")
 def get_pending_requests(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Fetches all pending join requests if the current user is a Hub Coordinator."""
-    # 1. Check if the user is a coordinator for ANY hub
     hub = db.query(models.Hub).filter(models.Hub.coordinator_id == current_user.id).first()
-    
     if not hub:
-        return [] # Not a coordinator, return empty list
+        return [] 
         
-    # 2. Fetch pending requests for their specific hub
     requests = db.query(models.HubRequest).filter(
         models.HubRequest.hub_id == hub.id,
         models.HubRequest.status == "pending"
@@ -1231,27 +1155,25 @@ def get_pending_requests(db: Session = Depends(get_db), current_user: models.Use
     return [{
         "request_id": r.id,
         "farmer_name": r.farmer.full_name,
-        "farmer_phone": r.farmer.phone_number, # Coordinators get to see phone numbers of applicants!
+        "farmer_phone": r.farmer.phone_number,
         "crops": r.farmer.main_crops,
         "village": r.farmer.village
     } for r in requests]
 
 @app.put("/api/coordinator/requests/{request_id}")
 def respond_to_request(request_id: int, action: str, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows a coordinator to approve or reject a join request."""
     req = db.query(models.HubRequest).filter(models.HubRequest.id == request_id).first()
     
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
         
-    # Security Check: Verify the current user actually owns the hub this request is for
     hub = db.query(models.Hub).filter(models.Hub.id == req.hub_id).first()
     if hub.coordinator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to manage this hub.")
         
     if action == "approve":
         req.status = "approved"
-        req.farmer.hub_id = hub.id # 🔥 OFFICIALLY MOVE THE FARMER INTO THE HUB!
+        req.farmer.hub_id = hub.id 
     elif action == "reject":
         req.status = "rejected"
     else:
@@ -1265,7 +1187,6 @@ class HubPitchPayload(BaseModel):
 
 @app.post("/api/hubs/election/run")
 def run_for_hub_coordinator(payload: HubPitchPayload, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows a farmer to submit their name and pitch to be the HUB coordinator."""
     if not current_user.hub_id:
         raise HTTPException(status_code=400, detail="You must be in a Hub to run for Coordinator.")
         
@@ -1273,7 +1194,6 @@ def run_for_hub_coordinator(payload: HubPitchPayload, db: Session = Depends(get_
     if hub.coordinator_id is not None:
         raise HTTPException(status_code=400, detail="This hub already has a coordinator.")
         
-    # Check if they are already running
     existing = db.query(models.HubCandidate).filter(
         models.HubCandidate.hub_id == current_user.hub_id, 
         models.HubCandidate.farmer_id == current_user.id
@@ -1293,7 +1213,6 @@ def run_for_hub_coordinator(payload: HubPitchPayload, db: Session = Depends(get_
 
 @app.get("/api/hubs/election/ballot")
 def get_election_ballot(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Fetches all candidates currently running in the user's hub."""
     if not current_user.hub_id:
         return {"status": "no_hub", "candidates": []}
 
@@ -1303,7 +1222,6 @@ def get_election_ballot(db: Session = Depends(get_db), current_user: models.User
 
     candidates = db.query(models.HubCandidate).filter(models.HubCandidate.hub_id == hub.id).all()
     
-    # Check if current user already voted
     has_voted = db.query(models.HubVote).filter(
         models.HubVote.hub_id == hub.id,
         models.HubVote.voter_id == current_user.id
@@ -1311,7 +1229,6 @@ def get_election_ballot(db: Session = Depends(get_db), current_user: models.User
 
     results = []
     for c in candidates:
-        # Count the votes for this candidate
         vote_count = db.query(models.HubVote).filter(models.HubVote.candidate_id == c.id).count()
         farmer = db.query(models.User).filter(models.User.id == c.farmer_id).first()
         
@@ -1330,11 +1247,9 @@ def get_election_ballot(db: Session = Depends(get_db), current_user: models.User
 
 @app.post("/api/hubs/election/vote/{candidate_id}")
 def cast_vote(candidate_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Casts a vote and checks if we have a winner."""
     if not current_user.hub_id:
         raise HTTPException(status_code=400, detail="You must be in a Hub to vote.")
 
-    # 1. Ensure they haven't voted already
     existing_vote = db.query(models.HubVote).filter(
         models.HubVote.hub_id == current_user.hub_id,
         models.HubVote.voter_id == current_user.id
@@ -1343,7 +1258,6 @@ def cast_vote(candidate_id: int, db: Session = Depends(get_db), current_user: mo
     if existing_vote:
         raise HTTPException(status_code=400, detail="You have already cast your vote.")
 
-    # 2. Prevent voting for yourself
     candidate = db.query(models.HubCandidate).filter(models.HubCandidate.id == candidate_id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found.")
@@ -1351,24 +1265,16 @@ def cast_vote(candidate_id: int, db: Session = Depends(get_db), current_user: mo
     if candidate.farmer_id == current_user.id:
         raise HTTPException(status_code=400, detail="You cannot vote for yourself. A true leader needs the community's backing!")
 
-    # 3. Record the vote
     vote = models.HubVote(hub_id=current_user.hub_id, voter_id=current_user.id, candidate_id=candidate_id)
     db.add(vote)
-    db.commit() # Save the vote so it can be counted!
+    db.commit() 
 
-    # 4. AUTO-RESOLVE LOGIC: Did this vote trigger a winner?
     total_hub_members = db.query(models.User).filter(models.User.hub_id == current_user.hub_id).count()
-    
-    # We must query the DB again to get the fresh count including the vote we just saved
     candidate_votes = db.query(models.HubVote).filter(models.HubVote.candidate_id == candidate_id).count()
-
-    # 🔥 THE FIX: If there are exactly 2 members, 1 vote is enough to win!
     majority_threshold = (total_hub_members / 2) if total_hub_members > 2 else 0
 
     if candidate_votes > majority_threshold:
-        # We have a winner!
         hub = db.query(models.Hub).filter(models.Hub.id == current_user.hub_id).first()
-        
         hub.coordinator_id = candidate.farmer_id
         db.commit()
         return {"message": "Vote cast! We have a winner! The election is over."}
@@ -1376,7 +1282,7 @@ def cast_vote(candidate_id: int, db: Session = Depends(get_db), current_user: mo
     return {"message": "Vote cast successfully!"}
 
 class ProcessDeliveryPayload(BaseModel):
-    action: str # "receive" or "reject"
+    action: str 
     actual_weight_kg: Optional[float] = None
     notes: Optional[str] = None
 
@@ -1387,24 +1293,23 @@ class HubPoolCreate(BaseModel):
 
 @app.post("/api/hubs/{hub_name}/pools")
 def create_hub_pool(hub_name: str, payload: HubPoolCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Creates an internal Hub aggregation pool and broadcasts an interactive widget to the chat."""
-    
-    # 1. Create a BulkRequest that acts as an Internal Hub Pool
+    # Give the hub pool an automatic 1-year deadline, since it's practically open-ended
+    deadline = datetime.utcnow() + timedelta(days=365)
     new_pool = models.BulkRequest(
-        buyer_name=f"Hub Pool: {hub_name}", # 🔥 This is the secret flag!
+        buyer_name=f"Hub Pool: {hub_name}", 
         crop_name=payload.crop_name,
         target_weight_kg=payload.target_weight_kg,
         price_per_kg=payload.price_per_kg,
         county="Hub Internal",
         status="Open",
         squad_status="gathering",
-        coordinator_id=current_user.id # The Hub Admin is the coordinator!
+        deadline_time=deadline, # 🔥 SAVES DEADLINE
+        coordinator_id=current_user.id 
     )
     db.add(new_pool)
     db.commit()
     db.refresh(new_pool)
 
-    # 2. Inject the Interactive Widget Payload into the Chat
     chat_payload = f"POOL_REQ|{new_pool.id}|{payload.crop_name}|{payload.target_weight_kg}|{payload.price_per_kg}"
     chat_msg = models.HubMessage(
         hub_name=hub_name,
@@ -1418,35 +1323,27 @@ def create_hub_pool(hub_name: str, payload: HubPoolCreate, db: Session = Depends
 
 @app.get("/api/hubs/deliveries")
 def get_hub_deliveries(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Fetches Hub Pools for Hub Admins OR Corporate Contracts for Elected Coordinators."""
-    
-    # Check if they are a Hub Admin
     my_hub = db.query(models.Hub).filter(models.Hub.coordinator_id == current_user.id).first()
     
-    # Get all active pools/squads
     active_pools = db.query(models.BulkRequest).filter(
         models.BulkRequest.squad_status.in_(["gathering", "voting", "active", "in_transit", "delivered"])
     ).all()
     
     results = []
     for pool in active_pools:
-        # 🔥 THE SMART ROUTER LOGIC
         is_hub_pool = pool.buyer_name and pool.buyer_name.startswith("Hub Pool:")
         is_authorized = False
         
         if is_hub_pool:
-            # Hub Admins only see THEIR Hub's pool
             if my_hub and pool.buyer_name == f"Hub Pool: {my_hub.name}":
                 is_authorized = True
         else:
-            # Corporate Contracts only show up for the Elected Coordinator
             if pool.coordinator_id == current_user.id:
                 is_authorized = True
                 
         if not is_authorized:
             continue
 
-        # Skip completed or empty squads
         if pool.squad_status == "gathering":
             continue
 
@@ -1494,6 +1391,7 @@ def get_hub_deliveries(db: Session = Depends(get_db), current_user: models.User 
             "target_weight": pool.target_weight_kg,
             "total_actual": total_actual,
             "status": ui_status,
+            "deadline_time": pool.deadline_time.isoformat() if getattr(pool, 'deadline_time', None) else None, # 🔥 TIMER
             "farmer_count": len([p for p in pledges if p.status != 'rejected']),
             "roster": roster 
         })
@@ -1502,7 +1400,6 @@ def get_hub_deliveries(db: Session = Depends(get_db), current_user: models.User 
 
 @app.post("/api/hubs/deliveries/{squad_id}/process")
 def process_hub_delivery(squad_id: int, payload: ProcessDeliveryPayload, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows Coordinator to accept or reject an ENTIRE Squad's truck at once."""
     squad = db.query(models.BulkRequest).filter(models.BulkRequest.id == squad_id).first()
     if not squad:
         raise HTTPException(status_code=404, detail="Squad not found.")
@@ -1510,8 +1407,6 @@ def process_hub_delivery(squad_id: int, payload: ProcessDeliveryPayload, db: Ses
     pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == squad_id).all()
 
     if payload.action == "receive":
-        # 🔥 THE PRO-RATA ALGORITHM
-        # If the scale reads 490kg, but they pledged 500kg, we divide the loss fairly.
         actual_total = payload.actual_weight_kg or sum(p.pledged_weight_kg for p in pledges)
         pledged_total = sum(p.pledged_weight_kg for p in pledges)
         
@@ -1519,7 +1414,6 @@ def process_hub_delivery(squad_id: int, payload: ProcessDeliveryPayload, db: Ses
 
         for pledge in pledges:
             pledge.status = "received"
-            # Calculate their exact physical contribution
             pledge.actual_weight_kg = round(pledge.pledged_weight_kg * ratio, 2)
             pledge.notes = payload.notes or "Verified and stored at Hub."
 
@@ -1535,9 +1429,7 @@ def process_hub_delivery(squad_id: int, payload: ProcessDeliveryPayload, db: Ses
 def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     unified_deliveries = []
     
-    # ==========================================
-    # 1. FETCH BULK SQUAD PLEDGES
-    # ==========================================
+
     pledges = db.query(models.Pledge).filter(models.Pledge.farmer_id == current_user.id).all()
     
     for p in pledges:
@@ -1570,6 +1462,7 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
         unified_deliveries.append({
             "id": f"BLK-{p.id:04d}", 
             "type": "Co-op Pool" if is_internal_pool else "Bulk Contract",
+            "pledge_id": p.id, # 🔥 THE FIX: Now Flutter knows the exact Pledge ID!
             "crop": contract.crop_name, 
             "weight_kg": p.pledged_weight_kg,
             "actual_kg": p.actual_weight_kg, 
@@ -1578,15 +1471,14 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
             "status": p.status, 
             "buyer": "Your Local Co-op" if is_internal_pool else contract.buyer_name, 
             "notes": display_notes,
+            "deadline_time": contract.deadline_time.isoformat() + "Z" if getattr(contract, 'deadline_time', None) else None,
             "is_coordinator": contract.coordinator_id == current_user.id, 
             "bulk_request_id": contract.id, 
             "squad_status": contract.squad_status,
             "all_squad_received": all_squad_received 
         })
 
-    # ==========================================
-    # 2. FETCH DIRECT SALES (🔥 WHERE THE ERROR WAS)
-    # ==========================================
+    
     try:
         direct_orders = db.query(models.MarketOrder).join(models.MarketListing).filter(
             models.MarketListing.farmer_id == current_user.id
@@ -1618,8 +1510,8 @@ def get_my_deliveries(db: Session = Depends(get_db), current_user: models.User =
                 "buyer_phone": buyer.phone_number if buyer else "No phone",
                 "buyer_address": custom_address, 
                 "delivery_method": clean_method,
-                "payment_method": getattr(order, 'payment_method', 'pay_now'), # 🔥 Sent to Flutter!
-                "notes": getattr(order, 'dispute_notes', "Direct order from marketplace.")
+                "payment_method": getattr(order, 'payment_method', 'pay_now'), 
+                "dispute_notes": getattr(order, 'dispute_notes', "Direct order from marketplace.")
             })
     except Exception as e:
         print(f"Direct Sales fetch error: {e}")
@@ -1634,7 +1526,6 @@ class MessageCreate(BaseModel):
 
 @app.put("/api/deliveries/squad/{bulk_request_id}/status")
 def update_squad_delivery_status(bulk_request_id: int, payload: SquadStatusUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows the Squad Coordinator to move the entire squad's delivery along the timeline."""
     req = db.query(models.BulkRequest).filter(models.BulkRequest.id == bulk_request_id).first()
     if not req:
         raise HTTPException(status_code=404, detail="Contract not found.")
@@ -1642,7 +1533,6 @@ def update_squad_delivery_status(bulk_request_id: int, payload: SquadStatusUpdat
     if req.coordinator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the elected Squad Coordinator can update the transit status!")
 
-    # 🔥 THE FIX: Tell the Master Contract that the squad is moving!
     req.squad_status = payload.status
 
     squad_pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == bulk_request_id).all()
@@ -1666,7 +1556,6 @@ def update_qa_status(pledge_id: int, payload: QAUpdate, db: Session = Depends(ge
     if contract.buyer_name != current_user.full_name:
         raise HTTPException(status_code=403, detail="Unauthorized.")
 
-    # 🔥 THE SMART REJECTION ENGINE
     if payload.status in ["disputed", "rejected", "returning"]:
         farmer = db.query(models.User).filter(models.User.id == pledge.farmer_id).first()
         buyer = db.query(models.User).filter(models.User.id == contract.buyer_id).first()
@@ -1683,11 +1572,9 @@ def update_qa_status(pledge_id: int, payload: QAUpdate, db: Session = Depends(ge
             farmer.escrow_balance -= refund_amount
             
             if is_pickup:
-                # Face-to-Face: Instant refund to Available
                 if buyer: buyer.available_balance = (buyer.available_balance or 0.0) + refund_amount
                 pledge.status = "rejected"
             else:
-                # Doorstep: Move to Buyer Escrow for safety
                 if buyer: buyer.escrow_balance = (buyer.escrow_balance or 0.0) + refund_amount
                 pledge.status = "returning"
         else:
@@ -1696,11 +1583,9 @@ def update_qa_status(pledge_id: int, payload: QAUpdate, db: Session = Depends(ge
         if payload.notes: pledge.dispute_notes = payload.notes
         
     else:
-        # Standard Approval
         pledge.status = payload.status
         if payload.notes: pledge.notes = payload.notes
 
-    # Auto-Complete Contract Logic
     if payload.status == "paid":
         all_pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == contract.id).all()
         if all(p.status in ['paid', 'rejected'] for p in all_pledges):
@@ -1714,35 +1599,42 @@ def update_direct_order_qa(order_id: int, payload: QAUpdate, db: Session = Depen
     order = db.query(models.MarketOrder).filter(models.MarketOrder.id == order_id).first()
     if not order: raise HTTPException(status_code=404, detail="Order not found.")
     
-    # 🔥 THE SMART REJECTION ENGINE (DIRECT ORDERS)
+    # Safe fallback for old orders that might not have a subtotal
+    farmer_payout = order.subtotal if (order.subtotal is not None and order.subtotal > 0) else order.total_price
+
     if payload.status in ["disputed", "rejected", "returning"]:
         listing = db.query(models.MarketListing).filter(models.MarketListing.id == order.listing_id).first()
         farmer = db.query(models.User).filter(models.User.id == listing.farmer_id).first() if listing else None
         buyer = db.query(models.User).filter(models.User.id == order.buyer_id).first()
         
         is_pickup = getattr(order, 'delivery_method', '').lower().find("pickup") != -1
-        refund_amount = order.total_price if getattr(order, 'payment_method', 'pay_now') == 'pay_now' else 0.0
         
-        if refund_amount > 0 and farmer and (farmer.escrow_balance or 0.0) >= refund_amount:
-            farmer.escrow_balance -= refund_amount
-            if is_pickup:
-                if buyer: buyer.available_balance = (buyer.available_balance or 0.0) + refund_amount
-                order.status = "rejected"
-            else:
-                if buyer: buyer.escrow_balance = (buyer.escrow_balance or 0.0) + refund_amount
-                order.status = "returning"
+        if getattr(order, 'payment_method', 'pay_now') == 'pay_now':
+            if farmer and (farmer.escrow_balance or 0.0) > 0:
+                # 🔥 BULLETPROOF FLOAT FIX: Force transfer whatever is smaller to avoid float crashes
+                transfer_amt = min(farmer.escrow_balance, farmer_payout)
+                farmer.escrow_balance -= transfer_amt
+                
+                if is_pickup:
+                    if buyer: buyer.available_balance = (buyer.available_balance or 0.0) + order.total_price
+                    order.status = "rejected"
+                else:
+                    if buyer: buyer.escrow_balance = (buyer.escrow_balance or 0.0) + order.total_price
+                    order.status = "returning"
         else:
             order.status = "rejected" if is_pickup else "returning"
             
         if payload.notes: order.dispute_notes = payload.notes
 
-    # INSTANT ESCROW RELEASE
     elif payload.status == "completed" and getattr(order, 'payment_method', 'pay_now') == 'pay_now':
         listing = db.query(models.MarketListing).filter(models.MarketListing.id == order.listing_id).first()
-        farmer = db.query(models.User).filter(models.User.id == listing.farmer_id).first()
-        if farmer and (farmer.escrow_balance or 0.0) >= order.total_price:
-            farmer.escrow_balance -= order.total_price
-            farmer.available_balance = (farmer.available_balance or 0.0) + order.total_price
+        farmer = db.query(models.User).filter(models.User.id == listing.farmer_id).first() if listing else None
+        
+        if farmer and (farmer.escrow_balance or 0.0) > 0:
+            transfer_amt = min(farmer.escrow_balance, farmer_payout)
+            farmer.escrow_balance -= transfer_amt
+            farmer.available_balance = (farmer.available_balance or 0.0) + transfer_amt
+            
         order.status = payload.status
 
     db.commit()
@@ -1750,7 +1642,9 @@ def update_direct_order_qa(order_id: int, payload: QAUpdate, db: Session = Depen
 
 @app.get("/api/buyer/dashboard")
 def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    contracts = db.query(models.BulkRequest).filter(models.BulkRequest.buyer_name == current_user.full_name).all()
+    contracts = db.query(models.BulkRequest).filter(
+        models.BulkRequest.buyer_id == current_user.id
+    ).all()
     
     total_capital_committed = 0
     total_tonnage_requested = 0
@@ -1759,13 +1653,12 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
     for contract in contracts:
         pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == contract.id).all()
         
-        # 🔥 THE FIX: Dynamically calculate adjusted weights based on No-Shows and actual scale weights
         expected_weight = 0
         actual_weight = 0
         
         roster = []
         for p in pledges:
-            if p.status != 'rejected': # Skip No-Shows!
+            if p.status != 'rejected': 
                 expected_weight += p.pledged_weight_kg
                 final_kg = p.actual_weight_kg if p.actual_weight_kg is not None else p.pledged_weight_kg
                 actual_weight += final_kg
@@ -1776,8 +1669,8 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
                         "pledge_id": p.id,
                         "farmer_name": farmer.full_name,
                         "status": p.status,
-                        "pledged_kg": p.pledged_weight_kg, # 🔥 ADDED: Fixes empty farmer list!
-                        "actual_kg": p.actual_weight_kg    # 🔥 ADDED: Fixes empty farmer list!
+                        "pledged_kg": p.pledged_weight_kg, 
+                        "actual_kg": p.actual_weight_kg    
                     })
 
         progress_pct = expected_weight / contract.target_weight_kg if contract.target_weight_kg > 0 else 0
@@ -1786,7 +1679,6 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
         if c_status != "completed":
             c_status = "fulfilled" if expected_weight >= contract.target_weight_kg else "active"
 
-        # 🔥 SELF-HEALING: Force Corporate Contracts to be Pay On Delivery
         is_hub_pool = contract.buyer_name and contract.buyer_name.startswith("Hub Pool:")
         if not is_hub_pool and getattr(contract, 'payment_method', 'pay_now') != "pay_on_delivery":
             contract.payment_method = "pay_on_delivery"
@@ -1795,6 +1687,16 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
         coord = db.query(models.User).filter(models.User.id == contract.coordinator_id).first()
         coord_phone = coord.phone_number if coord else "Awaiting Election"
         pickup_loc = f"{coord.village}, {coord.ward}" if coord else "Hub Location Pending"
+        
+        coord_lat, coord_lng = -1.2921, 36.8219 # Default Nairobi
+        
+        if coord and coord.latitude:
+            coord_lat, coord_lng = coord.latitude, coord.longitude
+        elif is_hub_pool:
+            hub_name = contract.buyer_name.replace("Hub Pool: ", "").strip()
+            hub = db.query(models.Hub).filter(models.Hub.name == hub_name).first()
+            if hub and hub.center_latitude:
+                coord_lat, coord_lng = hub.center_latitude, hub.center_longitude
 
         original_price = contract.target_weight_kg * contract.price_per_kg
         adjusted_price = actual_weight * contract.price_per_kg
@@ -1810,16 +1712,18 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
             "price_per_kg": contract.price_per_kg, 
             "progress_percentage": min(progress_pct, 1.0),
             "payment_status": getattr(contract, 'payment_status', 'pending'),
-            "payment_method": getattr(contract, 'payment_method', 'pay_on_delivery'), # 🔥 ADDED! Syncs UI
+            "payment_method": getattr(contract, 'payment_method', 'pay_on_delivery'),
             "status": c_status, 
             "roster": roster,
             "coordinator_phone": coord_phone, 
             "pickup_location": pickup_loc,
+            "lat": coord_lat, 
+            "lng": coord_lng, 
+            "deadline_time": contract.deadline_time.isoformat() + "Z" if getattr(contract, 'deadline_time', None) else None,
             "original_price": original_price,  
             "adjusted_price": adjusted_price   
         })
 
-    # 🔥 THE FIX: Fetch Direct Cart Orders
     market_orders = db.query(models.MarketOrder).filter(models.MarketOrder.buyer_id == current_user.id).all()
     direct_orders = []
     
@@ -1848,9 +1752,11 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
             "status": order.status,
             "farmer_name": farmer.full_name if farmer else "Local Farmer",
             "farmer_phone": farmer.phone_number if farmer else "N/A",
+            "lat": farmer.latitude if farmer and farmer.latitude else -1.2921, 
+            "lng": farmer.longitude if farmer and farmer.longitude else 36.8219, 
             "delivery_method": clean_method,
-            "payment_method": getattr(order, 'payment_method', 'pay_now'), # 🔥 Sent to Flutter!
-            "dispute_notes": getattr(order, 'dispute_notes', None),           
+            "payment_method": getattr(order, 'payment_method', 'pay_now'), 
+            "dispute_notes": getattr(order, 'dispute_notes', None),            
         })
 
     return {
@@ -1863,25 +1769,20 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: models.User
         "direct_orders": direct_orders 
     }
 
-class BulkRequestCreate(BaseModel):
-    crop_name: str
-    target_weight_kg: float
-    price_per_kg: float
-    county: str
-    ward: Optional[str] = None
-
 @app.post("/api/buyer/contracts")
 def create_bulk_contract(payload: BulkRequestCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows a buyer to post a new Bulk Contract to the Marketplace."""
-    
+    deadline = datetime.utcnow() + timedelta(hours=payload.deadline_hours)
+
     new_contract = models.BulkRequest(
-        buyer_name=current_user.full_name, # Auto-filled from their profile!
+        buyer_name=current_user.full_name, 
         crop_name=payload.crop_name,
         target_weight_kg=payload.target_weight_kg,
         price_per_kg=payload.price_per_kg,
         county=payload.county,
         ward=payload.ward,
-        status="Open"
+        urgency=payload.urgency,
+        status="Open",
+        deadline_time=deadline # 🔥 SAVES DEADLINE
     )
     
     db.add(new_contract)
@@ -1896,26 +1797,22 @@ def complete_pledge_delivery(
     db: Session = Depends(get_db), 
     current_user: models.User = Depends(get_current_user)
 ):
-    # 1. Find the pledge
     pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
     if not pledge:
         raise HTTPException(status_code=404, detail="Pledge not found")
 
-    # 2. Security Check: Only buyers can release escrow
     if current_user.role != "buyer":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Security Error: Only the Corporate Buyer can verify quality and release Escrow funds."
         )
 
-    # 3. Logic Check: Ensure it actually arrived at the hub first!
     if pledge.status != "received_at_hub":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot complete order. Current status is '{pledge.status}', but it must be 'received_at_hub' first."
         )
 
-    # 4. Release Escrow!
     pledge.status = "completed"
     db.commit()
     db.refresh(pledge)
@@ -1924,12 +1821,14 @@ def complete_pledge_delivery(
 
 @app.post("/bulk-requests/", response_model=schemas.BulkRequestRead)
 def create_bulk_request(
-    request: schemas.BulkRequestCreate, 
+    request: BulkRequestCreate, 
     db: Session = Depends(get_db), 
     current_user: models.User = Depends(get_current_user)
 ):
     if current_user.role != "buyer":
         raise HTTPException(status_code=403, detail="Only Corporate Buyers can post bulk requests.")
+
+    deadline = datetime.utcnow() + timedelta(hours=request.deadline_hours)
 
     new_request = models.BulkRequest(
         buyer_id=current_user.id,
@@ -1941,7 +1840,8 @@ def create_bulk_request(
         urgency=request.urgency,
         status="Open",
         squad_status="gathering",
-        payment_method="pay_on_delivery" # 🔥 FORCED: All normal contracts are POD!
+        deadline_time=deadline, 
+        payment_method="pay_on_delivery" 
     )
     
     try:
@@ -1969,7 +1869,8 @@ def get_active_bulk_requests(db: Session = Depends(get_db), current_user: models
             "id": req.id, "crop_name": req.crop_name, "target_weight_kg": req.target_weight_kg,
             "total_pledged": total_pledged, "price_per_kg": req.price_per_kg,
             "buyer_name": req.buyer_name, "county": req.county,
-            "ward": req.ward, "urgency": req.urgency, # 🔥 Added
+            "ward": req.ward, "urgency": req.urgency, 
+            "deadline_time": req.deadline_time.isoformat() + "Z" if getattr(req, 'deadline_time', None) else None, 
             "has_pledged": has_pledged 
         })
     return results
@@ -1995,7 +1896,6 @@ def get_my_market_listings(db: Session = Depends(get_db), current_user: models.U
             "total_price": o.total_price, "status": o.status
         } for o in orders_query]
 
-        # 🔥 THE FIX: Bulletproof decoding
         parsed_units = []
         if listing.unit_pricing:
             if isinstance(listing.unit_pricing, str):
@@ -2016,7 +1916,7 @@ def get_my_market_listings(db: Session = Depends(get_db), current_user: models.U
             "id": listing.id, "crop_name": listing.crop_name,
             "available_kg": listing.available_kg, "price_per_kg": display_price, 
             "unit_type": display_unit, "is_selling_by_weight": listing.is_selling_by_weight,
-            "unit_pricing": parsed_units, # Send the clean array to Flutter!
+            "unit_pricing": parsed_units, 
             "image_base64": getattr(listing, 'image_base64', None), 
             "orders": orders_list, "orders_count": len(orders_list)
         })
@@ -2036,7 +1936,6 @@ def create_pledge(
     if not bulk_req:
         raise HTTPException(status_code=404, detail="Bulk request not found.")
 
-    # 1. Prevent a farmer from pledging twice to the same order
     existing_pledge = db.query(models.Pledge).filter(
         models.Pledge.bulk_request_id == request_id,
         models.Pledge.farmer_id == current_user.id
@@ -2045,7 +1944,6 @@ def create_pledge(
     if existing_pledge:
         raise HTTPException(status_code=400, detail="You have already pledged to this request.")
 
-    # 🔥 2. NEW: THE OVER-PLEDGE FIREWALL
     current_total = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == request_id).scalar() or 0.0
 
     if current_total >= bulk_req.target_weight_kg:
@@ -2055,7 +1953,6 @@ def create_pledge(
         remaining = bulk_req.target_weight_kg - current_total
         raise HTTPException(status_code=400, detail=f"Cannot over-pledge. Only {remaining}kg remaining to fill the pool.")
 
-    # 3. Create the Pledge
     new_pledge = models.Pledge(
         bulk_request_id=request_id,
         farmer_id=current_user.id,
@@ -2065,20 +1962,16 @@ def create_pledge(
     
     try:
         db.add(new_pledge)
-        db.flush() # Save it temporarily to calculate math
+        db.flush() 
 
-        # 🔥 THE SOLO FULFILLMENT & ELECTION CHECK
         total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == request_id).scalar() or 0.0
         
-        # If the pool is 100% full...
         if total_pledged >= bulk_req.target_weight_kg:
-            bulk_req.status = "fulfilled" # Lock it so no one else can join
+            bulk_req.status = "fulfilled" 
             
-            # 🔥 FIX 1: Hub Pools NEVER hold elections! The Admin is already the boss.
             if bulk_req.buyer_name.startswith("Hub Pool:"):
                 bulk_req.squad_status = "active"
             else:
-                # Corporate Contracts logic
                 unique_farmers = db.query(models.Pledge.farmer_id).filter(models.Pledge.bulk_request_id == request_id).distinct().count()
                 if unique_farmers == 1:
                     bulk_req.coordinator_id = current_user.id
@@ -2092,18 +1985,16 @@ def create_pledge(
         
     except Exception as e:
         db.rollback()
-        print(f"❌ DB Error during pledge creation: {e}")
+        print(f"DB Error during pledge creation: {e}")
         raise HTTPException(status_code=500, detail="Failed to process your pledge.")
 
 
 @app.post("/api/squads/{squad_id}/run")
 def run_for_squad_coordinator(squad_id: int, payload: SquadPitch, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows a farmer to submit their name and pitch to be the squad coordinator."""
     squad = db.query(models.BulkRequest).filter(models.BulkRequest.id == squad_id).first()
     if not squad:
         raise HTTPException(status_code=404, detail="Squad not found")
         
-    # 🔥 THE FIX: Correctly using models.SquadCandidate
     existing = db.query(models.SquadCandidate).filter(
         models.SquadCandidate.bulk_request_id == squad_id, 
         models.SquadCandidate.farmer_id == current_user.id
@@ -2112,7 +2003,6 @@ def run_for_squad_coordinator(squad_id: int, payload: SquadPitch, db: Session = 
     if existing:
         raise HTTPException(status_code=400, detail="You are already on the ballot!")
         
-    # Add them to the ballot
     new_candidate = models.SquadCandidate(
         bulk_request_id=squad_id,
         farmer_id=current_user.id,
@@ -2125,9 +2015,6 @@ def run_for_squad_coordinator(squad_id: int, payload: SquadPitch, db: Session = 
 
 @app.post("/api/squads/{squad_id}/vote")
 def cast_squad_vote(squad_id: int, payload: SquadVoteRequest, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows a farmer to vote for a coordinator."""
-    # Ensure they haven't voted yet
-    # 🔥 THE FIX: Correctly using models.SquadVote
     existing_vote = db.query(models.SquadVote).filter(
         models.SquadVote.bulk_request_id == squad_id, 
         models.SquadVote.farmer_id == current_user.id
@@ -2143,19 +2030,17 @@ def cast_squad_vote(squad_id: int, payload: SquadVoteRequest, db: Session = Depe
     )
     db.add(new_vote)
     
-    # Let's add the win logic: Find the candidate and increment their votes
     candidate = db.query(models.SquadCandidate).filter(models.SquadCandidate.id == payload.candidate_id).first()
     if candidate:
         candidate.votes = (candidate.votes or 0) + 1
         
-        # Check if this vote concludes the election
         total_members = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == squad_id).count()
         majority_threshold = (total_members / 2) if total_members > 2 else 0
 
         if candidate.votes > majority_threshold:
             squad = db.query(models.BulkRequest).filter(models.BulkRequest.id == squad_id).first()
             squad.coordinator_id = candidate.farmer_id
-            squad.squad_status = "active" # Lock the election, it's time to deliver!
+            squad.squad_status = "active" 
     
     db.commit()
     return {"message": "Vote cast successfully!"}
@@ -2173,7 +2058,6 @@ class AIChatRequest(BaseModel):
 @app.post("/api/ai-chat")
 def ask_ai_chat(request: AIChatRequest):
     try:
-        # 1. Give the AI context about EXACTLY who it is talking to
         system_instruction = f"""
         You are the MkulimaHub AI Assistant, an expert in Kenyan agriculture and market dynamics.
         You are talking to {request.user_name}, who is a {request.role} located in {request.location}.
@@ -2183,38 +2067,28 @@ def ask_ai_chat(request: AIChatRequest):
         or diseases, YOU MUST USE YOUR TOOLS to fetch live data from the database before answering.
         """
 
-        # 2. Initialize Gemini and equip it with your live database tools
         model = genai.GenerativeModel(
             model_name='gemini-2.5-flash',
             tools=[get_market_spot_price, predict_price_trend, get_weather_forecast, diagnose_crop_disease],
             system_instruction=system_instruction
         )
 
-        # 3. Start a chat session with Auto-Function Calling enabled!
-        # (This means if the AI needs a price, it will automatically run your Python function, 
-        # get the database result, and then write the final message to the user!)
         chat = model.start_chat(enable_automatic_function_calling=True)
-        
-        # 4. Send the user's message to Gemini
         response = chat.send_message(request.message)
 
         return {"reply": response.text}
 
     except Exception as e:
-        print(f"❌ AI Chat Error: {e}")
+        print(f"AI Chat Error: {e}")
         raise HTTPException(status_code=500, detail="The AI is currently resting. Please try again in a moment!")
     
 @app.get("/api/squads/{bulk_request_id}/messages")
 def get_squad_messages(bulk_request_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Fetches the chat history for a specific delivery squad."""
-    
-    # 1. Fetch all messages for this specific contract, sorted from oldest to newest
     messages = db.query(models.SquadMessage)\
                  .filter(models.SquadMessage.bulk_request_id == bulk_request_id)\
                  .order_by(models.SquadMessage.created_at.asc())\
                  .all()
 
-    # 2. Package them beautifully for Flutter
     chat_history = []
     for msg in messages:
         chat_history.append({
@@ -2222,7 +2096,6 @@ def get_squad_messages(bulk_request_id: int, db: Session = Depends(get_db), curr
             "sender_id": msg.sender_id,
             "sender_name": msg.sender.full_name if msg.sender else "Unknown Farmer",
             "message": msg.message,
-            # We send 'is_me' so Flutter knows whether to put the chat bubble on the left or right!
             "is_me": msg.sender_id == current_user.id, 
             "created_at": msg.created_at.isoformat()
         })
@@ -2232,14 +2105,10 @@ def get_squad_messages(bulk_request_id: int, db: Session = Depends(get_db), curr
 
 @app.post("/api/squads/{bulk_request_id}/messages")
 def send_squad_message(bulk_request_id: int, payload: MessageCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Posts a new message to the squad chat."""
-    
-    # Optional Security: Ensure the contract actually exists
     contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == bulk_request_id).first()
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found.")
 
-    # Create and save the message
     new_message = models.SquadMessage(
         bulk_request_id=bulk_request_id,
         sender_id=current_user.id,
@@ -2253,11 +2122,9 @@ def send_squad_message(bulk_request_id: int, payload: MessageCreate, db: Session
 
 @app.get("/api/buyer/marketplace")
 def get_hub_marketplace(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows Corporate Buyers to browse fully aggregated Hub Pools ready for purchase."""
     if current_user.role != "buyer":
         raise HTTPException(status_code=403, detail="Only buyers can browse the enterprise marketplace.")
 
-    # 1. Find all Internal Hub Pools
     hub_pools = db.query(models.BulkRequest).filter(
         models.BulkRequest.buyer_name.like("Hub Pool:%")
     ).all()
@@ -2265,14 +2132,11 @@ def get_hub_marketplace(db: Session = Depends(get_db), current_user: models.User
     available_inventory = []
     
     for pool in hub_pools:
-        # 2. Check exactly how much has been pledged
         total_pledged = db.query(func.sum(models.Pledge.pledged_weight_kg)).filter(models.Pledge.bulk_request_id == pool.id).scalar() or 0.0
         
-        # 🔥 THE FIX: Strictly hide the pool if it hasn't reached its target weight!
         if total_pledged < pool.target_weight_kg:
             continue
             
-        # Extract the real Hub Name from the buyer_name string
         hub_name_clean = pool.buyer_name.replace("Hub Pool: ", "")
 
         available_inventory.append({
@@ -2298,13 +2162,10 @@ def unattended_dropoff(
     db: Session = Depends(get_db), 
     current_user: models.User = Depends(get_current_user)
 ):
-    """🔥 NEW: EVERY farmer (Hub Pool or Corporate) does their OWN individual digital drop-off!"""
     squad = db.query(models.BulkRequest).filter(models.BulkRequest.id == squad_id).first()
     if not squad:
         raise HTTPException(status_code=404, detail="Squad not found.")
 
-    # We completely removed the Hub Pool split. 
-    # Now, we strictly look for THIS specific farmer's pledge and update ONLY theirs.
     my_pledge = db.query(models.Pledge).filter(
         models.Pledge.bulk_request_id == squad_id,
         models.Pledge.farmer_id == current_user.id
@@ -2319,33 +2180,27 @@ def unattended_dropoff(
     db.commit()
     return {"message": "Drop-off submitted for Audit!"}
 
-class SquadStatusUpdate(BaseModel):
-    status: str
-
 @app.post("/api/squads/{squad_id}/status")
 def update_squad_status(squad_id: int, payload: SquadStatusUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows the Squad Driver to update the physical location of the truck."""
     squad = db.query(models.BulkRequest).filter(models.BulkRequest.id == squad_id).first()
     if not squad or squad.coordinator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the driver can update the physical status.")
     
     pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == squad_id).all()
     for pledge in pledges:
-        pledge.status = payload.status # e.g., 'in_transit' or 'delivered'
+        pledge.status = payload.status 
         
     db.commit()
     return {"message": f"Squad successfully moved to {payload.status}"}
 
 @app.put("/api/pledges/{pledge_id}/status")
 def update_individual_pledge_status(pledge_id: int, payload: SquadStatusUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows a Coordinator to verify, OR a Farmer to hand over their own goods."""
     pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
     if not pledge:
         raise HTTPException(status_code=404, detail="Pledge not found.")
         
     contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == pledge.bulk_request_id).first()
     
-    # 🔥 THE FIX: Same Bulletproof Security Check here!
     is_coordinator = (contract.coordinator_id == current_user.id)
     is_hub_admin = False
     
@@ -2369,7 +2224,7 @@ class MarketListingCreate(BaseModel):
     base_inventory_kg: float
     is_selling_by_weight: bool
     price_per_kg: Optional[float] = None
-    unit_pricing: List[Dict[str, Any]] = [] # 🔥 Accepts the array from Flutter!
+    unit_pricing: List[Dict[str, Any]] = [] 
     image_base64: Optional[str] = None
 
 @app.post("/api/market/listings")
@@ -2381,7 +2236,6 @@ def create_market_listing(payload: MarketListingCreate, db: Session = Depends(ge
         available_kg=payload.base_inventory_kg,
         is_selling_by_weight=payload.is_selling_by_weight,
         price_per_kg=payload.price_per_kg,
-        # 🔥 THE FIX: Strictly encode as a JSON string so it saves with double quotes!
         unit_pricing=json.dumps(payload.unit_pricing) if payload.unit_pricing else "[]",
         image_base64=payload.image_base64 
     )
@@ -2398,11 +2252,10 @@ class MarketOrderCreate(BaseModel):
 @app.post("/api/market/listings/{listing_id}/order")
 def create_market_order(
     listing_id: int, 
-    payload: MarketOrderCreate, # Ensure this matches your schema name
+    payload: MarketOrderCreate, 
     db: Session = Depends(get_db), 
     current_user: models.User = Depends(get_current_user)
 ):
-    """Allows a buyer to place an order on a farmer's marketplace listing."""
     listing = db.query(models.MarketListing).filter(models.MarketListing.id == listing_id).first()
     
     if not listing:
@@ -2411,7 +2264,6 @@ def create_market_order(
     if listing.available_kg is not None and listing.available_kg <= 0:
         raise HTTPException(status_code=400, detail="This listing is sold out")
 
-    # Safely unpack the JSON string back into a Python List
     parsed_units = []
     if listing.unit_pricing:
         if isinstance(listing.unit_pricing, str):
@@ -2425,7 +2277,6 @@ def create_market_order(
         elif isinstance(listing.unit_pricing, list):
             parsed_units = listing.unit_pricing
 
-    # 1. Calculate the Raw Subtotal (The Farmer's Crop Value)
     total_kg_ordered = 0
     subtotal = 0.0
     
@@ -2444,24 +2295,33 @@ def create_market_order(
         total_kg_ordered = payload.quantity * unit_kg
         subtotal = payload.quantity * unit_price
 
-    # Make sure the farmer actually has enough inventory
     if listing.available_kg is not None and total_kg_ordered > listing.available_kg:
         raise HTTPException(status_code=400, detail=f"Only {listing.available_kg} KG available. You ordered {total_kg_ordered} KG.")
 
-    # ==========================================
-    # 🔥 THE FINANCIAL LEDGER & TAX ENGINE
-    # ==========================================
     service_fee = subtotal * 0.02
-    delivery_fee = 1500.0 if "Delivery|" in payload.delivery_method else 0.0
     
-    # KRA Rule: 16% VAT applies to the Service Fee and Delivery Fee (Raw crops are exempt)
+    delivery_fee = 0.0
+    if "Delivery|" in payload.delivery_method:
+        try:
+            buyer_county = payload.delivery_method.split("|")[1].split(",")[0].strip().lower()
+            farmer_county = listing.farmer.county.lower() if listing.farmer and listing.farmer.county else "nairobi"
+            
+            far_counties = ['mandera', 'wajir', 'garissa', 'turkana', 'marsabit', 'samburu', 'isiolo', 'lamu', 'tana river']
+            
+            if farmer_county == buyer_county:
+                delivery_fee = 500.0
+            elif buyer_county in far_counties or farmer_county in far_counties:
+                delivery_fee = 3500.0
+            else:
+                delivery_fee = 1500.0
+        except Exception:
+            delivery_fee = 1500.0 # Fallback safety
+            
     taxable_amount = service_fee + delivery_fee
     tax_amount = taxable_amount * 0.16
     
-    # Calculate Grand Total
     final_total = subtotal + service_fee + delivery_fee + tax_amount
 
-    # Create the order with bucketed finances
     new_order = models.MarketOrder(
         listing_id=listing.id,
         buyer_id=current_user.id,
@@ -2474,7 +2334,7 @@ def create_market_order(
         total_price=final_total,
         status="pending",
         delivery_method=payload.delivery_method,
-        payment_method=payload.payment_method # 🔥 Save the buyer's choice!
+        payment_method=payload.payment_method 
     )
     
     db.add(new_order)
@@ -2484,18 +2344,15 @@ def create_market_order(
 class PoolPurchasePayload(BaseModel):
     county: str
     ward: str
-    # 🔥 Add this line so FastAPI doesn't drop the data!
     payment_method: Optional[str] = "pay_now"
 
 @app.post("/api/market/pools/{pool_id}/purchase")
 def purchase_hub_pool(pool_id: int, payload: PoolPurchasePayload, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows a Corporate Buyer to checkout a fully gathered Hub Pool."""
     pool = db.query(models.BulkRequest).filter(models.BulkRequest.id == pool_id).first()
     
     if not pool:
         raise HTTPException(status_code=404, detail="Hub Pool not found.")
         
-    # If they already bought it (e.g., retrying checkout), just update the payment method
     if pool.buyer_id == current_user.id:
         if hasattr(payload, 'payment_method'):
             pool.payment_method = payload.payment_method
@@ -2505,18 +2362,13 @@ def purchase_hub_pool(pool_id: int, payload: PoolPurchasePayload, db: Session = 
     if pool.buyer_id is not None:
         raise HTTPException(status_code=400, detail="This pool has already been secured by another buyer.")
         
-    # 1. Transfer ownership and set delivery coordinates
     pool.buyer_id = current_user.id
-    pool.buyer_name = current_user.full_name 
+   
+    
     pool.county = payload.county
     pool.ward = payload.ward 
     
-    # 2. 🔥 THE STATE MACHINE FIX
-    # Keep it pending so it waits for the STK push (if Pay Now) or Hub approval (if POD)
     pool.status = "pending"
-    
-    # 3. 🔥 RECORD THE PAYMENT INTENT
-    # Safely extract payment_method, defaulting to 'pay_now' if not provided
     pool.payment_method = getattr(payload, 'payment_method', 'pay_now')
     
     db.commit()
@@ -2531,7 +2383,6 @@ def get_all_market_listings(db: Session = Depends(get_db)):
         if listing.available_kg is not None and listing.available_kg <= 0:
             continue
 
-        # 🔥 THE FIX: Bulletproof decoding
         parsed_units = []
         if listing.unit_pricing:
             if isinstance(listing.unit_pricing, str):
@@ -2553,7 +2404,7 @@ def get_all_market_listings(db: Session = Depends(get_db)):
             "available_kg": listing.available_kg if listing.available_kg is not None else getattr(listing, 'weight_kg', 0),
             "price_per_kg": display_price, "unit_type": display_unit,
             "is_selling_by_weight": listing.is_selling_by_weight,
-            "unit_pricing": parsed_units, # Send the clean array back to Flutter!
+            "unit_pricing": parsed_units,
             "image_base64": getattr(listing, 'image_base64', None),
             "farmer_name": listing.farmer.full_name if listing.farmer else "Local Farmer",
             "county": listing.farmer.county if listing.farmer else "Kenya"
@@ -2562,12 +2413,10 @@ def get_all_market_listings(db: Session = Depends(get_db)):
 
 @app.put("/api/squads/{squad_id}/delegate")
 def delegate_coordinator(squad_id: int, new_coordinator_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows current coordinator to pass the crown to someone else."""
     squad = db.query(models.BulkRequest).filter(models.BulkRequest.id == squad_id).first()
     if squad.coordinator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the current coordinator can delegate.")
     
-    # Ensure new coordinator is actually in the squad!
     is_member = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == squad_id, models.Pledge.farmer_id == new_coordinator_id).first()
     if not is_member:
         raise HTTPException(status_code=400, detail="New coordinator must be a member of the squad.")
@@ -2582,18 +2431,15 @@ class ReceiveLineItemPayload(BaseModel):
 
 @app.put("/api/pledges/{pledge_id}/receive-line-item")
 def receive_individual_pledge(pledge_id: int, payload: ReceiveLineItemPayload, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Allows Hub Admin OR Squad Coordinator to weigh and receive a specific farmer's goods."""
     pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
     if not pledge:
         raise HTTPException(status_code=404, detail="Pledge not found.")
         
     contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == pledge.bulk_request_id).first()
     
-    # 🔥 THE FIX: Bulletproof Security Check for Hub Admins
     is_coordinator = (contract.coordinator_id == current_user.id)
     is_hub_admin = False
     
-    # Check if the user is the admin of the Hub this pool belongs to
     if contract.buyer_name.startswith("Hub Pool:"):
         hub_name = contract.buyer_name.replace("Hub Pool: ", "").strip()
         hub = db.query(models.Hub).filter(models.Hub.name == hub_name).first()
@@ -2606,17 +2452,14 @@ def receive_individual_pledge(pledge_id: int, payload: ReceiveLineItemPayload, d
     original_kg = pledge.pledged_weight_kg
     actual_kg = payload.actual_weight_kg
 
-    # 🔥 ESCROW REBALANCE ENGINE
-    # If the farmer brought LESS than promised, refund the missing 10% deposit back to the Buyer!
     if actual_kg < original_kg:
         difference_kg = original_kg - actual_kg
         refund_amount = 0.0
         
-        # Calculate exactly how much of the missing goods was locked in Escrow
         if getattr(contract, 'payment_status', '') == 'deposit_paid':
-            refund_amount = (difference_kg * contract.price_per_kg) * 0.10 # 10% Refund
+            refund_amount = (difference_kg * contract.price_per_kg) * 0.10
         elif getattr(contract, 'payment_status', '') == 'fully_paid_escrow':
-            refund_amount = (difference_kg * contract.price_per_kg) * 1.0 # 100% Refund
+            refund_amount = (difference_kg * contract.price_per_kg) * 1.0
 
         if refund_amount > 0:
             farmer = db.query(models.User).filter(models.User.id == pledge.farmer_id).first()
@@ -2658,7 +2501,6 @@ def update_market_listing(
     if payload.price_per_kg is not None:
         listing.price_per_kg = payload.price_per_kg
         
-    # 🔥 THE FIX: Strictly encode as a JSON string!
     listing.unit_pricing = json.dumps(payload.unit_pricing) if payload.unit_pricing else "[]"
     
     db.commit()
@@ -2670,7 +2512,6 @@ def delete_market_listing(
     db: Session = Depends(get_db), 
     current_user: models.User = Depends(get_current_user)
 ):
-    """Allows a farmer to permanently delete a listing."""
     listing = db.query(models.MarketListing).filter(
         models.MarketListing.id == listing_id, 
         models.MarketListing.farmer_id == current_user.id
@@ -2692,7 +2533,6 @@ def update_direct_order_status(order_id: int, payload: dict, db: Session = Depen
 
     if new_status == "refunded" and getattr(order, 'payment_method', 'pay_now') == "pay_now" and order.status != "refunded":
         buyer = db.query(models.User).filter(models.User.id == order.buyer_id).first()
-        # 🔥 Release from Buyer's Escrow to Available!
         if buyer and (buyer.escrow_balance or 0.0) >= order.total_price:
             buyer.escrow_balance -= order.total_price
             buyer.available_balance = (buyer.available_balance or 0.0) + order.total_price
@@ -2706,15 +2546,10 @@ def update_direct_order_status(order_id: int, payload: dict, db: Session = Depen
 
 @app.post("/api/admin/fix-orphans")
 def fix_orphaned_farmers(db: Session = Depends(get_db)):
-    """Fixes farmers who are stuck assigned to a Hub that no longer exists."""
-    
-    # 1. Get all valid Hub IDs that actually exist right now
     valid_hubs = db.query(models.Hub.id).all()
     valid_hub_ids = [h[0] for h in valid_hubs]
     
-    # 2. Find all farmers who have a hub_id, but it's NOT in the valid list
     if not valid_hub_ids:
-        # If there are ZERO hubs in the database, EVERYONE should be independent
         orphans = db.query(models.User).filter(models.User.hub_id.isnot(None)).all()
     else:
         orphans = db.query(models.User).filter(
@@ -2722,7 +2557,6 @@ def fix_orphaned_farmers(db: Session = Depends(get_db)):
             ~models.User.hub_id.in_(valid_hub_ids)
         ).all()
         
-    # 3. Reset them back to independent
     count = 0
     for farmer in orphans:
         farmer.hub_id = None
@@ -2733,7 +2567,6 @@ def fix_orphaned_farmers(db: Session = Depends(get_db)):
 
 @app.get("/api/buyer/insights")
 def get_buyer_insights(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Calculates live market price averages, regional hotspots, and AI metrics."""
     if current_user.role != "buyer":
         raise HTTPException(status_code=403, detail="Unauthorized")
 
@@ -2742,9 +2575,6 @@ def get_buyer_insights(db: Session = Depends(get_db), current_user: models.User 
         models.MarketListing.status == "active"
     ).all()
 
-    # ==========================================
-    # 1. PLATFORM METRICS (Always visible, prevents empty screens)
-    # ==========================================
     total_hubs = db.query(models.Hub).count()
     total_farmers = db.query(models.User).filter(models.User.role == "farmer").count()
     total_tonnage = sum(l.available_kg for l in listings)
@@ -2755,9 +2585,6 @@ def get_buyer_insights(db: Session = Depends(get_db), current_user: models.User 
         "total_tonnage": f"{total_tonnage:,.0f} KG"
     }
 
-    # ==========================================
-    # 2. PRICE TRENDS
-    # ==========================================
     crop_stats = {}
     for l in listings:
         if l.crop_name not in crop_stats:
@@ -2776,9 +2603,6 @@ def get_buyer_insights(db: Session = Depends(get_db), current_user: models.User 
             "isUp": True
         })
 
-    # ==========================================
-    # 3. SUPPLY HOTSPOTS
-    # ==========================================
     county_stats = {}
     for l in listings:
         county = l.farmer.county if l.farmer and l.farmer.county else "Unknown Region"
@@ -2800,9 +2624,6 @@ def get_buyer_insights(db: Session = Depends(get_db), current_user: models.User 
         color_idx += 1
     hotspots = sorted(hotspots, key=lambda x: x["raw_vol"], reverse=True)
 
-    # ==========================================
-    # 4. SMART ALERTS & AI FORECASTS
-    # ==========================================
     alerts = []
     if not hotspots:
         alerts.append({
@@ -2818,7 +2639,6 @@ def get_buyer_insights(db: Session = Depends(get_db), current_user: models.User 
             "type": "opportunity"
         })
 
-    # Pull real ML forecasts from the DB
     cached_preds = db.query(models.CachedPrediction).limit(3).all()
     forecasts = []
     for c in cached_preds:
@@ -2837,9 +2657,34 @@ def get_buyer_insights(db: Session = Depends(get_db), current_user: models.User 
         "forecasts": forecasts
     }
 
+@app.get("/api/farmer/dashboard")
+def get_farmer_dashboard(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    harvests = db.query(models.Harvest).filter(models.Harvest.farmer_id == current_user.id).all()
+    total_yield = sum([h.weight_kg for h in harvests])
+
+    orders = db.query(models.MarketOrder).join(models.MarketListing).filter(
+        models.MarketListing.farmer_id == current_user.id,
+        models.MarketOrder.status.in_(["pending", "processing", "in_transit", "disputed"])
+    ).all()
+    
+    deliveries_list = []
+    for o in orders:
+        deliveries_list.append({
+            "type": "solo",
+            "id": o.id,
+            "crop_name": o.listing.crop_name if o.listing else "Produce",
+            "weight_kg": o.quantity_ordered,
+            "status": o.status
+        })
+        
+    return {
+        "total_yield_kg": round(total_yield, 2),
+        "deliveries_list": deliveries_list
+    }
+
+
 @app.post("/api/dev/pay-now/{order_id}")
 def simulate_mpesa_payment(order_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """DEV ONLY: Simulates a successful Safaricom M-Pesa STK Push Callback"""
     order = db.query(models.MarketOrder).filter(models.MarketOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -2847,13 +2692,9 @@ def simulate_mpesa_payment(order_id: int, db: Session = Depends(get_db), current
     listing = db.query(models.MarketListing).filter(models.MarketListing.id == order.listing_id).first()
     farmer = db.query(models.User).filter(models.User.id == listing.farmer_id).first()
 
-    # 🔥 1. THE ESCROW LOCK (Simulating cash arriving in MkulimaHub's bank)
-    # We add the money strictly to the Farmer's LOCKED balance.
     if farmer:
         farmer.escrow_balance = (farmer.escrow_balance or 0.0) + order.total_price
 
-    # 🔥 2. LOGISTICS TRIGGER
-    # Since we have the money, tell the farmer to dispatch the truck!
     order.status = "in_transit"
 
     db.commit()
@@ -2861,7 +2702,6 @@ def simulate_mpesa_payment(order_id: int, db: Session = Depends(get_db), current
 
 @app.post("/api/market/pools/{contract_id}/pay/mpesa")
 def trigger_bulk_mpesa_payment(contract_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Triggers the STK Push for a Bulk HubPool Contract"""
     contract = db.query(models.BulkContract).filter(models.BulkContract.id == contract_id).first()
     
     if not contract:
@@ -2870,7 +2710,6 @@ def trigger_bulk_mpesa_payment(contract_id: int, db: Session = Depends(get_db), 
     if not current_user.phone_number:
         raise HTTPException(status_code=400, detail="Please add an M-Pesa phone number in your profile settings.")
 
-    # 🔥 THE 1 BOB TRICK FOR BULK ORDERS
     is_sandbox = os.getenv("MPESA_ENVIRONMENT", "sandbox").lower() == "sandbox"
     actual_amount_to_charge = 1 if is_sandbox else contract.original_price
 
@@ -2882,7 +2721,6 @@ def trigger_bulk_mpesa_payment(contract_id: int, db: Session = Depends(get_db), 
             order_id=f"BULK-{contract.id}"
         )
         
-        # Save the Daraja tracking ID so the Webhook can find it later
         if response and "CheckoutRequestID" in response:
             contract.checkout_request_id = response["CheckoutRequestID"]
             db.commit()
@@ -2896,7 +2734,6 @@ def trigger_bulk_mpesa_payment(contract_id: int, db: Session = Depends(get_db), 
 
 @app.get("/api/farmer/wallet")
 def get_farmer_wallet(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Returns the user's available and locked escrow balances."""
     available = current_user.available_balance or 0.0
     escrow = current_user.escrow_balance or 0.0
     
@@ -2908,7 +2745,6 @@ def get_farmer_wallet(db: Session = Depends(get_db), current_user: models.User =
 
 @app.post("/api/buyer/orders/{order_id}/pay/mpesa")
 def initiate_mpesa_payment(order_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Triggers the STK Push prompt on the buyer's phone."""
     order = db.query(models.MarketOrder).filter(models.MarketOrder.id == order_id, models.MarketOrder.buyer_id == current_user.id).first()
     
     if not order:
@@ -2917,23 +2753,18 @@ def initiate_mpesa_payment(order_id: int, db: Session = Depends(get_db), current
     if not current_user.phone_number:
         raise HTTPException(status_code=400, detail="Please add a phone number to your profile first.")
 
-    # Fire the Daraja Engine!
     is_sandbox = os.getenv("MPESA_ENVIRONMENT") == "sandbox"
     
-    # 🔥 THE 1 BOB TRICK
-    # If we are testing, override the charge to 1 KES. Otherwise, charge the real Grand Total.
     actual_amount_to_charge = 1 if is_sandbox else order.total_price
 
-    # Fire the Daraja Engine!
     mpesa = MpesaClient()
     response = mpesa.trigger_stk_push(
         phone_number=current_user.phone_number,
-        amount=actual_amount_to_charge, # <--- Uses 1 Bob for testing!
+        amount=actual_amount_to_charge, 
         order_id=str(order.id)
     )
 
     if response.get("success"):
-        # Save the Safaricom Tracking ID so the webhook can find this order later
         order.checkout_request_id = response["checkout_id"]
         db.commit()
         return {"message": "STK Push sent! Please check your phone to enter your PIN.", "checkout_id": response["checkout_id"]}
@@ -2951,9 +2782,7 @@ async def mpesa_stk_webhook(request: Request):
 
     db = SessionLocal()
     try:
-        # ==========================================
-        # 1. IS IT A SOLO ORDER?
-        # ==========================================
+       
         order = db.query(models.MarketOrder).filter(models.MarketOrder.checkout_request_id == checkout_id).first()
         if order:
             if result_code == 0:
@@ -2963,28 +2792,29 @@ async def mpesa_stk_webhook(request: Request):
 
                 if farmer:
                     payment_method = getattr(order, 'payment_method', 'pay_now')
+                    
+                    
+                    farmer_payout = order.subtotal
+
                     if payment_method == 'pay_on_delivery':
-                        farmer.available_balance = (farmer.available_balance or 0.0) + order.total_price
+                        farmer.available_balance = (farmer.available_balance or 0.0) + farmer_payout
                         order.status = "completed"
                     else:
-                        farmer.escrow_balance = (farmer.escrow_balance or 0.0) + order.total_price
+                        farmer.escrow_balance = (farmer.escrow_balance or 0.0) + farmer_payout
                         order.status = "processing"
                 
-                # 🔥 PREVENT DOUBLE PROCESSING BY CONSUMING THE RECEIPT
                 order.checkout_request_id = None 
                 db.commit()
             else:
                 print(f"❌ Payment failed for Solo Order {order.id}")
             return {"ResultCode": 0, "ResultDesc": "Accepted"}
 
-        # ==========================================
-        # 2. IS IT A BULK CONTRACT? (10% Deposit OR 90% Balance)
-        # ==========================================
+      
         pool = db.query(models.BulkRequest).filter(models.BulkRequest.checkout_request_id == checkout_id).first()
         if pool:
             if result_code == 0:
                 if pool.payment_status == 'pending':
-                    # 🔥 HEALING LOGIC IN WEBHOOK
+                    # Auto-heal: Ensure Standard Contracts are always Pay On Delivery (10% upfront)
                     is_hub_pool = pool.buyer_name and pool.buyer_name.startswith("Hub Pool:")
                     if not is_hub_pool and getattr(pool, 'payment_method', 'pay_now') != "pay_on_delivery":
                         pool.payment_method = "pay_on_delivery"
@@ -2992,13 +2822,13 @@ async def mpesa_stk_webhook(request: Request):
                     payment_method = getattr(pool, 'payment_method', 'pay_now')
                     
                     if payment_method == 'pay_now':
-                        print(f"✅ 100% Upfront Paid for Contract {pool.id}!")
+                        print(f"100% Upfront Paid for Hub Pool {pool.id}!")
                         pool.payment_status = "fully_paid_escrow"
-                        lock_percentage = 1.0 # Lock 100%
+                        lock_percentage = 1.0 
                     else:
-                        print(f"✅ 10% Deposit Paid for Contract {pool.id}!")
+                        print(f"10% Deposit Paid for Contract {pool.id}!")
                         pool.payment_status = "deposit_paid"
-                        lock_percentage = 0.10 # Lock 10%
+                        lock_percentage = 0.10 
                     
                     pledges = db.query(models.Pledge).filter(models.Pledge.bulk_request_id == pool.id).all()
                     for p in pledges:
@@ -3007,12 +2837,11 @@ async def mpesa_stk_webhook(request: Request):
                             deposit_cut = (p.pledged_weight_kg * pool.price_per_kg) * lock_percentage
                             f.escrow_balance = (f.escrow_balance or 0.0) + deposit_cut
                             
-                    pool.status = "active"
+                    pool.status = "active" 
                     pool.checkout_request_id = None
                     
                 elif pool.payment_status == 'deposit_paid':
-                    # --- 90% BALANCE SUCCESS ---
-                    print(f"✅ 90% Balance Paid for Contract {pool.id}!")
+                    print(f"90% Balance Paid for Contract {pool.id}!")
                     pool.payment_status = "fully_paid"
                     pool.status = "completed"
 
@@ -3028,23 +2857,28 @@ async def mpesa_stk_webhook(request: Request):
                         
                         deposit_held = total_value * 0.10
                         pod_paid = total_value * 0.90
+                        
+                        coordinator_commission = total_value * 0.01
+                        farmer_net_pod = pod_paid - coordinator_commission
 
                         if f:
                             if (f.escrow_balance or 0.0) >= deposit_held:
                                 f.escrow_balance -= deposit_held
-                            f.available_balance = (f.available_balance or 0.0) + deposit_held + pod_paid
+                            f.available_balance = (f.available_balance or 0.0) + deposit_held + farmer_net_pod
+                            
+                            if pool.coordinator_id:
+                                coord = db.query(models.User).filter(models.User.id == pool.coordinator_id).first()
+                                if coord:
+                                    coord.available_balance = (coord.available_balance or 0.0) + coordinator_commission
 
                         p.status = "paid"
-                    pool.checkout_request_id = None # Consume Receipt
+                    pool.checkout_request_id = None 
                     
                 db.commit()
             else:
                 print(f"❌ Payment failed for Contract {pool.id}")
             return {"ResultCode": 0, "ResultDesc": "Accepted"}
 
-        # ==========================================
-        # 3. IS IT AN INDIVIDUAL PLEDGE POD? (90%)
-        # ==========================================
         pledge = db.query(models.Pledge).filter(models.Pledge.checkout_request_id == checkout_id).first()
         if pledge:
             if result_code == 0:
@@ -3054,19 +2888,28 @@ async def mpesa_stk_webhook(request: Request):
                 
                 actual_kg = pledge.actual_weight_kg if pledge.actual_weight_kg else pledge.pledged_weight_kg
                 total_value = actual_kg * contract.price_per_kg
+                
                 deposit_held = total_value * 0.10
                 pod_paid = total_value * 0.90
+                
+                coordinator_commission = total_value * 0.01
+                farmer_net_pod = pod_paid - coordinator_commission
                 
                 if f:
                     if (f.escrow_balance or 0.0) >= deposit_held:
                         f.escrow_balance -= deposit_held
-                    f.available_balance = (f.available_balance or 0.0) + deposit_held + pod_paid
+                    f.available_balance = (f.available_balance or 0.0) + deposit_held + farmer_net_pod
+                    
+                    if contract.coordinator_id:
+                        coord = db.query(models.User).filter(models.User.id == contract.coordinator_id).first()
+                        if coord:
+                            coord.available_balance = (coord.available_balance or 0.0) + coordinator_commission
                     
                 pledge.status = "paid"
-                pledge.checkout_request_id = None # Consume Receipt
+                pledge.checkout_request_id = None 
                 db.commit()
             else:
-                print(f"❌ Payment failed for Pledge {pledge.id}")
+                print(f"Payment failed for Pledge {pledge.id}")
             return {"ResultCode": 0, "ResultDesc": "Accepted"}
 
     except Exception as e:
@@ -3082,7 +2925,6 @@ def pay_contract_deposit(contract_id: int, db: Session = Depends(get_db), curren
     contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == contract_id).first()
     if not contract: raise HTTPException(status_code=404, detail="Contract not found")
         
-    # 🔥 HEALING: Force standard contracts to POD just in case!
     is_hub_pool = contract.buyer_name and contract.buyer_name.startswith("Hub Pool:")
     if not is_hub_pool and getattr(contract, 'payment_method', 'pay_now') != "pay_on_delivery":
         contract.payment_method = "pay_on_delivery"
@@ -3090,7 +2932,6 @@ def pay_contract_deposit(contract_id: int, db: Session = Depends(get_db), curren
 
     total_price = contract.target_weight_kg * contract.price_per_kg
     
-    # 🔥 Charge 100% if Pay Now, 10% if POD
     payment_method = getattr(contract, 'payment_method', 'pay_now')
     deposit_amount = total_price if payment_method == 'pay_now' else (total_price * 0.10)
     
@@ -3112,7 +2953,6 @@ def pay_pledge_pod(pledge_id: int, db: Session = Depends(get_db), current_user: 
     pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
     contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == pledge.bulk_request_id).first()
     
-    # Calculate 90% of this specific farmer's actual goods
     actual_kg = pledge.actual_weight_kg if pledge.actual_weight_kg else pledge.pledged_weight_kg
     total_value = actual_kg * contract.price_per_kg
     pod_amount = total_value * 0.90
@@ -3129,11 +2969,14 @@ def pay_pledge_pod(pledge_id: int, db: Session = Depends(get_db), current_user: 
         return {"message": "STK Push sent!", "checkout_id": response["checkout_id"]}
     raise HTTPException(status_code=400, detail="M-Pesa push failed.")
 
-# 🔥 THE ESCROW REFUND ENGINE (For Rejected Farmers)
 @app.put("/api/qa/pledges/{pledge_id}/refund")
 def refund_rejected_pledge(pledge_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """Called when a Farmer accepts a return. Moves funds from Buyer Escrow -> Buyer Available."""
     pledge = db.query(models.Pledge).filter(models.Pledge.id == pledge_id).first()
+    
+    if not pledge:
+        raise HTTPException(status_code=404, detail="Pledge not found in database.")
+        
     contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == pledge.bulk_request_id).first()
     buyer = db.query(models.User).filter(models.User.id == contract.buyer_id).first()
     
@@ -3141,7 +2984,6 @@ def refund_rejected_pledge(pledge_id: int, db: Session = Depends(get_db), curren
     total_value = actual_kg * contract.price_per_kg
     deposit_held = total_value * 1.0 if getattr(contract, 'payment_status', '') == 'fully_paid_escrow' else total_value * 0.10
     
-    # 🔥 Release from Buyer's Escrow to Available!
     if buyer and (buyer.escrow_balance or 0.0) >= deposit_held:
         buyer.escrow_balance -= deposit_held
         buyer.available_balance = (buyer.available_balance or 0.0) + deposit_held
@@ -3155,7 +2997,6 @@ def pay_contract_balance(contract_id: int, db: Session = Depends(get_db), curren
     """Triggers ONE M-Pesa prompt for the remaining 90% of the ENTIRE contract."""
     contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == contract_id).first()
     
-    # Find all pledges the buyer hasn't explicitly rejected
     pledges = db.query(models.Pledge).filter(
         models.Pledge.bulk_request_id == contract_id,
         models.Pledge.status.in_(['received', 'pending_audit', 'delivered'])
@@ -3176,7 +3017,6 @@ def pay_contract_balance(contract_id: int, db: Session = Depends(get_db), curren
     response = mpesa.trigger_stk_push(phone_number=current_user.phone_number, amount=charge, order_id=f"BAL-{contract.id}")
 
     if response and response.get("success"):
-        # Overwrite the checkout ID so the webhook catches the 90% payment!
         contract.checkout_request_id = response["checkout_id"]
         db.commit()
         return {"message": "STK Push sent!", "checkout_id": response["checkout_id"]}
@@ -3184,9 +3024,6 @@ def pay_contract_balance(contract_id: int, db: Session = Depends(get_db), curren
 
 @app.post("/api/dev/reset-wallets")
 def reset_all_wallets(db: Session = Depends(get_db)):
-    """DEV ONLY: Wipes all escrow and available balances back to zero."""
-    
-    # Fetch all users (Buyers and Farmers)
     users = db.query(models.User).all()
     
     count = 0
@@ -3200,7 +3037,6 @@ def reset_all_wallets(db: Session = Depends(get_db)):
 
 @app.post("/api/contracts/{contract_id}/release-escrow")
 def release_contract_escrow(contract_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Releases the 100% funds from Escrow for Pay Now contracts after inspection."""
     contract = db.query(models.BulkRequest).filter(models.BulkRequest.id == contract_id).first()
     if contract.payment_status != 'fully_paid_escrow':
         raise HTTPException(status_code=400, detail="Contract is not fully funded in Escrow.")
@@ -3212,22 +3048,38 @@ def release_contract_escrow(contract_id: int, db: Session = Depends(get_db), cur
 
     for p in pledges:
         f = db.query(models.User).filter(models.User.id == p.farmer_id).first()
+        
+        locked_escrow_amount = p.pledged_weight_kg * contract.price_per_kg
+        
         actual_kg = p.actual_weight_kg if p.actual_weight_kg else p.pledged_weight_kg
-        total_value = actual_kg * contract.price_per_kg
+        total_earned = actual_kg * contract.price_per_kg
 
-        if f and (f.escrow_balance or 0.0) >= total_value:
-            f.escrow_balance -= total_value
-            f.available_balance = (f.available_balance or 0.0) + total_value
+        coordinator_commission = total_earned * 0.01
+        farmer_net_payout = total_earned - coordinator_commission
+
+        if f:
+            if (f.escrow_balance or 0.0) >= locked_escrow_amount:
+                f.escrow_balance -= locked_escrow_amount
+            else:
+                f.escrow_balance = 0.0 
+            
+            f.available_balance = (f.available_balance or 0.0) + farmer_net_payout
+            
+            # Route the 1% aggregation fee to the elected Coordinator
+            if contract.coordinator_id:
+                coord = db.query(models.User).filter(models.User.id == contract.coordinator_id).first()
+                if coord:
+                    coord.available_balance = (coord.available_balance or 0.0) + coordinator_commission
+
         p.status = "paid"
 
     contract.payment_status = "fully_paid"
     contract.status = "completed"
     db.commit()
-    return {"message": "Escrow released successfully!"}
+    return {"message": "Escrow released and Commission Paid successfully!"}
 
 @app.get("/api/buyer/wallet")
 def get_buyer_wallet(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Returns the live escrow and available balances for the Buyer."""
     available = current_user.available_balance or 0.0
     escrow = current_user.escrow_balance or 0.0
     return {
@@ -3241,18 +3093,37 @@ class WithdrawPayload(BaseModel):
 
 @app.post("/api/wallet/withdraw")
 def withdraw_funds(payload: WithdrawPayload, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Deducts funds from available balance and simulates sending to M-Pesa."""
     if payload.amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount.")
         
     if (current_user.available_balance or 0.0) < payload.amount:
         raise HTTPException(status_code=400, detail="Insufficient available balance.")
         
-    # Deduct the balance
     current_user.available_balance -= payload.amount
-    
-    # NOTE: Here is where you would call Daraja B2C API to actually send the money
-    # mpesa.trigger_b2c_payout(phone=current_user.phone_number, amount=payload.amount)
     
     db.commit()
     return {"message": f"Successfully withdrew KES {payload.amount}. Funds are on the way to your M-Pesa!"}
+
+@app.get("/api/payments/status/{checkout_id}")
+def check_payment_status(checkout_id: str, db: Session = Depends(get_db)):
+    order = db.query(models.MarketOrder).filter(models.MarketOrder.checkout_request_id == checkout_id).first()
+    if order:
+        return {"status": "pending"} # Still waiting on Daraja
+        
+    contract = db.query(models.BulkRequest).filter(models.BulkRequest.checkout_request_id == checkout_id).first()
+    if contract:
+        return {"status": "pending"}
+
+    pledge = db.query(models.Pledge).filter(models.Pledge.checkout_request_id == checkout_id).first()
+    if pledge:
+        return {"status": "pending"}
+
+    return {"status": "completed"}
+
+@app.post("/api/admin/force-train-models")
+def force_train_models(db: Session = Depends(get_db)):
+    """DEV ONLY: Forces Prophet to train on all scraped data immediately."""
+    import threading
+    thread = threading.Thread(target=scheduled_ml_predictions)
+    thread.start()
+    return {"message": "Prophet Training sequence initiated in the background. Check terminal logs!"}

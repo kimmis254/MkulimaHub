@@ -19,7 +19,10 @@ tables_to_drop = [
     "hub_votes",
     "hub_requests",
     "hub_messages",
-    "hub_candidates"
+    "hub_candidates",
+    "users",
+    "harvests",
+    "market_prices"
 
 
 ]

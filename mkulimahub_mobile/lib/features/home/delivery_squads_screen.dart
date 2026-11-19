@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:mkulimahub_mobile/core/api_client.dart';
+import 'package:mkulimahub_mobile/core/api/api_client.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:mkulimahub_mobile/features/home/squad_chat_screen.dart';
 import 'package:mkulimahub_mobile/features/home/unattended_dropoff_screen.dart';
@@ -28,6 +28,33 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
     _loadMyPledges();
   }
 
+  // 🔥 TIMER HELPER
+  String _getTimeRemaining(String? deadlineIso) {
+    if (deadlineIso == null) return "No Deadline";
+    try {
+      // Force UTC formatting in case the backend missed the "Z"
+      if (!deadlineIso.endsWith("Z")) {
+        deadlineIso += "Z";
+      }
+
+      // Parse and convert to the phone's exact local time (EAT)
+      DateTime deadline = DateTime.parse(deadlineIso).toLocal();
+      Duration diff = deadline.difference(DateTime.now());
+
+      if (diff.isNegative) return "Expired";
+
+      int days = diff.inDays;
+      int hours = diff.inHours % 24;
+      int minutes = diff.inMinutes % 60; // 🔥 Added minutes!
+
+      if (days > 0) return "${days}d ${hours}h";
+      if (hours == 0) return "${minutes}m";
+      return "${hours}h ${minutes}m";
+    } catch (e) {
+      return "No Deadline";
+    }
+  }
+
   Future<void> _loadMyPledges() async {
     setState(() => _isLoading = true);
     final results = await Future.wait([_apiClient.getMyPledges(), _apiClient.getProfile()]);
@@ -50,6 +77,7 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
     }
   }
 
+  // ... [Voting Sheet logic remains identical] ...
   void _showVotingSheet(Map<String, dynamic> bulkRequest) {
     final TextEditingController pitchController = TextEditingController();
     bool isSubmitting = false;
@@ -274,6 +302,10 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
               bool isPickup = bulkRequest['delivery_method']?.toString().contains('Pickup') ?? false;
               bool isPaymentSecured = bulkRequest['payment_status'] == 'deposit_paid' || bulkRequest['payment_status'] == 'fully_paid_escrow' || bulkRequest['payment_status'] == 'fully_paid';
 
+              // 🔥 Timer parsing
+              String timeLeft = _getTimeRemaining(bulkRequest['deadline_time']);
+              bool isUrgent = timeLeft == "Expired" || (timeLeft.contains("h") && !timeLeft.contains("d"));
+
               List roster = bulkRequest['squad_roster'] ?? [];
               bool allAudited = true;
               bool anyInTransit = false;
@@ -296,7 +328,19 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
               double myPledgedKg = (pledge['pledged_weight_kg'] ?? 0).toDouble();
               double myActualKg = (pledge['actual_weight_kg'] ?? myPledgedKg).toDouble();
               double pricePerKg = (bulkRequest['price_per_kg'] ?? 0).toDouble();
-              double myExpectedPayout = myActualKg * pricePerKg;
+
+              double grossPayout = myActualKg * pricePerKg;
+              double myCoordinatorFee = grossPayout * 0.01; // 1% deduction
+              double myExpectedPayout = grossPayout - myCoordinatorFee;
+
+              // If I am the Coordinator, calculate my total commission from the whole squad!
+              double totalSquadCommission = 0.0;
+              if (isCoordinator && roster.isNotEmpty) {
+                for (var member in roster) {
+                  double memberKg = (member['actual_kg'] ?? member['pledge_kg'] ?? 0).toDouble();
+                  totalSquadCommission += (memberKg * pricePerKg) * 0.01;
+                }
+              }
 
               return FadeInUp(
                 delay: Duration(milliseconds: index * 100),
@@ -312,30 +356,59 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Container(padding: const EdgeInsets.all(12), decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle), child: Icon(LucideIcons.truck, color: Colors.teal.shade700)),
-                                const SizedBox(width: 15),
-                                Expanded(child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text("Contract #BR-${bulkRequest['id']}", style: GoogleFonts.poppins(color: Colors.teal.shade800, fontSize: 12, fontWeight: FontWeight.bold)),
-                                      Text(bulkRequest['buyer_name'] ?? 'Buyer', style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-                                    ])),
+                                Row(
+                                  children: [
+                                    Container(padding: const EdgeInsets.all(12), decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle), child: Icon(isPickup ? LucideIcons.store : LucideIcons.truck, color: Colors.teal.shade700)),
+                                    const SizedBox(width: 15),
+                                    Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text("Contract #BR-${bulkRequest['id']}", style: GoogleFonts.poppins(color: Colors.teal.shade800, fontSize: 12, fontWeight: FontWeight.bold)),
+                                          Text(bulkRequest['buyer_name'] ?? 'Buyer', style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                        ]),
+                                  ],
+                                ),
                                 IconButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SquadChatScreen(squadId: bulkRequest['id'], squadName: bulkRequest['crop_name'] ?? 'Produce'))), icon: const Icon(LucideIcons.messageCircle), color: Colors.teal.shade700)
                               ],
                             ),
 
-                            // 🔥 THE FIX: SHOW DESTINATION DETAILS IN SQUADS
+                            const SizedBox(height: 10),
+                            if (!(bulkRequest['buyer_name']?.toString().startsWith('Hub Pool:') ?? false) && bulkRequest['deadline_time'] != null) ...[
+                              const SizedBox(height: 10),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: isUrgent ? Colors.red.shade100 : Colors.teal.shade100, borderRadius: BorderRadius.circular(8)),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(LucideIcons.clock, size: 14, color: isUrgent ? Colors.red.shade800 : Colors.teal.shade800),
+                                    const SizedBox(width: 6),
+                                    Text("Time Left: $timeLeft", style: GoogleFonts.poppins(color: isUrgent ? Colors.red.shade900 : Colors.teal.shade900, fontSize: 11, fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                              ),
+                            ],
+
                             const SizedBox(height: 15),
                             Container(
-                              padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.teal.shade100)),
+                              padding: const EdgeInsets.all(16),
+                              width: double.infinity,
+                              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.teal.shade100)),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Row(children: [Icon(LucideIcons.mapPin, size: 14, color: Colors.teal.shade800), const SizedBox(width: 8), Text("Destination Details", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.teal.shade900))]),
-                                  const SizedBox(height: 4),
-                                  Text("${bulkRequest['ward'] ?? 'Address Pending'}, ${bulkRequest['county'] ?? ''}".trim(), style: GoogleFonts.poppins(fontSize: 11, color: Colors.teal.shade800)),
-                                  const SizedBox(height: 8),
+                                  Row(children: [Icon(LucideIcons.mapPin, size: 14, color: Colors.teal.shade800), const SizedBox(width: 8), Text(isPickup ? "Hub Address" : "Destination Details", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.teal.shade900))]),
+                                  const SizedBox(height: 10),
+
+                                  Text(
+                                    (bulkRequest['ward'] != null && bulkRequest['ward'].toString().length > 5)
+                                        ? "${bulkRequest['ward']}\n🌍 County: ${bulkRequest['county'] ?? ''}"
+                                        : "Address Pending, ${bulkRequest['county'] ?? 'Kenya'}",
+                                    style: GoogleFonts.poppins(fontSize: 12, color: Colors.teal.shade800, height: 1.5),
+                                  ),
+
+                                  const SizedBox(height: 10),
                                   Row(children: [Icon(LucideIcons.phone, size: 14, color: Colors.teal.shade800), const SizedBox(width: 8), Expanded(child: Text(bulkRequest['buyer_phone'] ?? 'No Phone', style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.teal.shade900)))]),
                                 ],
                               ),
@@ -351,11 +424,33 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                           children: [
                             Container(
                               padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.green.shade100)),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              child: Column(
                                 children: [
-                                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("My Contribution", style: GoogleFonts.poppins(color: Colors.green.shade800, fontSize: 12)), Text("${myActualKg.toStringAsFixed(1)} KG", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green.shade900))]),
-                                  Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text("My Payout", style: GoogleFonts.poppins(color: Colors.green.shade800, fontSize: 12)), Text("KES ${(myExpectedPayout).toStringAsFixed(0)}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green.shade900))]),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("My Contribution", style: GoogleFonts.poppins(color: Colors.green.shade800, fontSize: 12)), Text("${myActualKg.toStringAsFixed(1)} KG", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green.shade900))]),
+                                      Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                                        Text("My Payout (-1% Fee)", style: GoogleFonts.poppins(color: Colors.green.shade800, fontSize: 12)),
+                                        Text("KES ${(myExpectedPayout).toStringAsFixed(0)}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green.shade900))
+                                      ]),
+                                    ],
+                                  ),
+
+                                  // 🔥 THE NEW COORDINATOR COMMISSION BADGE
+                                  if (isCoordinator && totalSquadCommission > 0) ...[
+                                    const SizedBox(height: 15),
+                                    Container(
+                                      padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.purple.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.purple.shade100)),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Row(children: [const Icon(LucideIcons.award, size: 16, color: Colors.purple), const SizedBox(width: 8), Text("Coordinator Commission", style: GoogleFonts.poppins(color: Colors.purple.shade800, fontSize: 12, fontWeight: FontWeight.bold))]),
+                                          Text("+ KES ${totalSquadCommission.toStringAsFixed(0)}", style: GoogleFonts.poppins(color: Colors.purple.shade900, fontWeight: FontWeight.bold, fontSize: 14)),
+                                        ],
+                                      ),
+                                    )
+                                  ]
                                 ],
                               ),
                             ),
@@ -401,7 +496,8 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                           _buildPremiumButton(title: "Awaiting Coordinator Audit...", icon: LucideIcons.loader, gradientColors: [Colors.orange.shade400, Colors.orange.shade700], onTap: null)
                                         else if (pledge['status'] == 'received')
                                             _buildPremiumButton(title: "Goods Verified & Loaded ✅", icon: LucideIcons.checkCircle, gradientColors: [Colors.green.shade400, Colors.green.shade700], onTap: null)
-                                          else if (pledge['status'] == 'in_transit')
+
+                                          else if (pledge['status'] == 'in_transit' && !isPickup)
                                               _buildPremiumButton(
                                                   title: "Track Live Location 🗺️", icon: LucideIcons.map, gradientColors: [Colors.blue.shade400, Colors.blue.shade700],
                                                   onTap: () {
@@ -411,7 +507,7 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                   }
                                               )
                                             else if (pledge['status'] == 'delivered')
-                                                _buildPremiumButton(title: "Arrived at Destination 📍", icon: LucideIcons.mapPin, gradientColors: [Colors.indigo.shade400, Colors.indigo.shade700], onTap: null)
+                                                _buildPremiumButton(title: isPickup ? "Ready for Buyer Pickup 📍" : "Arrived at Destination 📍", icon: LucideIcons.mapPin, gradientColors: [Colors.indigo.shade400, Colors.indigo.shade700], onTap: null)
                                               else if (pledge['status'] == 'paid' || pledge['status'] == 'completed')
                                                   _buildPremiumButton(title: "Payment Secured ✅", icon: LucideIcons.checkCircle, gradientColors: [Colors.green.shade400, Colors.green.shade700], onTap: null)
                                                 else if (pledge['status'] == 'returning' || pledge['status'] == 'disputed')
@@ -419,7 +515,6 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                   else if (pledge['status'] == 'rejected' || pledge['status'] == 'refunded')
                                                       _buildPremiumButton(title: "Produce Cancelled / Refunded ❌", icon: LucideIcons.xCircle, gradientColors: [Colors.grey.shade400, Colors.grey.shade600], onTap: null),
 
-                                        // COORDINATOR MASTER CONTROLS
                                         if (isCoordinator) ...[
                                           const SizedBox(height: 20),
                                           const Divider(),
@@ -441,26 +536,16 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                             if (allAudited)
                                               _buildPremiumButton(
                                                   title: isPickup ? "Goods Ready for Buyer Pickup" : "Start Delivery Transit",
-                                                  icon: LucideIcons.truck, gradientColors: [Colors.black87, Colors.black],
+                                                  icon: isPickup ? LucideIcons.store : LucideIcons.truck, gradientColors: [Colors.black87, Colors.black],
                                                   onTap: () async {
-                                                    final error = await _apiClient.updateSquadDeliveryStatus(bulkRequest['id'], 'in_transit');
+                                                    final error = await _apiClient.updateSquadDeliveryStatus(bulkRequest['id'], isPickup ? 'delivered' : 'in_transit');
                                                     if (error == null) _loadMyPledges();
                                                   }
                                               )
                                             else
-                                              _buildPremiumButton(title: "Verify active goods to start transit", icon: LucideIcons.lock, gradientColors: [Colors.grey.shade400, Colors.grey.shade500], onTap: null)
+                                              _buildPremiumButton(title: isPickup ? "Verify active goods to clear for Pickup" : "Verify active goods to start transit", icon: LucideIcons.lock, gradientColors: [Colors.grey.shade400, Colors.grey.shade500], onTap: null)
                                           ]
-
-                                          else if (squadStatus == 'in_transit') ...[
-                                            _buildPremiumButton(
-                                                title: "View Live Tracking Map", icon: LucideIcons.map, gradientColors: [Colors.blue.shade400, Colors.blue.shade700],
-                                                onTap: () {
-                                                  Navigator.push(context, MaterialPageRoute(builder: (_) => OrderTrackingMap(
-                                                      entityName: "Squad Delivery #BR-${bulkRequest['id']}", status: "En Route"
-                                                  )));
-                                                }
-                                            ),
-                                            const SizedBox(height: 10),
+                                          else if (squadStatus == 'in_transit' && !isPickup) ...[
                                             _buildPremiumButton(
                                                 title: "Mark as Arrived (Ping Buyer)", icon: LucideIcons.mapPin, gradientColors: [Colors.indigo.shade400, Colors.indigo.shade700],
                                                 onTap: () async {
@@ -469,8 +554,8 @@ class _DeliverySquadsScreenState extends State<DeliverySquadsScreen> {
                                                 }
                                             )
                                           ]
-                                          else
-                                            _buildPremiumButton(title: "Waiting for Buyer QA...", icon: LucideIcons.loader, gradientColors: [Colors.orange.shade400, Colors.orange.shade700], onTap: null)
+                                          else if (squadStatus != 'active')
+                                              _buildPremiumButton(title: "Waiting for Buyer QA...", icon: LucideIcons.loader, gradientColors: [Colors.orange.shade400, Colors.orange.shade700], onTap: null)
                                         ]
                                       ]
                                     ]

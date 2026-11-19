@@ -4,7 +4,7 @@ import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:mkulimahub_mobile/core/api_client.dart'; 
+import 'package:mkulimahub_mobile/core/api/api_client.dart';
 
 class BuyerCreateOrderScreen extends StatefulWidget {
   const BuyerCreateOrderScreen({super.key});
@@ -15,20 +15,18 @@ class BuyerCreateOrderScreen extends StatefulWidget {
 
 class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
   final _formKey = GlobalKey<FormState>();
-  final ApiClient _apiClient = ApiClient(); 
-  
-  // 🔥 Free-Type Crop System
+  final ApiClient _apiClient = ApiClient();
+
   final TextEditingController _cropController = TextEditingController(text: "Maize");
-  
   final TextEditingController _weightController = TextEditingController();
   final TextEditingController _priceController = TextEditingController();
-  
-  // 🔥 New Delivery Details
   final TextEditingController _addressController = TextEditingController();
   final TextEditingController _contactController = TextEditingController();
 
-  // 🔥 47 Counties Cascading State
-  List<dynamic> _locationsData = []; 
+  // 🔥 THE DEADLINE CONTROLLER
+  final TextEditingController _timeController = TextEditingController(text: "24");
+
+  List<dynamic> _locationsData = [];
   List<String> _counties = [];
   List<String> _subCounties = [];
   List<String> _wards = [];
@@ -55,7 +53,6 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
     _priceController.addListener(_calculateTotal);
   }
 
-  // 🔥 Load Kenya JSON Data
   Future<void> _loadLocationData() async {
     try {
       final String response = await rootBundle.loadString('assets/data/kenya_locations.json');
@@ -67,7 +64,7 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
         });
       }
     } catch (e) {
-      debugPrint("Error loading locations JSON: $e");
+      debugPrint("Error loading locations: $e");
     }
   }
 
@@ -78,6 +75,7 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
     _cropController.dispose();
     _addressController.dispose();
     _contactController.dispose();
+    _timeController.dispose();
     super.dispose();
   }
 
@@ -89,7 +87,7 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
 
   void _submitOrder() async {
     if (!_formKey.currentState!.validate()) return;
-    
+
     if (_selectedCounty == null || _selectedSubCounty == null || _selectedWard == null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Please select the County, Sub-County, and Ward.", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)), backgroundColor: Colors.red.shade800));
       return;
@@ -97,7 +95,6 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
 
     setState(() => _isLoading = true);
 
-    // 🔥 PACK THE INTELLIGENCE CARD: We format this beautifully with line breaks so the Coordinator sees a clean card!
     String detailedDelivery = "📍 Sub-County: $_selectedSubCounty\n🏘️ Ward: $_selectedWard\n🏢 Address: ${_addressController.text.trim()}\n📞 Phone: ${_contactController.text.trim()}";
 
     final requestData = {
@@ -105,8 +102,9 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
       "target_weight_kg": double.tryParse(_weightController.text) ?? 0.0,
       "price_per_kg": double.tryParse(_priceController.text) ?? 0.0,
       "county": _selectedCounty,
-      "ward": detailedDelivery, // Sending the packaged string right to the Coordinator!
+      "ward": detailedDelivery,
       "urgency": _selectedUrgency,
+      "deadline_hours": int.tryParse(_timeController.text) ?? 24 // 🔥 PASSING THE DEADLINE
     };
 
     final error = await _apiClient.postBulkRequest(requestData);
@@ -115,7 +113,7 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
       setState(() => _isLoading = false);
       if (error == null) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Success! Order broadcasted to farmers.", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)), backgroundColor: Colors.teal.shade800));
-        Navigator.pop(context, true); 
+        Navigator.pop(context, true);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)), backgroundColor: Colors.red.shade800));
       }
@@ -148,31 +146,21 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
                       FadeInDown(delay: const Duration(milliseconds: 100), child: Text("This will be broadcasted to all verified farmers and aggregation hubs.", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13))),
                       const SizedBox(height: 30),
 
-                      // 🔥 DYNAMIC CROP INPUT
                       FadeInUp(
                         delay: const Duration(milliseconds: 200),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _buildModernField(
-                              controller: _cropController, label: "Specify Commodity", icon: LucideIcons.leaf,
-                              inputType: TextInputType.text, hint: "Type any crop name..."
-                            ),
+                            _buildModernField(controller: _cropController, label: "Specify Commodity", icon: LucideIcons.leaf, inputType: TextInputType.text, hint: "Type any crop name..."),
                             const SizedBox(height: 10),
                             SizedBox(
                               height: 35,
                               child: ListView.builder(
-                                scrollDirection: Axis.horizontal,
-                                itemCount: _popularCrops.length,
+                                scrollDirection: Axis.horizontal, itemCount: _popularCrops.length,
                                 itemBuilder: (context, index) {
                                   return GestureDetector(
                                     onTap: () => setState(() => _cropController.text = _popularCrops[index]),
-                                    child: Container(
-                                      margin: const EdgeInsets.only(right: 8), padding: const EdgeInsets.symmetric(horizontal: 16),
-                                      alignment: Alignment.center,
-                                      decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.teal.shade200)),
-                                      child: Text(_popularCrops[index], style: GoogleFonts.poppins(fontSize: 12, color: Colors.teal.shade800, fontWeight: FontWeight.w600)),
-                                    ),
+                                    child: Container(margin: const EdgeInsets.only(right: 8), padding: const EdgeInsets.symmetric(horizontal: 16), alignment: Alignment.center, decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.teal.shade200)), child: Text(_popularCrops[index], style: GoogleFonts.poppins(fontSize: 12, color: Colors.teal.shade800, fontWeight: FontWeight.w600))),
                                   );
                                 },
                               ),
@@ -194,7 +182,6 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
                       ),
                       const SizedBox(height: 30),
 
-                      // 🔥 EXACT DELIVERY DETAILS (CASCADING JSON)
                       FadeInUp(
                         delay: const Duration(milliseconds: 400),
                         child: Column(
@@ -202,17 +189,14 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
                           children: [
                             Text("Logistics & Handover", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
                             const SizedBox(height: 15),
-                            
+
                             Container(
                               padding: const EdgeInsets.all(16),
                               decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey.shade200), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))]),
                               child: Column(children: [
                                 _buildDropdown("County", _selectedCounty, _counties, (val) {
-                                  setState(() { 
-                                    _selectedCounty = val; 
-                                    _selectedSubCounty = null; 
-                                    _selectedWard = null; 
-                                    _wards = [];
+                                  setState(() {
+                                    _selectedCounty = val; _selectedSubCounty = null; _selectedWard = null; _wards = [];
                                     var countyObj = _locationsData.firstWhere((c) => c['county_name'] == val);
                                     var constituencies = countyObj['constituencies'] as List<dynamic>;
                                     _subCounties = constituencies.map((c) => c['constituency_name'].toString()).toList();
@@ -220,9 +204,8 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
                                 }),
                                 Divider(color: Colors.grey.shade200, height: 1),
                                 _buildDropdown("Sub-County", _selectedSubCounty, _subCounties, (val) {
-                                  setState(() { 
-                                    _selectedSubCounty = val; 
-                                    _selectedWard = null; 
+                                  setState(() {
+                                    _selectedSubCounty = val; _selectedWard = null;
                                     var countyObj = _locationsData.firstWhere((c) => c['county_name'] == _selectedCounty);
                                     var constituencies = countyObj['constituencies'] as List<dynamic>;
                                     var constituencyObj = constituencies.firstWhere((c) => c['constituency_name'] == val);
@@ -238,6 +221,44 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
                             _buildModernField(controller: _addressController, label: "Exact Delivery Address", icon: LucideIcons.building, inputType: TextInputType.text, hint: "e.g. Godown 4, Industrial Area"),
                             const SizedBox(height: 15),
                             _buildModernField(controller: _contactController, label: "Receiving Agent Phone", icon: LucideIcons.phone, inputType: TextInputType.phone, hint: "e.g. 0712345678"),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 30),
+
+                      // 🔥 THE DEADLINE UI
+                      FadeInUp(
+                        delay: const Duration(milliseconds: 450),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text("Contract Deadline (Hours)", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade700)),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                IconButton(
+                                  onPressed: () {
+                                    int current = int.tryParse(_timeController.text) ?? 24;
+                                    if (current > 1) setState(() => _timeController.text = (current - 1).toString());
+                                  },
+                                  icon: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: Colors.grey.shade200, shape: BoxShape.circle), child: const Icon(LucideIcons.minus, size: 16)),
+                                ),
+                                Expanded(
+                                  child: TextField(
+                                    controller: _timeController, keyboardType: TextInputType.number, textAlign: TextAlign.center,
+                                    style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 18),
+                                    decoration: InputDecoration(suffixText: "Hours", filled: true, fillColor: Colors.grey.shade50, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)),
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: () {
+                                    int current = int.tryParse(_timeController.text) ?? 24;
+                                    setState(() => _timeController.text = (current + 1).toString());
+                                  },
+                                  icon: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: Colors.teal.shade100, shape: BoxShape.circle), child: const Icon(LucideIcons.plus, size: 16, color: Colors.teal)),
+                                ),
+                              ],
+                            ),
                           ],
                         ),
                       ),
@@ -270,7 +291,7 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 100), 
+                      const SizedBox(height: 100),
                     ],
                   ),
                 ),
@@ -313,13 +334,12 @@ class _BuyerCreateOrderScreenState extends State<BuyerCreateOrderScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
       child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: val, isExpanded: true, 
-          hint: Text(label, style: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 14)), 
-          icon: const Icon(LucideIcons.chevronDown, size: 18, color: Colors.teal),
-          items: items.map((e) => DropdownMenuItem(value: e, child: Text(e, style: GoogleFonts.poppins(fontSize: 14), overflow: TextOverflow.ellipsis))).toList(), 
-          onChanged: items.isEmpty ? null : changed
-        )
+          child: DropdownButton<String>(
+              value: val, isExpanded: true, hint: Text(label, style: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 14)),
+              icon: const Icon(LucideIcons.chevronDown, size: 18, color: Colors.teal),
+              items: items.map((e) => DropdownMenuItem(value: e, child: Text(e, style: GoogleFonts.poppins(fontSize: 14), overflow: TextOverflow.ellipsis))).toList(),
+              onChanged: items.isEmpty ? null : changed
+          )
       ),
     );
   }

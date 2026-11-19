@@ -4,7 +4,7 @@ import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:mkulimahub_mobile/core/api_client.dart';
+import 'package:mkulimahub_mobile/core/api/api_client.dart';
 import 'package:mkulimahub_mobile/features/home/ai_chat_screen.dart';
 import 'package:mkulimahub_mobile/features/buyer/customer_profile_screen.dart';
 import 'package:mkulimahub_mobile/features/buyer/buyer_orders_screen.dart';
@@ -14,9 +14,9 @@ import 'package:mkulimahub_mobile/features/buyer/buyer_create_order_screen.dart'
 import 'package:mkulimahub_mobile/features/buyer/buyer_cart_screen.dart';
 
 final GlobalKey<BuyerMarketplaceViewState> buyerMarketplaceKey =
-    GlobalKey<BuyerMarketplaceViewState>();
+GlobalKey<BuyerMarketplaceViewState>();
 final GlobalKey<BuyerOrdersScreenState> buyerOrdersKey =
-    GlobalKey<BuyerOrdersScreenState>();
+GlobalKey<BuyerOrdersScreenState>();
 
 class BuyerDashboard extends StatefulWidget {
   const BuyerDashboard({super.key});
@@ -35,9 +35,14 @@ class _BuyerDashboardState extends State<BuyerDashboard> {
     _screens = [
       BuyerMarketplaceView(key: buyerMarketplaceKey), // Index 0: Market
       BuyerOrdersScreen(key: buyerOrdersKey), // Index 1: Orders
-      const BuyerInsightsScreen(), // Index 2: Insights (Fixed!)
-      const BuyerWalletScreen(), // Index 3: Wallet (Fixed!)
+      const BuyerInsightsScreen(), // Index 2: Insights
+      const BuyerWalletScreen(), // Index 3: Wallet
     ];
+  }
+
+  // Helper so internal tabs can switch the main nav
+  void switchToTab(int index) {
+    setState(() => _selectedIndex = index);
   }
 
   @override
@@ -86,6 +91,7 @@ class _BuyerDashboardState extends State<BuyerDashboard> {
                       );
                       if (result == true) {
                         buyerOrdersKey.currentState?.fetchLiveOrders();
+                        buyerMarketplaceKey.currentState?._loadMarketData();
                       }
                     },
                     child: Container(
@@ -176,6 +182,8 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
 
   List<dynamic> _allListings = [];
   List<dynamic> _hubPools = [];
+  Map<String, dynamic>? _dashboardData; // 🔥 ADDED FOR ACTIVE BROADCASTS
+
   bool _isLoading = true;
   String _searchQuery = "";
   int _selectedCategoryIndex = 0;
@@ -204,25 +212,42 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
     return "Good Evening,";
   }
 
+  // 🔥 TIMER PARSER
+  String _getTimeRemaining(String? deadlineIso) {
+    if (deadlineIso == null) return "No Deadline";
+    try {
+      DateTime deadline = DateTime.parse(deadlineIso).toLocal();
+      Duration diff = deadline.difference(DateTime.now());
+      if (diff.isNegative) return "Expired";
+      int hours = diff.inHours;
+      if (hours > 24) return "${hours ~/ 24}d ${hours % 24}h";
+      return "${hours}h";
+    } catch (e) {
+      return "No Deadline";
+    }
+  }
+
   Future<void> _loadMarketData() async {
     setState(() => _isLoading = true);
 
     final profile = await _apiClient.getProfile();
     if (profile != null && mounted) {
       setState(
-        () => _userName = profile['full_name']?.split(' ')[0] ?? "Buyer",
+            () => _userName = profile['full_name']?.split(' ')[0] ?? "Buyer",
       );
     }
 
     final results = await Future.wait([
       _apiClient.getMarketListings(),
       _apiClient.getHubMarketplace(),
+      _apiClient.getBuyerDashboard(), // 🔥 FETCHES BUYER ORDERS
     ]);
 
     if (mounted) {
       setState(() {
         _allListings = results[0] as List<dynamic>;
         _hubPools = results[1] as List<dynamic>;
+        _dashboardData = results[2] as Map<String, dynamic>?;
         _isLoading = false;
       });
     }
@@ -282,9 +307,9 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
     return rawName
         .split(' ')
         .map((word) {
-          if (word.isEmpty) return '';
-          return word[0].toUpperCase() + word.substring(1).toLowerCase();
-        })
+      if (word.isEmpty) return '';
+      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+    })
         .join(' ')
         .trim();
   }
@@ -303,9 +328,9 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
   }
 
   Widget _buildListingImage(
-    Map<String, dynamic> item,
-    String fallbackCropName,
-  ) {
+      Map<String, dynamic> item,
+      String fallbackCropName,
+      ) {
     if (item['image_base64'] != null &&
         item['image_base64'].toString().isNotEmpty) {
       try {
@@ -352,7 +377,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
     double getPrice() {
       if (selectedFormat == "weight") return listing['price_per_kg'].toDouble();
       final u = unitPricing.firstWhere(
-        (element) => element['unit_name'] == selectedFormat,
+            (element) => element['unit_name'] == selectedFormat,
         orElse: () => {'price': 0},
       );
       return u['price'].toDouble();
@@ -361,7 +386,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
     double getKg() {
       if (selectedFormat == "weight") return 1.0;
       final u = unitPricing.firstWhere(
-        (element) => element['unit_name'] == selectedFormat,
+            (element) => element['unit_name'] == selectedFormat,
         orElse: () => {'kg': 0},
       );
       return u['kg'].toDouble();
@@ -450,12 +475,12 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                               selected: selectedFormat == "weight",
                               selectedColor: Colors.teal.shade600,
                               onSelected: (val) => setSheetState(
-                                () => selectedFormat = "weight",
+                                    () => selectedFormat = "weight",
                               ),
                             ),
                           ),
                         ...unitPricing.map(
-                          (unit) => Padding(
+                              (unit) => Padding(
                             padding: const EdgeInsets.only(right: 10),
                             child: ChoiceChip(
                               label: Text(
@@ -470,7 +495,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                               selected: selectedFormat == unit['unit_name'],
                               selectedColor: Colors.teal.shade600,
                               onSelected: (val) => setSheetState(
-                                () => selectedFormat = unit['unit_name'],
+                                    () => selectedFormat = unit['unit_name'],
                               ),
                             ),
                           ),
@@ -495,7 +520,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                         onPressed: () {
                           if (currentQty > 1) {
                             setSheetState(
-                              () => qtyController.text = (currentQty - 1)
+                                  () => qtyController.text = (currentQty - 1)
                                   .toStringAsFixed(0),
                             );
                           }
@@ -532,7 +557,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                       IconButton(
                         onPressed: () {
                           setSheetState(
-                            () => qtyController.text = (currentQty + 1)
+                                () => qtyController.text = (currentQty + 1)
                                 .toStringAsFixed(0),
                           );
                         },
@@ -612,7 +637,6 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                           return;
                         }
 
-                        // 🔥 THE FIX: Push data into the Global Cart Manager!
                         CartManager.items.add({
                           "id": listing['id'],
                           "type": "individual",
@@ -621,9 +645,8 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                           "location": listing['county'],
                           "weightKg": totalKg,
                           "pricePerKg": getPrice() / getKg(),
-                          // standardize logic
                           "image":
-                              listing['image_base64'] ??
+                          listing['image_base64'] ??
                               _getImageForCrop(listing['crop_name']),
                           "format": selectedFormat,
                           "qty": currentQty,
@@ -666,6 +689,10 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
   Widget build(BuildContext context) {
     final individualHarvests = _filteredListings;
 
+    // 🔥 PULL ACTIVE CONTRACTS FROM DASHBOARD DATA
+    List<dynamic> allContracts = _dashboardData?['contracts'] ?? [];
+    List<dynamic> activeContracts = allContracts.where((c) => c['status'] == 'Open' || c['status'] == 'active' || (c['status'] == 'fulfilled' && c['payment_status'] != 'deposit_paid' && c['payment_status'] != 'fully_paid_escrow' && c['payment_status'] != 'fully_paid')).toList();
+
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
       body: RefreshIndicator(
@@ -674,9 +701,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
         backgroundColor: Colors.white,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          // 🔥 Essential: allows pulling even if the list is short
           slivers: [
-            // 櫨 TEAL HEADER WITH SMART GREETING
             SliverToBoxAdapter(
               child: Container(
                 padding: const EdgeInsets.only(
@@ -774,7 +799,6 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                             const SizedBox(width: 10),
                             BouncyButton(
                               onPressed: () {
-                                // 🔥 NAVIGATE TO THE GLOBAL CART
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -839,6 +863,103 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
               ),
             ),
 
+            // 🔥 THE COMPACT ACTIVE BROADCASTS SLIDER
+            if (!_isLoading && activeContracts.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 20, left: 20, right: 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text("My Active Broadcasts", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+                          GestureDetector(
+                            onTap: () {
+                              final parent = context.findAncestorStateOfType<_BuyerDashboardState>();
+                              parent?.switchToTab(1); // Navigates to Orders tab!
+                            },
+                            child: Text("Manage All", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.teal.shade700)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 90, // Ultra-compact height
+                        child: ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          physics: const BouncingScrollPhysics(),
+                          clipBehavior: Clip.none,
+                          itemCount: activeContracts.length,
+                          itemBuilder: (context, index) {
+                            final contract = activeContracts[index];
+                            double progress = (contract['progress_percentage'] ?? 0).toDouble();
+                            String timeLeft = _getTimeRemaining(contract['deadline_time']);
+                            bool isUrgent = timeLeft == "Expired" || (timeLeft.contains("h") && !timeLeft.contains("d"));
+
+                            return FadeInRight(
+                              delay: Duration(milliseconds: 50 * index),
+                              child: GestureDetector(
+                                onTap: () {
+                                  final parent = context.findAncestorStateOfType<_BuyerDashboardState>();
+                                  parent?.switchToTab(1);
+                                },
+                                child: Container(
+                                  width: 250,
+                                  margin: const EdgeInsets.only(right: 15),
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(color: Colors.teal.shade100),
+                                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 4))],
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Expanded(child: Text(contract['crop_name'] ?? 'Produce', style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                          Row(
+                                            children: [
+                                              Icon(LucideIcons.clock, size: 12, color: isUrgent ? Colors.red.shade600 : Colors.teal.shade600),
+                                              const SizedBox(width: 4),
+                                              Text(timeLeft, style: GoogleFonts.poppins(color: isUrgent ? Colors.red.shade700 : Colors.teal.shade700, fontSize: 10, fontWeight: FontWeight.bold)),
+                                            ],
+                                          )
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text("${(progress * 100).toInt()}% gathered", style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
+                                          Text("${contract['target_weight_kg']} kg", style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.teal.shade700)),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(5),
+                                        child: LinearProgressIndicator(
+                                            value: progress, minHeight: 6, backgroundColor: Colors.teal.shade50, valueColor: AlwaysStoppedAnimation<Color>(Colors.teal.shade500)
+                                        ),
+                                      )
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      )
+                    ],
+                  ),
+                ),
+              ),
+
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.only(top: 25, left: 20, right: 20),
@@ -868,7 +989,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                             delay: Duration(milliseconds: index * 50),
                             child: GestureDetector(
                               onTap: () => setState(
-                                () => _selectedCategoryIndex = index,
+                                    () => _selectedCategoryIndex = index,
                               ),
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 300),
@@ -893,13 +1014,13 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                                   ),
                                   boxShadow: isSelected
                                       ? [
-                                          BoxShadow(
-                                            color: (cat['color'] as Color)
-                                                .withOpacity(0.4),
-                                            blurRadius: 12,
-                                            offset: const Offset(0, 6),
-                                          ),
-                                        ]
+                                    BoxShadow(
+                                      color: (cat['color'] as Color)
+                                          .withOpacity(0.4),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 6),
+                                    ),
+                                  ]
                                       : [],
                                 ),
                                 child: Column(
@@ -1010,8 +1131,8 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                       _searchQuery.isNotEmpty
                           ? 'Search Results'
                           : (_selectedCategoryIndex == 0
-                                ? "Individual Farmers"
-                                : "${_categories[_selectedCategoryIndex]['name']} Available"),
+                          ? "Individual Farmers"
+                          : "${_categories[_selectedCategoryIndex]['name']} Available"),
                       style: GoogleFonts.poppins(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -1126,13 +1247,13 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                                   padding: const EdgeInsets.all(12.0),
                                   child: Column(
                                     crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                    CrossAxisAlignment.start,
                                     mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
+                                    MainAxisAlignment.spaceBetween,
                                     children: [
                                       Column(
                                         crossAxisAlignment:
-                                            CrossAxisAlignment.start,
+                                        CrossAxisAlignment.start,
                                         children: [
                                           Text(
                                             cleanDisplayTitle,
@@ -1176,11 +1297,11 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                                       ),
                                       Row(
                                         mainAxisAlignment:
-                                            MainAxisAlignment.spaceBetween,
+                                        MainAxisAlignment.spaceBetween,
                                         children: [
                                           Column(
                                             crossAxisAlignment:
-                                                CrossAxisAlignment.start,
+                                            CrossAxisAlignment.start,
                                             children: [
                                               Text(
                                                 "${harvest['available_kg']} ${harvest['unit_type']} Avail.",
@@ -1207,7 +1328,7 @@ class BuyerMarketplaceViewState extends State<BuyerMarketplaceView> {
                                               decoration: BoxDecoration(
                                                 color: Colors.black,
                                                 borderRadius:
-                                                    BorderRadius.circular(12),
+                                                BorderRadius.circular(12),
                                               ),
                                               child: const Icon(
                                                 LucideIcons.plus,

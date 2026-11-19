@@ -1,12 +1,14 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:mkulimahub_mobile/core/api_client.dart';
-import 'package:mkulimahub_mobile/features/home/order_tracking_map.dart'; // 🔥 IMPORT THE MAP!
+import 'package:mkulimahub_mobile/core/api/api_client.dart';
+import 'package:mkulimahub_mobile/features/home/order_tracking_map.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class BuyerOrdersScreen extends StatefulWidget {
   const BuyerOrdersScreen({super.key});
@@ -31,6 +33,12 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
     fetchLiveOrders();
   }
 
+  void switchTab(int index) {
+    if (mounted) {
+      setState(() => _selectedTab = index);
+    }
+  }
+
   Future<void> fetchLiveOrders() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
@@ -43,42 +51,54 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
 
         setState(() {
           _gatheringOrders = [
-            ...contracts.where((c) => c['status'] == 'Open' ||
+            ...contracts.where((c) => c['status'] == 'Open' || c['status'] == 'active' ||
                 (c['status'] == 'fulfilled' && c['payment_status'] != 'deposit_paid' && c['payment_status'] != 'fully_paid_escrow' && c['payment_status'] != 'fully_paid')),
-            ...directOrders.where((o) => o['status'] == 'pending' && o['payment_method'] == 'pay_now').map((o) => { ...o as Map<String, dynamic>, 'is_direct': true })
+
+            ...directOrders.where((o) =>
+            (o['status'] == 'pending' || o['status'] == 'processing') && o['payment_method'] == 'pay_now'
+            ).map((o) => { ...o as Map<String, dynamic>, 'is_direct': true })
           ];
 
           _transitOrders = [
             ...contracts.where((c) {
               if (c['status'] == 'completed') return false;
               if (c['payment_status'] != 'deposit_paid' && c['payment_status'] != 'fully_paid_escrow') return false;
-
               List roster = c['roster'] ?? [];
               if (roster.isNotEmpty) {
-                bool allDead = roster.every((p) => p['status'] == 'rejected' || p['status'] == 'refunded');
+                // 🔥 THE FIX: Treat returning & disputed as dead so they instantly leave transit!
+                bool allDead = roster.every((p) => p['status'] == 'rejected' || p['status'] == 'refunded' || p['status'] == 'returning' || p['status'] == 'disputed');
                 if (allDead) return false;
               }
               return true;
             }),
+
+            // 🔥 THE FIX: Removed 'returning' and 'disputed' so they vanish from Deliveries!
             ...directOrders.where((o) =>
-            o['status'] == 'in_transit' || o['status'] == 'delivered' || o['status'] == 'disputed' || o['status'] == 'returning' ||
-                (o['status'] == 'pending' && o['payment_method'] == 'pay_on_delivery') ||
-                (o['status'] == 'processing' && o['payment_method'] == 'pay_now')
+            o['status'] == 'in_transit' ||
+                o['status'] == 'delivered' ||
+                ((o['status'] == 'pending' || o['status'] == 'processing') && o['payment_method'] != 'pay_now')
             ).map((o) => { ...o as Map<String, dynamic>, 'is_direct': true })
           ];
 
           _historyOrders = [
             ...contracts.where((c) {
               if (c['status'] == 'completed') return true;
-
               List roster = c['roster'] ?? [];
               if (roster.isNotEmpty) {
-                bool allDead = roster.every((p) => p['status'] == 'rejected' || p['status'] == 'refunded');
+                // 🔥 THE FIX: Move fully returned/disputed squads to History
+                bool allDead = roster.every((p) => p['status'] == 'rejected' || p['status'] == 'refunded' || p['status'] == 'returning' || p['status'] == 'disputed');
                 if (allDead) return true;
               }
               return false;
             }),
-            ...directOrders.where((o) => o['status'] == 'completed' || o['status'] == 'rejected' || o['status'] == 'refunded').map((o) => { ...o as Map<String, dynamic>, 'is_direct': true })
+
+            ...directOrders.where((o) =>
+            o['status'] == 'completed' ||
+                o['status'] == 'rejected' ||
+                o['status'] == 'refunded' ||
+                o['status'] == 'returning' ||
+                o['status'] == 'disputed'
+            ).map((o) => { ...o as Map<String, dynamic>, 'is_direct': true })
           ];
 
           _isLoading = false;
@@ -86,6 +106,14 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
       } else {
         setState(() => _isLoading = false);
       }
+    }
+  }
+  Future<void> _launchMaps(double lat, double lng) async {
+    final url = 'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
+    if (await canLaunchUrl(Uri.parse(url))) {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } else {
+      debugPrint("Could not launch Google Maps");
     }
   }
 
@@ -196,7 +224,10 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
   // ==========================================
   Widget _buildDirectOrderCard(Map<String, dynamic> order, int index, String label, MaterialColor color) {
     String deliveryMethod = order['delivery_method'] ?? 'Delivery';
-    bool isFinished = order['status'] == 'completed' || order['status'] == 'rejected' || order['status'] == 'refunded';
+
+    // 🔥 THE FIX: Include returning and disputed as finished states!
+    bool isFinished = order['status'] == 'completed' || order['status'] == 'rejected' || order['status'] == 'refunded' || order['status'] == 'returning' || order['status'] == 'disputed';
+    bool isFailed = order['status'] != 'completed'; // If it's finished but not completed, it failed.
 
     return FadeInUp(
       delay: Duration(milliseconds: index * 100),
@@ -221,7 +252,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
             const SizedBox(height: 4),
             Row(children: [Icon(LucideIcons.user, size: 14, color: Colors.grey.shade500), const SizedBox(width: 6), Text(order['farmer_name'], style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13))]),
 
-            if (deliveryMethod == "Pickup") ...[
+            if (deliveryMethod.contains("Pickup")) ...[
               const SizedBox(height: 15),
               Container(
                 padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.blue.shade100)),
@@ -250,10 +281,12 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                     ]
                 ),
 
+                // 🔥 THE FIX: Formats the card correctly if the order was rejected/returned!
                 if (isFinished)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12)),
-                    child: Text(order['status'] == 'rejected' || order['status'] == 'refunded' ? "Order Cancelled" : "Order Completed ✅", style: GoogleFonts.poppins(color: Colors.green.shade800, fontSize: 12, fontWeight: FontWeight.bold)),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(color: isFailed ? Colors.red.shade50 : Colors.green.shade50, borderRadius: BorderRadius.circular(12)),
+                    child: Text(isFailed ? "Returned / Cancelled" : "Order Completed ✅", style: GoogleFonts.poppins(color: isFailed ? Colors.red.shade800 : Colors.green.shade800, fontSize: 12, fontWeight: FontWeight.bold)),
                   )
                 else if (order['status'] == 'pending')
                   ElevatedButton.icon(
@@ -304,6 +337,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
   // ==========================================
   Widget _buildDirectTransitCard(Map<String, dynamic> order, int index) {
     String deliveryMethod = order['delivery_method'] ?? 'Delivery';
+    bool isPickup = deliveryMethod == "Pickup";
     bool isPayNow = order['payment_method'] == 'pay_now';
     bool isDisputed = order['status'] == 'disputed';
     bool isReturning = order['status'] == 'returning';
@@ -318,13 +352,13 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
           children: [
             Row(
               children: [
-                Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: isDisputed || isReturning ? Colors.red.shade50 : Colors.blue.shade50, shape: BoxShape.circle), child: Icon(isDisputed || isReturning ? LucideIcons.alertTriangle : (deliveryMethod == "Pickup" ? LucideIcons.store : LucideIcons.truck), color: isDisputed || isReturning ? Colors.red.shade700 : Colors.blue.shade700)),
+                Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: isDisputed || isReturning ? Colors.red.shade50 : Colors.blue.shade50, shape: BoxShape.circle), child: Icon(isDisputed || isReturning ? LucideIcons.alertTriangle : (isPickup ? LucideIcons.store : LucideIcons.truck), color: isDisputed || isReturning ? Colors.red.shade700 : Colors.blue.shade700)),
                 const SizedBox(width: 15),
                 Expanded(child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text("${order['quantity']} ${order['unit']} of ${order['crop_name']}", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-                      Text(isDisputed ? "Dispute Active" : isReturning ? "Return in Progress" : (deliveryMethod == "Pickup" ? "Ready for Pickup" : "In Transit to You"), style: GoogleFonts.poppins(color: isDisputed || isReturning ? Colors.red.shade800 : Colors.blue.shade700, fontSize: 12, fontWeight: FontWeight.bold))
+                      Text(isDisputed ? "Dispute Active" : isReturning ? "Return in Progress" : (isPickup ? "Ready for Pickup" : "In Transit to You"), style: GoogleFonts.poppins(color: isDisputed || isReturning ? Colors.red.shade800 : Colors.blue.shade700, fontSize: 12, fontWeight: FontWeight.bold))
                     ])),
               ],
             ),
@@ -335,9 +369,9 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [Icon(deliveryMethod == "Pickup" ? LucideIcons.mapPin : LucideIcons.truck, size: 14, color: Colors.blue.shade800), const SizedBox(width: 8), Text(deliveryMethod == "Pickup" ? "Farmer Pickup Intel" : "Delivery Contact", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue.shade900))]),
+                  Row(children: [Icon(isPickup ? LucideIcons.mapPin : LucideIcons.truck, size: 14, color: Colors.blue.shade800), const SizedBox(width: 8), Text(isPickup ? "Farmer Pickup Intel" : "Delivery Contact", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue.shade900))]),
                   const SizedBox(height: 4),
-                  Text(deliveryMethod == "Pickup" ? "Arrange pickup directly with the farmer." : "Farmer will contact you upon arrival.", style: GoogleFonts.poppins(fontSize: 11, color: Colors.blue.shade800)),
+                  Text(isPickup ? "Arrange pickup directly with the farmer." : "Farmer will contact you upon arrival.", style: GoogleFonts.poppins(fontSize: 11, color: Colors.blue.shade800)),
                   const SizedBox(height: 8),
                   Row(children: [Icon(LucideIcons.phone, size: 14, color: Colors.blue.shade800), const SizedBox(width: 8), Expanded(child: Text("${order['farmer_name']} • ${order['farmer_phone'] ?? 'No Phone'}", style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade900), maxLines: 1, overflow: TextOverflow.ellipsis))]),
                 ],
@@ -355,52 +389,89 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
 
                 if (isDisputed)
                   Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(12)), child: Text("Waiting on Farmer...", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 11, fontWeight: FontWeight.bold)))
-
                 else if (isReturning)
                   Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(12)), child: Text("Send goods back to Farmer", style: GoogleFonts.poppins(color: Colors.red.shade800, fontSize: 11, fontWeight: FontWeight.bold)))
+                else
+                // 🔥 THE FIX: A horizontal row that lets us show the Nav Button AND the Pay button at the same time
+                  Row(
+                    children: [
+                      if (order['status'] == 'in_transit' && !isPickup)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 10),
+                          child: ElevatedButton.icon(
+                            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderTrackingMap(entityName: "Direct Order #${order['order_id'] ?? ''}", status: "In Transit"))),
+                            icon: const Icon(LucideIcons.map, size: 14, color: Colors.blue),
+                            label: Text("Track Delivery", style: GoogleFonts.poppins(color: Colors.blue.shade800, fontSize: 12, fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade50, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                          ),
+                        ),
 
-                // 🔥 THE MAP FIX FOR DIRECT ORDERS
-                else if (order['status'] == 'in_transit')
-                    ElevatedButton.icon(
-                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderTrackingMap(entityName: "Direct Order #${order['order_id'] ?? ''}", status: "In Transit"))),
-                      icon: const Icon(LucideIcons.map, size: 14, color: Colors.blue),
-                      label: Text("Track Delivery", style: GoogleFonts.poppins(color: Colors.blue.shade800, fontSize: 12, fontWeight: FontWeight.bold)),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade50, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                    )
+                      // 🔥 NAVIGATION BUTTON: Only shows up when the Farmer actually marks it ready for pickup
+                      if (isPickup && order['status'] == 'delivered')
+                        Padding(
+                          padding: const EdgeInsets.only(right: 10),
+                          child: ElevatedButton.icon(
+                            onPressed: () => _launchMaps((order['lat'] ?? -1.29).toDouble(), (order['lng'] ?? 36.82).toDouble()),
+                            icon: const Icon(LucideIcons.navigation, size: 14, color: Colors.indigo),
+                            label: Text("Navigate", style: GoogleFonts.poppins(color: Colors.indigo.shade800, fontSize: 12, fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo.shade50, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                          ),
+                        ),
 
-                  // INSPECT STAGES (Only available when order is DELIVERED or PENDING PICKUP)
-                  else if (!isPayNow && ((deliveryMethod == "Pickup" && order['status'] == 'pending') || (deliveryMethod == "Delivery" && order['status'] == 'delivered')))
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          final error = await _apiClient.triggerMpesaPayment(order['order_id']);
-                          if (error == null) {
-                            showDialog(
-                                context: context, barrierDismissible: false,
-                                builder: (ctx) => AlertDialog(
-                                  content: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const CircularProgressIndicator(color: Colors.green), const SizedBox(height: 20),
-                                      Text("Check Your Phone!", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green.shade800)),
-                                      SizedBox(width: double.infinity, child: ElevatedButton(onPressed: () { Navigator.pop(ctx); fetchLiveOrders(); }, style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700), child: const Text("I entered my PIN", style: TextStyle(color: Colors.white))))
-                                    ],
-                                  ),
-                                )
-                            );
-                          }
-                        },
-                        icon: const Icon(LucideIcons.smartphone, size: 14, color: Colors.white),
-                        label: Text("Inspect & Pay", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
-                      )
-                    else if (isPayNow && ((deliveryMethod == "Pickup" && order['status'] == 'processing') || (deliveryMethod == "Delivery" && order['status'] == 'delivered')))
+                      if (!isPayNow && order['status'] == 'delivered')
+                        ElevatedButton.icon(
+                          onPressed: () async {
+                            final result = await _apiClient.triggerMpesaPayment(order['order_id']);
+                            if (result != null && result.startsWith("SUCCESS:")) {
+                              String checkoutId = result.split(":")[1];
+
+                              showDialog(
+                                  context: context, barrierDismissible: false,
+                                  builder: (ctx) {
+                                    // 🔥 THE AUTO-CLOSING POLLER
+                                    Timer.periodic(const Duration(seconds: 3), (timer) async {
+                                      String status = await _apiClient.checkPaymentStatus(checkoutId);
+                                      if (status == "completed") {
+                                        timer.cancel();
+                                        if (mounted) {
+                                          Navigator.pop(ctx); // Close dialog automatically!
+                                          fetchLiveOrders();
+                                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Payment Verified!"), backgroundColor: Colors.green));
+                                        }
+                                      }
+                                    });
+
+                                    return AlertDialog(
+                                      content: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const CircularProgressIndicator(color: Colors.green), const SizedBox(height: 20),
+                                          Text("Check Your Phone!", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green.shade800)),
+                                          const SizedBox(height: 10),
+                                          Text("Waiting for M-Pesa PIN confirmation...", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600))
+                                        ],
+                                      ),
+                                    );
+                                  }
+                              );
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result ?? "Error"), backgroundColor: Colors.red));
+                            }
+                          },
+                          icon: const Icon(LucideIcons.smartphone, size: 14, color: Colors.white),
+                          label: Text("Inspect & Pay", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
+                        )
+                      else if (isPayNow && order['status'] == 'delivered')
                         ElevatedButton(
                           onPressed: () => _showDirectOrderQA(order),
                           style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
-                          child: Text("Inspect & Accept Goods", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                          child: Text("Inspect & Accept", style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                         )
-                      else if (deliveryMethod == "Delivery" && (order['status'] == 'pending' || order['status'] == 'processing'))
-                          Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)), child: Text("Waiting for Farmer Dispatch", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontSize: 11, fontWeight: FontWeight.bold)))
+                      else if (order['status'] == 'pending' || order['status'] == 'processing')
+                          Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12)), child: Text(isPickup ? "Waiting for Farmer Preparation" : "Waiting for Farmer Dispatch", style: GoogleFonts.poppins(color: Colors.orange.shade800, fontSize: 11, fontWeight: FontWeight.bold)))
+                    ],
+                  )
               ],
             )
           ],
@@ -531,9 +602,27 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
   // ==========================================
   // BULK CONTRACT CARDS
   // ==========================================
+  String _getTimeRemaining(String? deadlineIso) {
+    if (deadlineIso == null) return "No Deadline";
+    try {
+      DateTime deadline = DateTime.parse(deadlineIso).toLocal();
+      Duration diff = deadline.difference(DateTime.now());
+      if (diff.isNegative) return "Expired";
+      int hours = diff.inHours;
+      if (hours > 24) return "${hours ~/ 24}d ${hours % 24}h";
+      return "${hours}h";
+    } catch (e) {
+      return "No Deadline";
+    }
+  }
+
   Widget _buildActiveOrderCard(Map<String, dynamic> order, int index) {
     double progress = (order['progress_percentage'] ?? 0).toDouble();
     bool isPayNow = order['payment_method'] == 'pay_now';
+
+    // 🔥 TIMER BADGE LOGIC
+    String timeLeft = _getTimeRemaining(order['deadline_time']);
+    bool isUrgent = timeLeft == "Expired" || (timeLeft.contains("h") && !timeLeft.contains("d"));
 
     return FadeInUp(
       delay: Duration(milliseconds: index * 100),
@@ -551,7 +640,26 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
               ],
             ),
             const SizedBox(height: 15),
-            Text(order['crop_name'] ?? 'Produce', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(order['crop_name'] ?? 'Produce', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+
+                // 🔥 TIMER BADGE INJECTED INTO UI
+                if (!(order['buyer_name']?.toString().startsWith('Hub Pool:') ?? false) && order['deadline_time'] != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(color: isUrgent ? Colors.red.shade50 : Colors.teal.shade50, borderRadius: BorderRadius.circular(8)),
+                    child: Row(
+                      children: [
+                        Icon(LucideIcons.clock, size: 12, color: isUrgent ? Colors.red.shade700 : Colors.teal.shade700),
+                        const SizedBox(width: 4),
+                        Text(timeLeft, style: GoogleFonts.poppins(color: isUrgent ? Colors.red.shade800 : Colors.teal.shade800, fontSize: 11, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  )
+              ],
+            ),
             const SizedBox(height: 4),
             Row(children: [Icon(LucideIcons.fileText, size: 14, color: Colors.grey.shade500), const SizedBox(width: 4), Text("Contract ID: #BR-${order['contract_id'].toString().padLeft(4, '0')}", style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12))]),
             const SizedBox(height: 20),
@@ -566,29 +674,43 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                 child: ElevatedButton.icon(
                   onPressed: () async {
                     setState(() => _isLoading = true);
-                    final error = await _apiClient.triggerContractDeposit(order['contract_id']);
-                    if (error == null) {
-                      setState(() => _isLoading = false);
+                    final result = await _apiClient.triggerContractDeposit(order['contract_id']);
+                    setState(() => _isLoading = false);
+
+                    if (result != null && result.startsWith("SUCCESS:")) {
+                      String checkoutId = result.split(":")[1];
+
                       showDialog(
                           context: context, barrierDismissible: false,
-                          builder: (ctx) => AlertDialog(
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                            content: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const CircularProgressIndicator(color: Colors.green), const SizedBox(height: 20),
-                                Text("Check Your Phone!", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green.shade800)),
-                                const SizedBox(height: 10),
-                                Text(isPayNow ? "Enter PIN to lock 100% into Escrow." : "Enter PIN to lock 10% Deposit.", textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey.shade600)),
-                                const SizedBox(height: 20),
-                                SizedBox(width: double.infinity, child: ElevatedButton(onPressed: () { Navigator.pop(ctx); fetchLiveOrders(); }, style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700), child: const Text("I entered my PIN", style: TextStyle(color: Colors.white))))
-                              ],
-                            ),
-                          )
+                          builder: (ctx) {
+                            Timer.periodic(const Duration(seconds: 3), (timer) async {
+                              String status = await _apiClient.checkPaymentStatus(checkoutId);
+                              if (status == "completed") {
+                                timer.cancel();
+                                if (mounted) {
+                                  Navigator.pop(ctx);
+                                  fetchLiveOrders();
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Deposit Secured! Logistics Unlocked."), backgroundColor: Colors.green));
+                                }
+                              }
+                            });
+
+                            return AlertDialog(
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                              content: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const CircularProgressIndicator(color: Colors.green), const SizedBox(height: 20),
+                                  Text("Check Your Phone!", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green.shade800)),
+                                  const SizedBox(height: 10),
+                                  Text("Waiting for M-Pesa PIN confirmation...", textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey.shade600)),
+                                ],
+                              ),
+                            );
+                          }
                       );
                     } else {
-                      setState(() => _isLoading = false);
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result ?? "Error"), backgroundColor: Colors.red));
                     }
                   },
                   icon: const Icon(LucideIcons.lock, size: 14, color: Colors.white),
@@ -610,10 +732,9 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
 
   Widget _buildTransitCard(Map<String, dynamic> order, int index) {
     List<dynamic> roster = order['roster'] ?? [];
-    bool isPickup = order['delivery_method']?.contains("Pickup") ?? false;
+    bool isPickup = order['pickup_location'] != null && order['pickup_location'].toString().contains("Pickup");
 
-    // Check if goods are ready for QA
-    bool needsInspection = isPickup ? true : roster.any((p) => p['status'] == 'delivered' || p['status'] == 'pending_audit');
+    bool needsInspection = roster.any((p) => p['status'] == 'delivered');
     bool anyInTransit = roster.any((p) => p['status'] == 'in_transit');
 
     return FadeInUp(
@@ -626,13 +747,13 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
           children: [
             Row(
               children: [
-                Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: needsInspection ? Colors.orange.shade50 : Colors.teal.shade50, shape: BoxShape.circle), child: Icon(needsInspection ? LucideIcons.box : LucideIcons.truck, color: needsInspection ? Colors.orange.shade700 : Colors.teal.shade700)),
+                Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: needsInspection ? Colors.orange.shade50 : Colors.teal.shade50, shape: BoxShape.circle), child: Icon(needsInspection ? LucideIcons.box : (isPickup ? LucideIcons.store : LucideIcons.truck), color: needsInspection ? Colors.orange.shade700 : Colors.teal.shade700)),
                 const SizedBox(width: 15),
                 Expanded(child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text("${order['target_weight_kg']}kg of ${order['crop_name']}", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-                      Text(needsInspection ? "Shipment Arrived!" : "Contract Fulfillment Pipeline", style: GoogleFonts.poppins(color: needsInspection ? Colors.orange.shade800 : Colors.teal.shade700, fontSize: 12, fontWeight: FontWeight.bold))
+                      Text(needsInspection ? "Shipment Ready!" : "Contract Fulfillment Pipeline", style: GoogleFonts.poppins(color: needsInspection ? Colors.orange.shade800 : Colors.teal.shade700, fontSize: 12, fontWeight: FontWeight.bold))
                     ])),
               ],
             ),
@@ -663,10 +784,9 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                   Text("KES ${((order['adjusted_price'] ?? order['original_price']) as num? ?? 0).toStringAsFixed(0)}", style: GoogleFonts.poppins(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14)),
                 ]),
 
-                // 🔥 THE MAP FIX FOR BULK CONTRACTS
                 Row(
                   children: [
-                    if (anyInTransit && !needsInspection)
+                    if (anyInTransit && !needsInspection && !isPickup)
                       Padding(
                         padding: const EdgeInsets.only(right: 10),
                         child: ElevatedButton.icon(
@@ -679,7 +799,7 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                     ElevatedButton(
                       onPressed: () => _showContractQASheet(order),
                       style: ElevatedButton.styleFrom(backgroundColor: needsInspection ? Colors.orange.shade600 : Colors.black, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
-                      child: Text(needsInspection ? (isPickup ? "Arrived at Hub (Inspect)" : "Inspect Goods") : (anyInTransit ? "View Log" : "Waiting for Dispatch"), style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                      child: Text(needsInspection ? (isPickup ? "Arrived at Hub (Inspect)" : "Inspect Goods") : (anyInTransit ? "View Log" : (isPickup ? "Waiting for Hub Gathering" : "Waiting for Dispatch")), style: GoogleFonts.poppins(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 )
@@ -692,23 +812,30 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
   }
 
   Widget _buildHistoryCard(Map<String, dynamic> order, int index) {
+    // 🔥 THE FIX: Detect if the contract was completely rejected/returned
+    bool isFailed = false;
+    List roster = order['roster'] ?? [];
+    if (roster.isNotEmpty) {
+      isFailed = roster.every((p) => p['status'] == 'rejected' || p['status'] == 'refunded' || p['status'] == 'returning' || p['status'] == 'disputed');
+    }
+
     return FadeInUp(
       delay: Duration(milliseconds: index * 100),
       child: Container(
         margin: const EdgeInsets.only(bottom: 20), padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.green.shade200), boxShadow: [BoxShadow(color: Colors.green.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 8))]),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24), border: Border.all(color: isFailed ? Colors.red.shade200 : Colors.green.shade200), boxShadow: [BoxShadow(color: isFailed ? Colors.red.withOpacity(0.05) : Colors.green.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 8))]),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.green.shade50, shape: BoxShape.circle), child: Icon(LucideIcons.checkCircle, color: Colors.green.shade700)),
+                Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: isFailed ? Colors.red.shade50 : Colors.green.shade50, shape: BoxShape.circle), child: Icon(isFailed ? LucideIcons.xCircle : LucideIcons.checkCircle, color: isFailed ? Colors.red.shade700 : Colors.green.shade700)),
                 const SizedBox(width: 15),
                 Expanded(child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text("${order['target_weight_kg']}kg of ${order['crop_name']}", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-                      Text("Contract Fully Closed", style: GoogleFonts.poppins(color: Colors.green.shade700, fontSize: 12, fontWeight: FontWeight.bold))
+                      Text(isFailed ? "Contract Returned / Failed" : "Contract Fully Closed", style: GoogleFonts.poppins(color: isFailed ? Colors.red.shade700 : Colors.green.shade700, fontSize: 12, fontWeight: FontWeight.bold))
                     ])),
               ],
             ),
@@ -828,11 +955,41 @@ class BuyerOrdersScreenState extends State<BuyerOrdersScreen> {
                                     fetchLiveOrders();
                                   }
                                 } else {
-                                  final error = await _apiClient.triggerContractBalance(order['contract_id']);
-                                  if (error == null) {
-                                    Navigator.pop(context);
-                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Master M-Pesa Prompt Sent! Check your phone."), backgroundColor: Colors.green));
-                                    fetchLiveOrders();
+                                  final result = await _apiClient.triggerContractBalance(order['contract_id']);
+                                  if (result != null && result.startsWith("SUCCESS:")) {
+                                    String checkoutId = result.split(":")[1];
+
+                                    showDialog(
+                                        context: context, barrierDismissible: false,
+                                        builder: (ctx) {
+                                          Timer.periodic(const Duration(seconds: 3), (timer) async {
+                                            String status = await _apiClient.checkPaymentStatus(checkoutId);
+                                            if (status == "completed") {
+                                              timer.cancel();
+                                              if (mounted) {
+                                                Navigator.pop(ctx); // Close dialog
+                                                Navigator.pop(context); // Close bottom sheet
+                                                fetchLiveOrders();
+                                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Balance Paid! Farmers Credited."), backgroundColor: Colors.green));
+                                              }
+                                            }
+                                          });
+
+                                          return AlertDialog(
+                                            content: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const CircularProgressIndicator(color: Colors.green), const SizedBox(height: 20),
+                                                Text("Check Your Phone!", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green.shade800)),
+                                                const SizedBox(height: 10),
+                                                Text("Waiting for M-Pesa PIN confirmation...", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600))
+                                              ],
+                                            ),
+                                          );
+                                        }
+                                    );
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result ?? "Error"), backgroundColor: Colors.red));
                                   }
                                 }
                               },
